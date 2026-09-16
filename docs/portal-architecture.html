@@ -1,0 +1,1126 @@
+<title>10XiD Client Portal</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --ground: #F7F9F8;
+    --surface: #FFFFFF;
+    --surface-sunk: #EEF1F5;
+    --ink: #0E1B20;
+    --ink-soft: #44545F;
+    --ink-faint: #71818C;
+    --rule: #D8DEE6;
+    --rule-soft: #E7EAEF;
+    --accent: #26467F;
+    --accent-soft: #E4EAF6;
+    --good: #2D7A55;
+    --good-soft: #E3F0EA;
+    --warn: #B06A12;
+    --warn-soft: #F8EEDD;
+    --bad: #B03A28;
+    --bad-soft: #F8E7E3;
+
+    --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    --body: "Source Serif 4", Georgia, "Times New Roman", serif;
+    --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+    --measure: 66ch;
+    --page: 940px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #12161A;
+      --surface: #191F25;
+      --surface-sunk: #0D1114;
+      --ink: #E8ECF0;
+      --ink-soft: #A8B4BE;
+      --ink-faint: #7B8893;
+      --rule: #2C353E;
+      --rule-soft: #222A30;
+      --accent: #7FA0DC;
+      --accent-soft: #1B2739;
+      --good: #63B98D;
+      --good-soft: #16251E;
+      --warn: #D7A254;
+      --warn-soft: #2A2116;
+      --bad: #DF8878;
+      --bad-soft: #2B1A17;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #12161A;
+    --surface: #191F25;
+    --surface-sunk: #0D1114;
+    --ink: #E8ECF0;
+    --ink-soft: #A8B4BE;
+    --ink-faint: #7B8893;
+    --rule: #2C353E;
+    --rule-soft: #222A30;
+    --accent: #7FA0DC;
+    --accent-soft: #1B2739;
+    --good: #63B98D;
+    --good-soft: #16251E;
+    --warn: #D7A254;
+    --warn-soft: #2A2116;
+    --bad: #DF8878;
+    --bad-soft: #2B1A17;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 17px;
+    line-height: 1.62;
+    margin: 0;
+    padding-inline: 20px;
+    padding-block: 0 96px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page { max-width: var(--page); margin: 0 auto; }
+  .measure { max-width: var(--measure); }
+
+  /* ---------- masthead ---------- */
+
+  .masthead {
+    border-bottom: 2px solid var(--ink);
+    padding-block: 48px 20px;
+    margin-bottom: 36px;
+  }
+  .eyebrow {
+    font-family: var(--display);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 18px;
+  }
+  h1 {
+    font-family: var(--display);
+    font-size: clamp(2.1rem, 6vw, 3.1rem);
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    line-height: 1.04;
+    margin: 0 0 16px;
+    text-wrap: balance;
+  }
+  .standfirst {
+    font-size: 1.16rem;
+    color: var(--ink-soft);
+    max-width: var(--measure);
+    margin: 0 0 30px;
+  }
+
+  .facts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 2px;
+    background: var(--rule-soft);
+    border: 1px solid var(--rule-soft);
+  }
+  .fact { background: var(--surface); padding: 12px 14px; }
+  .fact dt {
+    font-family: var(--display);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin-bottom: 4px;
+  }
+  .fact dd {
+    margin: 0;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--ink);
+  }
+
+  /* ---------- structure ---------- */
+
+  section { margin-block: 60px; }
+
+  h2 {
+    font-family: var(--display);
+    font-size: clamp(1.45rem, 3.4vw, 1.9rem);
+    font-weight: 700;
+    letter-spacing: -0.018em;
+    line-height: 1.16;
+    margin: 0 0 6px;
+    text-wrap: balance;
+  }
+  h2 + .sub {
+    font-family: var(--display);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ink-faint);
+    margin: 0 0 26px;
+  }
+  h3 {
+    font-family: var(--display);
+    font-size: 1.08rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin: 34px 0 10px;
+    text-wrap: balance;
+  }
+  h4 {
+    font-family: var(--display);
+    font-size: 0.93rem;
+    font-weight: 600;
+    margin: 22px 0 6px;
+  }
+
+  p { margin: 0 0 16px; max-width: var(--measure); }
+  ul, ol { max-width: var(--measure); padding-left: 1.15em; margin: 0 0 16px; }
+  li { margin-bottom: 7px; }
+  strong { font-weight: 600; }
+  code {
+    font-family: var(--mono);
+    font-size: 0.855em;
+    background: var(--surface-sunk);
+    padding: 1px 5px;
+    border-radius: 3px;
+    overflow-wrap: anywhere;
+  }
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  .lede {
+    font-size: 1.1rem;
+    color: var(--ink-soft);
+    border-left: 3px solid var(--accent);
+    padding-left: 18px;
+    margin-bottom: 26px;
+  }
+
+  /* ---------- tables ---------- */
+
+  .scroller { overflow-x: auto; margin: 0 0 20px; border: 1px solid var(--rule); background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+  th, td {
+    text-align: left;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--rule-soft);
+    vertical-align: top;
+  }
+  th {
+    font-family: var(--display);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    background: var(--surface-sunk);
+    white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.mono, th.mono { font-family: var(--mono); font-size: 12.5px; }
+
+  /* ---------- callouts ---------- */
+
+  .note {
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--accent);
+    background: var(--surface);
+    padding: 16px 18px;
+    margin: 0 0 20px;
+    max-width: var(--measure);
+  }
+  .note.warn { border-left-color: var(--warn); background: var(--warn-soft); }
+  .note.bad { border-left-color: var(--bad); background: var(--bad-soft); }
+  .note.good { border-left-color: var(--good); background: var(--good-soft); }
+  .note > :last-child { margin-bottom: 0; }
+  .note-label {
+    font-family: var(--display);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    display: block;
+    margin-bottom: 6px;
+  }
+
+  .tag {
+    display: inline-block;
+    font-family: var(--display);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 2px 7px;
+    border-radius: 2px;
+    white-space: nowrap;
+  }
+  .tag.yes { background: var(--good-soft); color: var(--good); }
+  .tag.no { background: var(--bad-soft); color: var(--bad); }
+  .tag.maybe { background: var(--warn-soft); color: var(--warn); }
+  .tag.p1 { background: var(--accent-soft); color: var(--accent); }
+
+  /* ---------- decision list ---------- */
+
+  .decisions { display: grid; gap: 1px; background: var(--rule-soft); border: 1px solid var(--rule); }
+  .decision {
+    background: var(--surface);
+    padding: 16px 18px;
+    display: grid;
+    grid-template-columns: 26px 1fr;
+    gap: 14px;
+    align-items: start;
+  }
+  .decision .n {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--ink-faint);
+    padding-top: 3px;
+  }
+  .decision h4 { margin: 0 0 4px; }
+  .decision p { margin: 0; font-size: 15px; color: var(--ink-soft); max-width: none; }
+
+  /* ---------- step flow ---------- */
+
+  .flow {
+    display: grid;
+    gap: 10px;
+    margin: 0 0 22px;
+  }
+  .step {
+    display: grid;
+    grid-template-columns: 30px 1fr;
+    gap: 14px;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    padding: 13px 16px;
+    align-items: start;
+  }
+  .step .n {
+    font-family: var(--display);
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--surface);
+    background: var(--accent);
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    margin-top: 2px;
+  }
+  .step p { margin: 0; font-size: 15px; max-width: none; }
+  .step .where {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--ink-faint);
+    display: block;
+    margin-bottom: 3px;
+  }
+
+  /* ---------- misc ---------- */
+
+  .pre {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 1.65;
+    background: var(--surface-sunk);
+    border: 1px solid var(--rule);
+    padding: 14px 16px;
+    overflow-x: auto;
+    margin: 0 0 20px;
+    white-space: pre;
+  }
+
+  details {
+    border: 1px solid var(--rule);
+    background: var(--surface);
+    padding: 12px 16px;
+    margin-bottom: 14px;
+    max-width: var(--measure);
+  }
+  summary {
+    font-family: var(--display);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  details[open] summary { margin-bottom: 10px; }
+  details p:last-child, details ul:last-child { margin-bottom: 0; }
+
+  footer {
+    border-top: 1px solid var(--rule);
+    margin-top: 72px;
+    padding-top: 22px;
+    font-size: 13.5px;
+    color: var(--ink-faint);
+  }
+  footer p { max-width: var(--measure); }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+
+<div class="page">
+
+  <header class="masthead">
+    <div class="eyebrow">Architecture decision record · 10XiD</div>
+    <h1>10XiD Client Portal</h1>
+    <p class="standfirst">
+      One sign-in across several domains, and a job exchange that replaces the email
+      thread between Branding Centres and its clients — with every read and write
+      scoped to the signed-in person's company, enforced in one place.
+    </p>
+    <dl class="facts">
+      <div class="fact"><dt>Drafted</dt><dd>16 Sep 2026</dd></div>
+      <div class="fact"><dt>Repo</dt><dd>10xid-com/login</dd></div>
+      <div class="fact"><dt>Status</dt><dd>Awaiting go-ahead</dd></div>
+      <div class="fact"><dt>Code written</dt><dd>None yet</dd></div>
+      <div class="fact"><dt>DNS touched</dt><dd>None yet</dd></div>
+    </dl>
+  </header>
+
+  <!-- ============================================ -->
+  <section>
+    <h2>The short answer</h2>
+    <p class="sub">What is being built, and what changed along the way</p>
+
+    <p class="lede">
+      A portal both sides log into. Clients see their own company's jobs; staff see
+      every client. Work moves in both directions through the same machinery. It runs
+      on several domains, all of them windows onto one database — never a copy.
+    </p>
+
+    <p>
+      Four things changed while this was being planned, and each is worth stating plainly
+      because each reverses something that was previously assumed.
+    </p>
+
+    <ol>
+      <li>
+        <strong>Clerk is out, and not on cost.</strong> The earlier record in this repo
+        rejected Clerk because organizations cost $100/month. That turned out to be wrong —
+        organizations are free on every Clerk plan. Clerk is out for two different reasons:
+        it charges $10/month per client domain, which scales with exactly the thing this
+        product sells, and it cannot express different session lengths for staff and
+        clients, which is a requirement you called non-negotiable.
+      </li>
+      <li>
+        <strong>The login is ours.</strong> Written here, in this repo, against a published
+        security standard rather than a vendor's roadmap. No per-domain fee, no third-party
+        DNS records, no account to lose.
+      </li>
+      <li>
+        <strong>The portal is separate from the Rotary storefront.</strong> Those 68 accounts
+        stay in Supabase, untouched. Nothing built here can break a live sign-in.
+      </li>
+      <li>
+        <strong>Everyone gets cross-domain sign-in, not just staff.</strong> Considered
+        narrowing it to staff — the evidence supported that — and you chose the full version.
+        It is built for everyone.
+      </li>
+    </ol>
+  </section>
+
+  <!-- ============================================ -->
+  <section>
+    <h2>What is actually running today</h2>
+    <p class="sub">Measured against the live systems on 16 September 2026, not assumed</p>
+
+    <p>
+      The first question asked was whether <code>rotary.brandingcentres.com</code> already
+      has real accounts, because that decides migration versus greenfield. It does — and
+      there is a second live system nobody mentioned.
+    </p>
+
+    <div class="scroller">
+      <table>
+        <thead>
+          <tr><th>System</th><th>Accounts</th><th>Active 30d</th><th>Last sign-in</th><th>What it is</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>rotary.brandingcentres.com</td>
+            <td class="num">68</td><td class="num">18</td><td class="num">today</td>
+            <td>Rotary merchandise storefront — products, carts, 16 quote requests, vendor orders, inventory</td>
+          </tr>
+          <tr>
+            <td>wraplab.brandingcentres.com</td>
+            <td class="num">106</td><td class="num">—</td><td class="num">yesterday</td>
+            <td>Second live application, separate Supabase project</td>
+          </tr>
+          <tr>
+            <td>theteslawrapshop</td>
+            <td class="num">2</td><td class="num">1</td><td class="num">22 Aug</td>
+            <td>Test instance</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      172 distinct people across the two live systems, and <strong>only 2 hold an account in
+      both.</strong> Every account is email-and-password with bcrypt hashes; there are no
+      Google or social sign-ins to carry across.
+    </p>
+
+    <p>
+      The important distinction: those 68 Rotary accounts are <em>shoppers</em>, not
+      job-exchange clients. The database is a shop. A portal login would not replace that
+      login, which is why the two stay separate.
+    </p>
+
+    <div class="note">
+      <span class="note-label">Consequence</span>
+      <p>
+        A Rotary person may end up with two logins on the same domain family. That is a real
+        cost of keeping them separate, accepted deliberately. If it ever needs undoing, bcrypt
+        hashes can be imported into a new system without forcing anyone to reset a password —
+        so the door stays open without building anything now.
+      </p>
+    </div>
+
+    <h3>What the existing codebase gets right</h3>
+    <p>
+      <code>RotaryHomepage</code> is a Next.js 15 app on Railway with Supabase behind it.
+      Two things in it are worth copying outright:
+    </p>
+    <ul>
+      <li>
+        <strong>The role is read off the account record after authenticating</strong>, never
+        taken from the sign-in form. <code>requireAdmin()</code> loads
+        <code>profiles.is_admin</code> for the signed-in user and redirects otherwise. That is
+        the correct shape and the portal keeps it.
+      </li>
+      <li>
+        <strong>The theme is tokenised.</strong> <code>rotary.blue</code>,
+        <code>rotary.gold</code>, <code>rotary.ivory</code>, <code>rotary.ink</code>, a card
+        shadow scale, four display sizes, Playfair over Inter. A real design system, and the
+        portal inherits its shape.
+      </li>
+    </ul>
+
+    <h3>And the two things it does that the portal must not</h3>
+    <div class="note warn">
+      <span class="note-label">Pattern to break</span>
+      <p>
+        <strong>Staff data access runs on the service key</strong>, which switches the
+        database's own rules off completely. 35 of the 36 admin API routes remember to call
+        <code>requireAdmin()</code> first — genuinely good discipline — but it is a check
+        copy-pasted 35 times, and route 37 is the one that forgets. The audit log records
+        <em>that</em> an admin acted, not which customer's data was opened or why.
+      </p>
+      <p>
+        <strong>The data rules are per person, not per company.</strong> Every policy reads
+        <code>auth.uid() = user_id</code>. A portal needs a Rotary person to see a job their
+        colleague raised, because the job belongs to Rotary — so the whole shape changes from
+        "my rows" to "my company's rows".
+      </p>
+    </div>
+  </section>
+
+  <!-- ============================================ -->
+  <section>
+    <h2>Decisions already settled</h2>
+    <p class="sub">Each one made deliberately, and reversible at a stated cost</p>
+
+    <div class="decisions">
+      <div class="decision">
+        <div class="n">01</div>
+        <div>
+          <h4>The portal is separate from the storefront</h4>
+          <p>No migration. The 174 live accounts stay where they are and nothing built here can break them.</p>
+        </div>
+      </div>
+      <div class="decision">
+        <div class="n">02</div>
+        <div>
+          <h4>Everyone gets cross-domain sign-in</h4>
+          <p>Not just staff. Sign in once, land signed in on any of the portal's domains, no second prompt.</p>
+        </div>
+      </div>
+      <div class="decision">
+        <div class="n">03</div>
+        <div>
+          <h4>The login is built here, not bought</h4>
+          <p>Our cookie, our session table, our domains. No per-domain fee, no vendor DNS records, no third-party outage that logs out every client at once.</p>
+        </div>
+      </div>
+      <div class="decision">
+        <div class="n">04</div>
+        <div>
+          <h4>Clients 30 days, staff 8 hours plus a 30-minute idle timeout</h4>
+          <p>A staff session reaches every client's data, so it expires while a client's renews silently. No hosted vendor can express this; our own session table does it in two columns.</p>
+        </div>
+      </div>
+      <div class="decision">
+        <div class="n">05</div>
+        <div>
+          <h4>No passwords — a six-digit code by email</h4>
+          <p>Clients sign in a handful of times a year. A forgotten password recreates the support burden the portal exists to remove, and there is no password database to leak. Staff get the code plus a second factor.</p>
+        </div>
+      </div>
+      <div class="decision">
+        <div class="n">06</div>
+        <div>
+          <h4>The hostname decides branding, never permission</h4>
+          <p>Which company's data a person can read comes from their session. The address bar carries no authority whatsoever.</p>
+        </div>
+      </div>
+      <div class="decision">
+        <div class="n">07</div>
+        <div>
+          <h4>Sessions are checked against the database on every request</h4>
+          <p>Clerk's design trusts a signed token for up to 60 seconds to avoid a database read. That buys speed you do not need at 200 users and costs a 60-second window where a sacked employee is still signed in. Recommended, not yet locked — say the word and it is built Clerk's way.</p>
+        </div>
+      </div>
+      <div class="decision">
+        <div class="n">08</div>
+        <div>
+          <h4>Safari is not in the test matrix</h4>
+          <p>Your call, and self-hosting happens to remove the risk that made it matter — see below.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================ -->
+  <section>
+    <h2>How one sign-in reaches several domains</h2>
+    <p class="sub">The part that has to be right, in plain language</p>
+
+    <p>
+      A browser will not let a cookie cross from one domain to another. That is a browser
+      rule, not a setting, and every workaround that used to exist has been closed:
+      third-party cookies are gone in Safari and partitioned in Firefox, partitioned cookies
+      cannot be shared across sites by design, and the one browser feature that granted this
+      automatically was <strong>removed from Chrome on 8 September 2026</strong>.
+    </p>
+
+    <p>
+      So there is exactly one mechanism left that works in every browser: <strong>send the
+      browser to the login host and let it send them back.</strong> This is what Clerk does
+      internally, and it is the same shape as the sign-in flows behind every "continue with"
+      button on the web.
+    </p>
+
+    <div class="flow">
+      <div class="step">
+        <div class="n">1</div>
+        <p><span class="where">rotary.brandingcentres.com</span>
+        Someone opens a portal page. The server finds no session cookie for this host.</p>
+      </div>
+      <div class="step">
+        <div class="n">2</div>
+        <p><span class="where">→ login.10xid.com</span>
+        Their browser is redirected to the login host, carrying an identifier for which site
+        sent them — <strong>not a web address</strong>.</p>
+      </div>
+      <div class="step">
+        <div class="n">3</div>
+        <p><span class="where">login.10xid.com</span>
+        The login host reads its own cookie. Already signed in? Straight to step 4. If not,
+        they sign in here — the only place sign-in ever happens.</p>
+      </div>
+      <div class="step">
+        <div class="n">4</div>
+        <p><span class="where">→ back to the client site</span>
+        The login host mints a single-use ticket, valid 30 seconds, usable only by that one
+        site, and sends the browser back carrying it in a form post rather than in the address bar.</p>
+      </div>
+      <div class="step">
+        <div class="n">5</div>
+        <p><span class="where">rotary.brandingcentres.com</span>
+        That site's server redeems the ticket, confirms who it belongs to, and sets
+        <strong>its own</strong> cookie on its own domain. The ticket is burned. From here on
+        there are no redirects at all.</p>
+      </div>
+    </div>
+
+    <p>
+      What the person sees: the address bar flickers through one hop and lands on the page
+      they asked for, signed in. If they were already signed in at the login host there is no
+      form, no prompt, no typing.
+    </p>
+
+    <h3>Why the ticket is built the way it is</h3>
+    <p>
+      This flow is not being invented. It is the OAuth authorization-code exchange, and its
+      failure modes are documented in a published security standard, so each rule below
+      answers a known attack rather than a guess.
+    </p>
+
+    <div class="scroller">
+      <table>
+        <thead><tr><th>Property</th><th>Why</th></tr></thead>
+        <tbody>
+          <tr><td>32 random bytes, not a signed token</td><td>Nothing to forge and nothing readable inside it. It is only a lookup key.</td></tr>
+          <tr><td>Stored hashed in Postgres</td><td>A database leak yields no usable tickets.</td></tr>
+          <tr><td>Valid ~30 seconds</td><td>Long enough for a redirect, too short to pass around.</td></tr>
+          <tr><td>Redeemed once, by an atomic update</td><td>Two simultaneous attempts, one winner. Replay is impossible rather than unlikely.</td></tr>
+          <tr><td>Bound to one destination host</td><td>A ticket minted for one client site is worthless at another.</td></tr>
+          <tr><td>Delivered by form POST</td><td>Keeps it out of browser history, server logs and referrer headers.</td></tr>
+          <tr><td>Tied to the login session that minted it</td><td>Signing out at the login host kills tickets in flight.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note bad">
+      <span class="note-label">The trap this design removes</span>
+      <p>
+        The return destination is <strong>an identifier that indexes a table of known
+        domains — never a web address</strong>. The two most recent real-world breaks of this
+        exact pattern were both open redirects, where an attacker found a string the server's
+        address parser and the browser's address parser disagreed about. If no address is ever
+        accepted, that entire class of attack cannot occur. Note that the existing storefront
+        does take a raw path in <code>/auth/login?redirect=…</code>.
+      </p>
+    </div>
+
+    <h3>The Safari problem we no longer have</h3>
+    <p>
+      Hosted auth vendors ask you to point <code>clerk.yourdomain.com</code> at their servers.
+      Safari treats a subdomain that resolves to someone else's domain as tracking, and caps
+      that cookie at <strong>7 days</strong> — so a 30-day session quietly becomes a 7-day one
+      on every iPhone. Clerk works around it with an extra redirect hop, documented only in
+      their source code.
+    </p>
+    <p>
+      Our cookie is set by our own server on our own host, with nothing pointing anywhere else.
+      It is first-party by construction, so the cap never applies. Dropping Safari from the test
+      matrix costs much less than it would have.
+    </p>
+  </section>
+
+  <!-- ============================================ -->
+  <section>
+    <h2>Sessions: two clocks</h2>
+    <p class="sub">The requirement no vendor could meet</p>
+
+    <p>
+      Every session row carries two expiry times, both enforced on the server:
+      an <strong>idle clock</strong> that restarts on every visit, and an
+      <strong>absolute cap</strong> that renewal can never push past.
+    </p>
+
+    <div class="scroller">
+      <table>
+        <thead><tr><th>Role</th><th>Idle timeout</th><th>Absolute cap</th><th>Second factor</th></tr></thead>
+        <tbody>
+          <tr><td>Client</td><td class="num">—</td><td class="num">30 days</td><td>No</td></tr>
+          <tr><td>Staff</td><td class="num">30 minutes</td><td class="num">8 hours</td><td>Yes</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      Both values are <strong>copied onto the session row when it is created</strong>. Promote
+      someone to staff tomorrow and their existing session does not retroactively stretch to 30
+      days — it keeps the caps it was born with.
+    </p>
+
+    <ul>
+      <li>The cookie holds a random value and nothing else. It is a lookup key, never a claim.</li>
+      <li>Only the hash of that value is stored, so reading the database yields no live sessions.</li>
+      <li>Liveness is decided from the database row, never from the cookie's own expiry — a browser can keep sending an expired cookie forever.</li>
+      <li>The session identifier is rotated on sign-in and on every privilege change.</li>
+      <li>A "your active sessions — sign out other devices" screen ships in Phase 1. It is the cheapest incident response tool there is.</li>
+    </ul>
+
+    <div class="note">
+      <span class="note-label">Why no 400-day option exists</span>
+      <p>
+        Chrome and Firefox both hard-cap every cookie at 400 days regardless of what the server
+        asks for. A session that never expires is not achievable in any current browser — and a
+        session that reaches every client's data is precisely the one you most need to be able
+        to kill.
+      </p>
+    </div>
+  </section>
+
+  <!-- ============================================ -->
+  <section>
+    <h2>The one rule, enforced twice</h2>
+    <p class="sub">Every read and write scoped to the signed-in person's company</p>
+
+    <p>
+      One shared helper takes the session and returns a query that is already scoped. Nothing
+      else may touch the database. That is the rule as you wrote it — and it needs a second net
+      underneath, for a specific and unobvious reason.
+    </p>
+
+    <div class="note warn">
+      <span class="note-label">The leak a shared helper does not catch</span>
+      <p>
+        Asking the database for "this job and its messages" applies the filter to the job but
+        <strong>not automatically to the messages</strong>. Each nested part of the query takes
+        its own filter. A helper that scopes the top level will happily pull another company's
+        rows in through a nested relation, and it will look correct in review.
+      </p>
+    </div>
+
+    <p>So both, deliberately:</p>
+
+    <div class="scroller">
+      <table>
+        <thead><tr><th>Layer</th><th>Catches</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>The shared helper</strong><br>one module, exported functions that take the session first</td>
+            <td>Everyday work. It is what the code reads like, and what makes the rule obvious rather than remembered.</td>
+          </tr>
+          <tr>
+            <td><strong>Postgres row-level security</strong><br>a rule the database enforces itself</td>
+            <td>The nested query above, the forgotten filter, and anything a future route gets wrong. The database refuses to return the row at all.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h4>Three traps, and how each is closed</h4>
+    <ul>
+      <li>
+        <strong>The rules silently do nothing if the app connects as the database owner.</strong>
+        Teams ship this, write an isolation test, watch it pass, and have no protection —
+        because the test connected as the owner too. Our app and our tests both connect as a
+        restricted role.
+      </li>
+      <li>
+        <strong>A pooled connection can leak one request's company setting into the next.</strong>
+        This fails <em>open</em> — the next person sees the previous company's rows. It is closed
+        by setting the value transaction-locally, inside a transaction, every time, with no exceptions.
+      </li>
+      <li>
+        <strong>A new table added later has no rules until someone remembers.</strong> A build
+        check asserts that every table carrying a company id has row-level security switched on
+        and at least one policy. Forgetting fails the build.
+      </li>
+    </ul>
+
+    <p>
+      Staff are not an exception to this. They do not get ambient access to everything; they
+      exchange their identity for a <strong>time-boxed grant to one client, carrying a typed
+      reason</strong>. Every query in the application then reads identically for staff and
+      clients alike, and the audit line says which client was opened and why — not merely that
+      an admin was active.
+    </p>
+  </section>
+
+  <!-- ============================================ -->
+  <section>
+    <h2>The data model</h2>
+    <p class="sub">Phase 1 creates the tagged tables; the rest is agreed here and built later</p>
+
+    <h3>Identity</h3>
+    <div class="scroller">
+      <table>
+        <thead><tr><th>Table</th><th>Holds</th><th>Phase</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">organizations</td><td>A company. <code>type</code> is <code>client</code> or <code>internal</code>; exactly one row is internal. Carries the brand tokens used to theme its sites.</td><td><span class="tag p1">Phase 1</span></td></tr>
+          <tr><td class="mono">organization_domains</td><td>Hostname → company. Branding and routing only, never permission.</td><td><span class="tag p1">Phase 1</span></td></tr>
+          <tr><td class="mono">users</td><td>Email, name, verification. No password column.</td><td><span class="tag p1">Phase 1</span></td></tr>
+          <tr><td class="mono">memberships</td><td>Person, company, role. One person can belong to several companies.</td><td><span class="tag p1">Phase 1</span></td></tr>
+          <tr><td class="mono">sessions</td><td>Token hash, the two clocks, the role they were issued under, the host they live on, revocation.</td><td><span class="tag p1">Phase 1</span></td></tr>
+          <tr><td class="mono">sign_in_codes</td><td>Hashed six-digit codes, short expiry, attempt count, single use.</td><td><span class="tag p1">Phase 1</span></td></tr>
+          <tr><td class="mono">sso_tickets</td><td>The cross-domain handoff: hashed, audience-bound, single-use, seconds long.</td><td><span class="tag p1">Phase 1</span></td></tr>
+          <tr><td class="mono">staff_grants</td><td>Which staff member, which client, typed reason, expiry, originating session.</td><td><span class="tag p1">Phase 1</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>The work</h3>
+    <div class="scroller">
+      <table>
+        <thead><tr><th>Table</th><th>Holds</th><th>Phase</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">jobs</td><td>Company, direction (<code>from_client</code> / <code>to_client</code>), title, status, who raised it, who it is assigned to, due date, archive timestamp. Commercial fields (PO number, quoted amount) sit here too.</td><td><span class="tag p1">Phase 1</span> <span class="tag maybe">partly</span></td></tr>
+          <tr><td class="mono">job_events</td><td>Append-only audit. Who, what changed, when — by the server's clock. No update, no delete, both revoked at the database.</td><td><span class="tag p1">Phase 1</span></td></tr>
+          <tr><td class="mono">job_files</td><td>Backblaze key, filename, size, type, uploader, scan status. Nothing downloadable until scanned clean.</td><td>Phase 2</td></tr>
+          <tr><td class="mono">job_messages</td><td>The thread on a job, with attachments.</td><td>Phase 2</td></tr>
+          <tr><td class="mono">job_proofs</td><td>Proof rounds and approvals — who approved which artwork, when, with comments.</td><td>Phase 2</td></tr>
+          <tr><td class="mono">queue</td><td>Background work, drained by scheduled job, claimed with skip-locked.</td><td>Phase 2</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      You ticked all four job-content options, so the model carries all of them: proof
+      approvals, purchase orders and quotes, a message thread with attachments, and the plain
+      file handoff. <strong>Phase 1 still ships only title, client, status and date</strong>,
+      exactly as scoped.
+    </p>
+
+    <h3>Four decisions inside the model worth challenging</h3>
+    <ol>
+      <li>
+        <strong>Every child table carries its own copy of the company id.</strong> Deliberately
+        redundant, so the shared helper and the database rules apply one identical filter to
+        every table with no joins. This is what makes the rule enforceable rather than aspirational.
+      </li>
+      <li>
+        <strong>Addresses carry an unguessable id; people see <code>ROT-0042</code>.</strong>
+        The readable reference is per-client sequential, which would leak how many jobs a client
+        has — so it never appears in an address. Time-ordered random ids keep the database index
+        healthy while being impossible to walk.
+      </li>
+      <li>
+        <strong>The archive is a timestamp, not a second table.</strong> A separate archive table
+        is a second place to forget the rule.
+      </li>
+      <li>
+        <strong>Session caps are copied onto the session at creation.</strong> Otherwise a later
+        promotion silently lengthens a session already in flight.
+      </li>
+    </ol>
+  </section>
+
+  <!-- ============================================ -->
+  <section>
+    <h2>DNS</h2>
+    <p class="sub">Nothing is created until you approve the literal records</p>
+
+    <p>
+      Self-hosting the login removes six DNS records that a hosted vendor would have required —
+      no <code>clerk</code>, no <code>accounts</code>, no mail or signing records pointing at
+      someone else's servers. What remains is only what the sites themselves need.
+    </p>
+
+    <div class="scroller">
+      <table>
+        <thead><tr><th>Host</th><th>Type</th><th>Points at</th><th>Proxy</th><th>Role</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">login.10xid.com</td><td class="mono">CNAME</td><td class="mono">&lt;from Railway&gt;</td><td>Cloudflare, as today</td><td>The only place sign-in happens</td></tr>
+          <tr><td class="mono">portal-test.brandingcentres.com</td><td class="mono">CNAME</td><td class="mono">&lt;from Railway&gt;</td><td>Cloudflare, as today</td><td>Phase 1 second domain</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      The targets are generated per Railway service and do not exist yet, so they are shown as
+      placeholders on purpose. <strong>You will see the exact strings before anything is
+      created.</strong>
+    </p>
+
+    <div class="note good">
+      <span class="note-label">This pattern is already proven in your own setup</span>
+      <p>
+        <code>rotary.brandingcentres.com</code> runs Cloudflare in front of Railway behind
+        today. The portal replicates a configuration you are already operating, rather than
+        introducing a new one.
+      </p>
+    </div>
+
+    <div class="note warn">
+      <span class="note-label">The two domains must be genuinely different</span>
+      <p>
+        The staging hosts you pointed at — <code>staging.10xid.com</code> and
+        <code>preview.10xid.com</code> — are both subdomains of <code>10xid.com</code>, the same
+        registrable domain as the login host. Sharing a session between them proves nothing, by
+        your own brief. <code>10xid.com</code> paired with <code>brandingcentres.com</code> is a
+        real test, and neither is a live client domain.
+      </p>
+    </div>
+  </section>
+
+  <!-- ============================================ -->
+  <section>
+    <h2>Phase 1</h2>
+    <p class="sub">The two risky things, and nothing else</p>
+
+    <p>
+      A job in Phase 1 is a title, a client, a status and a date. No files, no messages, no
+      approvals, no notifications, no theming.
+    </p>
+
+    <h3>What must be proved</h3>
+    <div class="scroller">
+      <table>
+        <thead><tr><th>#</th><th>Claim</th><th>Evidence produced</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="num">1</td>
+            <td>Sign in once at the login host, then land already signed in on a genuinely different registrable domain, with no second prompt.</td>
+            <td>Round-trip timings and per-hop screenshots in Chrome, Chrome Incognito, Firefox and Firefox Private.</td>
+          </tr>
+          <tr>
+            <td class="num">2</td>
+            <td>A client sees only their own company's jobs; a staff user sees all of them.</td>
+            <td>Two seeded accounts, side-by-side output.</td>
+          </tr>
+          <tr>
+            <td class="num">3</td>
+            <td>A client cannot reach another client's job by guessing its address.</td>
+            <td>A real attempt with its actual output, plus an automated test that fails the build if it ever stops holding.</td>
+          </tr>
+          <tr>
+            <td class="num">4</td>
+            <td>Signing out at the login host ends the session on the other domain.</td>
+            <td>Measured: poll a protected page on a fixed interval, record the exact moment it stops working.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note">
+      <span class="note-label">Reported honestly or not at all</span>
+      <p>
+        Safari and Safari Private are excluded by your decision, so no Safari result will be
+        claimed — a Linux container cannot run real Safari, and the nearest engine available is
+        not the same thing where it matters. Sign-out timing will be a measured number, not the
+        theoretical one. If a browser behaves differently from the others, that goes in the
+        report rather than being averaged away.
+      </p>
+      <p>
+        One practical note: your existing middleware blocks headless browsers by user-agent, so
+        the automated tests need an explicit exemption or they will be answered with 403 before
+        they reach a single page.
+      </p>
+    </div>
+
+    <h3>Deliberately not in Phase 1</h3>
+    <p>
+      File upload and virus scanning, notification email, per-client theming, archive search,
+      and the automation API with its own service keys. All designed for in the model above,
+      none built yet.
+    </p>
+  </section>
+
+  <!-- ============================================ -->
+  <section>
+    <h2>What it costs to run</h2>
+    <p class="sub">Monthly, at Phase 1 scale</p>
+
+    <div class="scroller">
+      <table>
+        <thead><tr><th>Item</th><th>Monthly</th><th>Note</th></tr></thead>
+        <tbody>
+          <tr><td>Railway — app and Postgres</td><td class="num">~$5–20</td><td>Usage based; one project, two services</td></tr>
+          <tr><td>Postgres backups</td><td class="num">~$0–2</td><td>Charged as storage. Both mechanisms on from day one</td></tr>
+          <tr><td>The login</td><td class="num">$0</td><td>Ours. No per-user and no per-domain fee, ever</td></tr>
+          <tr><td>Each additional client domain</td><td class="num">$0</td><td>Clerk would have charged $10/month each</td></tr>
+          <tr><td>Resend</td><td class="num">$0–20</td><td>Already connected; sign-in codes are low volume</td></tr>
+          <tr><td>Sentry</td><td class="num">$0</td><td>Free tier is ample at this scale</td></tr>
+          <tr><td><strong>Total</strong></td><td class="num"><strong>~$5–40</strong></td><td>Against $35/month for Clerk with one extra domain, rising $10 per domain after</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============================================ -->
+  <section>
+    <h2>Risks, stated before starting</h2>
+    <p class="sub">None of these block a go-ahead; all of them are cheaper to know now</p>
+
+    <details>
+      <summary>Writing a login is the highest-consequence code in the project</summary>
+      <p>
+        A subtle bug here is a breach, not a nuisance. Mitigations: the handoff follows a
+        published standard rather than my judgement; sessions, hashing and randomness use
+        audited primitives rather than hand-written cryptography; the isolation test runs in the
+        build; and the database enforces the company rule independently of the application code.
+      </p>
+    </details>
+
+    <details>
+      <summary>Backups protect nothing retroactively</summary>
+      <p>
+        Railway's point-in-time recovery only covers the period after it is switched on, and
+        neither backup mechanism is on by default. Both are enabled before the first real row
+        exists, and a restore is rehearsed once rather than first attempted during an incident.
+      </p>
+    </details>
+
+    <details>
+      <summary>A documentation-versus-package mismatch in the database tooling</summary>
+      <p>
+        Drizzle's website currently documents a release candidate while the default install is
+        an older version with a different migration layout. Following the docs against the
+        default install produces broken instructions. Exact versions get pinned, and the pinned
+        numbers are recorded in the repo.
+      </p>
+    </details>
+
+    <details>
+      <summary>Every client domain is a place someone can sign in</summary>
+      <p>
+        More domains means more surface. The mitigations are that sign-in only ever happens at
+        the login host, that each site's cookie is confined to that site, that destinations come
+        from a table rather than a URL, and that any domain must be registered before it can
+        take part at all.
+      </p>
+    </details>
+
+    <details>
+      <summary>Two logins on one domain family, by choice</summary>
+      <p>
+        A Rotary person may hold a storefront account and a portal account. Accepted
+        deliberately. Hostnames should make it obvious which is which, and the import path stays
+        available if it ever needs merging.
+      </p>
+    </details>
+  </section>
+
+  <!-- ============================================ -->
+  <section>
+    <h2>Open questions</h2>
+    <p class="sub">Answers change the build; none of them block starting</p>
+
+    <div class="scroller">
+      <table>
+        <thead><tr><th>Question</th><th>Recommendation</th><th>Blocks?</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Match Clerk exactly, including the 60-second sign-out delay?</td>
+            <td>No. Check the database each request; sign-out becomes instant and the code gets simpler. Reversible later as a pure optimisation.</td>
+            <td><span class="tag no">No</span></td>
+          </tr>
+          <tr>
+            <td>Does the portal need French?</td>
+            <td>The storefront already serves <code>/fr</code>. Leaving room now is nearly free; retrofitting is not. Not a Phase 1 build.</td>
+            <td><span class="tag no">No</span></td>
+          </tr>
+          <tr>
+            <td>Which domain does the second Phase 1 site use?</td>
+            <td><code>portal-test.brandingcentres.com</code> — yours, unused, and genuinely a different registrable domain from the login host.</td>
+            <td><span class="tag maybe">Confirm</span></td>
+          </tr>
+          <tr>
+            <td>Can one person belong to several client companies?</td>
+            <td>Build the membership table for it from the start — it is the same table either way.</td>
+            <td><span class="tag no">No</span></td>
+          </tr>
+          <tr>
+            <td>Who are the first real staff accounts?</td>
+            <td>Needed before staff grants are useful, not before Phase 1 is built.</td>
+            <td><span class="tag no">No</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    <p>
+      Drafted 16 September 2026 for 10XiD · repo <code>10xid-com/login</code> · no application
+      code written and no DNS record created, pending go-ahead.
+    </p>
+    <p>
+      Live systems inspected directly on 16 September 2026: account counts and data shapes read
+      from the Rotary, Wraplab and Tesla Wrap Shop databases; hostnames and response headers
+      probed over HTTP; the <code>RotaryHomepage</code> source read at commit
+      <code>9c34529</code>. Platform claims — cross-domain sign-in mechanics, browser cookie
+      behaviour, session and revocation timing, vendor pricing, Railway backup and pooling
+      behaviour, and database row-level security semantics — were checked against primary
+      sources on 16 September 2026 and re-checked by a second pass. Vendor pricing moves;
+      re-check before reversing any decision that rests on it.
+    </p>
+  </footer>
+
+</div>
