@@ -72,6 +72,7 @@ try {
     );
   }
   await bootstrap(pool);
+  await registerClientDomains(pool);
 } catch (error) {
   console.error("Migration failed:", error);
   process.exitCode = 1;
@@ -175,5 +176,51 @@ async function bootstrap(pool) {
     throw error;
   } finally {
     client.release();
+  }
+}
+
+/**
+ * Register client-facing hostnames.
+ *
+ * PORTAL_CLIENT_DOMAINS is "slug=hostname" pairs, comma separated:
+ *
+ *   rotary=portal-rotary.up.railway.app,northstar=jobs.northstar.example
+ *
+ * This table is what the cross-domain handoff redeems against — a destination
+ * is the id of a row here, never a URL from the request — so adding a hostname
+ * is deliberately a deployment decision rather than something a form can do.
+ *
+ * Idempotent: a hostname already pointing at the right company is left alone,
+ * and one pointing at a different company is corrected rather than duplicated.
+ */
+async function registerClientDomains(pool) {
+  const spec = process.env.PORTAL_CLIENT_DOMAINS?.trim();
+  if (!spec) return;
+
+  for (const pair of spec.split(",")) {
+    const [slug, hostname] = pair.split("=").map((s) => s?.trim().toLowerCase());
+    if (!slug || !hostname) {
+      console.warn(`Skipping malformed domain entry: "${pair}"`);
+      continue;
+    }
+
+    const { rows } = await pool.query(
+      "select id from organizations where slug = $1 and type = 'client'",
+      [slug],
+    );
+    if (rows.length === 0) {
+      console.warn(`Skipping "${hostname}": no client company with slug "${slug}".`);
+      continue;
+    }
+
+    await pool.query(
+      `insert into organization_domains (organization_id, hostname, is_primary, verified_at)
+       values ($1, $2, true, now())
+       on conflict (hostname) do update
+         set organization_id = excluded.organization_id,
+             verified_at = now()`,
+      [rows[0].id, hostname],
+    );
+    console.log(`Domain registered: ${hostname} → ${slug}`);
   }
 }
