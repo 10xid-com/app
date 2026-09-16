@@ -36,6 +36,23 @@ export type Scope = {
   organizationId: string | null;
 };
 
+/**
+ * Is this session surveying every client, or acting on one?
+ *
+ * The cross-client read policy exists so staff can see the whole board. It must
+ * apply ONLY while no client is chosen: Postgres combines permissive policies
+ * with OR, so leaving the flag on while a grant is held would keep every other
+ * client visible and make the grant decorative.
+ *
+ * With it off, a staff session holding a grant behaves exactly like a client
+ * session — same connection, same role, same query, same rows. That sameness is
+ * the point: it is what stops staff access becoming a second, less-travelled
+ * code path where the bugs live.
+ */
+function isSurveying(scope: Scope): boolean {
+  return scope.isStaff && scope.organizationId === null;
+}
+
 export class ScopeError extends Error {
   constructor(message: string) {
     super(message);
@@ -65,7 +82,7 @@ export type JobRow = typeof jobs.$inferSelect;
  * branch in application code that says `if (isAdmin) skipTheCheck()`.
  */
 export async function listJobs(scope: Scope): Promise<JobRow[]> {
-  return inTenantTransaction(scope.organizationId, scope.isStaff, (tx) =>
+  return inTenantTransaction(scope.organizationId, isSurveying(scope), (tx) =>
     tx
       .select()
       .from(jobs)
@@ -89,7 +106,7 @@ export async function getJob(
 ): Promise<JobRow | null> {
   const rows = await inTenantTransaction(
     scope.organizationId,
-    scope.isStaff,
+    isSurveying(scope),
     (tx) => tx.select().from(jobs).where(eq(jobs.id, jobId)).limit(1),
   );
   return rows[0] ?? null;
@@ -108,7 +125,7 @@ export async function createJob(
 ): Promise<JobRow> {
   const organizationId = requireWritableOrg(scope);
 
-  return inTenantTransaction(organizationId, scope.isStaff, async (tx) => {
+  return inTenantTransaction(organizationId, false, async (tx) => {
     const ref = await nextJobRef(tx, organizationId);
     const id = uuidv7();
 
@@ -144,7 +161,7 @@ export async function setJobStatus(
 ): Promise<JobRow | null> {
   const organizationId = requireWritableOrg(scope);
 
-  return inTenantTransaction(organizationId, scope.isStaff, async (tx) => {
+  return inTenantTransaction(organizationId, false, async (tx) => {
     const before = (
       await tx.select().from(jobs).where(eq(jobs.id, jobId)).limit(1)
     )[0];
@@ -218,7 +235,7 @@ async function recordEvent(
 }
 
 export async function listJobEvents(scope: Scope, jobId: string) {
-  return inTenantTransaction(scope.organizationId, scope.isStaff, (tx) =>
+  return inTenantTransaction(scope.organizationId, isSurveying(scope), (tx) =>
     tx
       .select()
       .from(jobEvents)

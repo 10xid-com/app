@@ -235,6 +235,29 @@ export async function setSessionActiveOrganization(
 /* Staff grants                                                        */
 /* ------------------------------------------------------------------ */
 
+/** The client picker staff choose from. Internal organizations are not clients. */
+export async function listClientOrganizations() {
+  return db
+    .select({
+      id: organizations.id,
+      name: organizations.name,
+      slug: organizations.slug,
+      brandPrimaryHex: organizations.brandPrimaryHex,
+    })
+    .from(organizations)
+    .where(and(eq(organizations.type, "client"), isNull(organizations.deletedAt)))
+    .orderBy(organizations.name);
+}
+
+export async function organizationById(id: string) {
+  const rows = await db
+    .select()
+    .from(organizations)
+    .where(eq(organizations.id, id))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
 export async function createStaffGrant(input: {
   staffUserId: string;
   organizationId: string;
@@ -244,6 +267,26 @@ export async function createStaffGrant(input: {
 }) {
   const rows = await db.insert(staffGrants).values(input).returning();
   return rows[0];
+}
+
+/**
+ * Give up the grant.
+ *
+ * The row is kept — it is the audit record of which client was opened and why —
+ * but its window is closed now rather than left to lapse. Clearing the
+ * session's pointer alone would not be enough: the grant is what the scope is
+ * derived from, so a live grant would keep the access open.
+ */
+export async function endGrantsForSession(sessionId: string) {
+  await db
+    .update(staffGrants)
+    .set({ expiresAt: new Date() })
+    .where(
+      and(
+        eq(staffGrants.sessionId, sessionId),
+        gt(staffGrants.expiresAt, new Date()),
+      ),
+    );
 }
 
 export async function liveGrantForSession(sessionId: string) {

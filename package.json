@@ -2,7 +2,9 @@
   "name": "10xid-portal",
   "version": "0.1.0",
   "private": true,
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -14,7 +16,8 @@
     "db:seed": "tsx scripts/seed.ts",
     "db:rls-check": "tsx scripts/check-rls.ts",
     "test": "vitest run",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "prove": "tsx scripts/prove-isolation.ts"
   },
   "dependencies": {
     "next": "16.3.5",

@@ -30,15 +30,20 @@ export async function latestCodeFor(email: string): Promise<string> {
 }
 
 /**
- * Clear issued sign-in codes between tests.
+ * Clear per-person auth state between tests.
  *
- * Requesting a code is rate limited per address, and a global setup hook runs
- * once per invocation rather than once per browser — so without this, the
- * second browser inherits the first browser's spent allowance and every test
- * that signs in is redirected to the rate-limit page.
+ * Two independent reasons, both found by tests failing:
  *
- * Resetting the state is the right fix. Raising the limit for tests would mean
- * the limit nobody tests is the one that ships.
+ *  - Requesting a code is rate limited per address, and a global setup hook
+ *    runs once per invocation rather than once per browser, so the second
+ *    browser inherited the first's spent allowance.
+ *  - A staff grant outlives the test that created it, so a later test found
+ *    staff still acting on a client and saw a scoped view where it expected
+ *    the overview.
+ *
+ * Resetting the state is the right fix for both. Relaxing the rate limit for
+ * tests would leave the shipped limit untested, and expiring grants faster
+ * would change the behaviour being tested.
  */
 export async function resetSignInState() {
   try {
@@ -48,8 +53,33 @@ export async function resetSignInState() {
   }
   const db = new Client({ connectionString: process.env.DATABASE_URL });
   await db.connect();
-  await db.query("truncate sign_in_codes cascade");
+  await db.query(
+    "truncate sign_in_codes, sso_tickets, staff_grants, sessions cascade",
+  );
   await db.end();
+}
+
+/** Look up seeded ids, so tests attack real rows rather than invented ones. */
+export async function seededIds() {
+  try {
+    process.loadEnvFile(".env.local");
+  } catch {
+    /* CI supplies the environment */
+  }
+  const db = new Client({ connectionString: process.env.DATABASE_URL });
+  await db.connect();
+  const { rows } = await db.query(`
+    select
+      (select id from jobs where ref = 'ROT-0001') as rotary_job,
+      (select id from jobs where ref = 'NOR-0001') as northstar_job,
+      (select title from jobs where ref = 'NOR-0001') as northstar_title
+  `);
+  await db.end();
+  return rows[0] as {
+    rotary_job: string;
+    northstar_job: string;
+    northstar_title: string;
+  };
 }
 
 /** Complete the whole sign-in flow on the login host. */
