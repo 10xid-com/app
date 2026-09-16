@@ -40,3 +40,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Playwright's transient output — traces, screenshots and videos from the last
+# run. Regenerated every run and sometimes hundreds of files; never source.
+/test-results/
+/playwright-report/
+/blob-report/

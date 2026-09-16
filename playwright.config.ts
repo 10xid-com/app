@@ -54,8 +54,32 @@ export default defineConfig({
   fullyParallel: false, // sign-in state and the code sink are shared
   workers: 1,
   reporter: [["list"]],
-  timeout: 60_000,
-  expect: { timeout: 10_000 },
+  // Firefox is several times slower than Chromium here, and the dev server
+  // compiles routes on demand, so the first hit to a route can be slow. 60s was
+  // close enough to the line that two tests tipped over it in a full run while
+  // passing in three seconds on their own.
+  timeout: 120_000,
+  expect: { timeout: 15_000 },
+
+  /**
+   * The suite runs against `next dev`, deliberately.
+   *
+   * Under `next start` the app reports NODE_ENV=production, and the mailer then
+   * REFUSES to write sign-in codes to a file — it throws rather than fall back,
+   * because an endpoint or file that hands out sign-in codes is a backdoor if
+   * it ever survives into production.
+   *
+   * That guard is correct and is not to be relaxed to make testing convenient.
+   * Exercising the sign-in flow against a production build needs a real mail
+   * transport, not a weakened guard. The production build is verified
+   * separately by `npm run build`.
+   */
+  webServer: {
+    command: "npm run dev",
+    url: `http://${PRIMARY}/auth/login`,
+    reuseExistingServer: true,
+    timeout: 120_000,
+  },
 
   use: {
     baseURL: `http://${PRIMARY}`,
