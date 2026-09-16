@@ -1,0 +1,129 @@
+import type { Metadata } from "next";
+import { requireSession } from "@/lib/auth/require";
+import { activeSessionsForUser, liveGrantForSession, organizationById } from "@/lib/db/identity";
+import { PortalShell } from "../../portal-shell";
+import { revokeOthersAction, revokeSessionAction } from "./actions";
+
+export const metadata: Metadata = { title: "Your sessions" };
+
+const DONE: Record<string, string> = {
+  one: "That session was signed out.",
+  others: "Every other device was signed out.",
+};
+
+function ago(date: Date): string {
+  const seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
+/**
+ * Every session this person holds, and a way to end any of them.
+ *
+ * The cheapest incident-response tool there is. A session reaching a laptop
+ * left on a train is a phone call away from being useless, without anyone
+ * needing database access — and because sessions live server-side, revoking one
+ * takes effect on the very next request rather than whenever a token happens to
+ * expire.
+ */
+export default async function SessionsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ done?: string }>;
+}) {
+  const ctx = await requireSession("/account/sessions");
+  const params = await searchParams;
+
+  const sessions = await activeSessionsForUser(ctx.userId);
+  const grant = ctx.scope.isStaff ? await liveGrantForSession(ctx.sessionId) : null;
+  const actingOrg = grant ? await organizationById(grant.organizationId) : null;
+
+  const others = sessions.filter((s) => s.id !== ctx.sessionId).length;
+
+  return (
+    <PortalShell
+      email={ctx.email}
+      isStaff={ctx.scope.isStaff}
+      actingOn={actingOrg && grant ? { name: actingOrg.name, reason: grant.reason } : null}
+    >
+      <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight text-ink">
+            Your sessions
+          </h1>
+          <p className="mt-1 max-w-prose text-sm text-ink-soft">
+            Each domain you have signed in on holds its own session. Ending one
+            takes effect on its next request.
+          </p>
+        </div>
+        {others > 0 ? (
+          <form action={revokeOthersAction}>
+            <button
+              type="submit"
+              className="rounded-lg border border-line bg-surface px-3 py-2 text-sm
+                         font-medium text-ink-soft transition-colors duration-150
+                         hover:bg-sunk focus-visible:outline-2
+                         focus-visible:outline-offset-2 focus-visible:outline-brand"
+            >
+              Sign out {others} other {others === 1 ? "device" : "devices"}
+            </button>
+          </form>
+        ) : null}
+      </div>
+
+      {params.done ? (
+        <p
+          role="status"
+          className="mb-5 rounded-lg border border-good/30 bg-good/5 px-3 py-2 text-sm text-good"
+        >
+          {DONE[params.done] ?? "Done."}
+        </p>
+      ) : null}
+
+      <ul className="overflow-hidden rounded-xl border border-line bg-surface shadow-card divide-y divide-line-soft">
+        {sessions.map((session) => {
+          const isCurrent = session.id === ctx.sessionId;
+          return (
+            <li
+              key={session.id}
+              className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-mono text-sm text-ink">
+                  {session.issuedForHost}
+                </p>
+                <p className="mt-0.5 text-xs text-ink-faint">
+                  {session.roleAtCreation} · last used {ago(session.lastSeenAt)} ·
+                  expires {new Date(session.absoluteExpiresAt).toISOString().slice(0, 16).replace("T", " ")}
+                </p>
+              </div>
+
+              {isCurrent ? (
+                <span className="flex-none rounded-full bg-brand-soft px-2 py-0.5 text-xs font-medium text-brand">
+                  this device
+                </span>
+              ) : null}
+
+              <form action={revokeSessionAction} className="flex-none">
+                <input type="hidden" name="sessionId" value={session.id} />
+                <button
+                  type="submit"
+                  className="rounded-md border border-line px-2.5 py-1 text-xs font-medium
+                             text-ink-soft transition-colors duration-150 hover:bg-sunk
+                             focus-visible:outline-2 focus-visible:outline-offset-2
+                             focus-visible:outline-brand"
+                >
+                  {isCurrent ? "Sign out here" : "Sign out"}
+                </button>
+              </form>
+            </li>
+          );
+        })}
+      </ul>
+    </PortalShell>
+  );
+}

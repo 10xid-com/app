@@ -110,6 +110,13 @@ export const users = pgTable("users", {
   emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
   /** Derived from membership of the internal organization; stored for speed. */
   isStaff: boolean("is_staff").notNull().default(false),
+  /**
+   * TOTP shared secret, encrypted at rest with AES-256-GCM. A database dump
+   * therefore yields no working second factor — which is the whole point of
+   * having one, since the first factor already lives in an inbox.
+   */
+  totpSecret: text("totp_secret"),
+  totpConfirmedAt: timestamp("totp_confirmed_at", { withTimezone: true }),
   createdAt,
   updatedAt,
   deletedAt: timestamp("deleted_at", { withTimezone: true }),
@@ -169,6 +176,12 @@ export const sessions = pgTable(
       withTimezone: true,
     }).notNull(),
     roleAtCreation: text("role_at_creation").notNull(),
+    /**
+     * When this session passed its second factor. Null on a staff session means
+     * the email code has been accepted and nothing else — it can reach the
+     * enrolment screen and nothing else.
+     */
+    secondFactorAt: timestamp("second_factor_at", { withTimezone: true }),
     /** Staff only: the client they are currently acting on. */
     activeOrganizationId: uuid("active_organization_id").references(
       () => organizations.id,

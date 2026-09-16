@@ -16,7 +16,16 @@ export async function requireSession(
   returnPath = "/",
 ): Promise<SessionContext> {
   const ctx = await getSessionContext();
-  if (ctx) return ctx;
+
+  if (ctx) {
+    // Staff have proved they hold the inbox and nothing more. A staff session
+    // reaches every client's data, and an inbox is the thing most likely to be
+    // compromised — it is where password resets for everything else arrive.
+    if (ctx.needsSecondFactor) {
+      redirect(`/auth/2fa?next=${encodeURIComponent(returnPath)}`);
+    }
+    return ctx;
+  }
 
   const host = await currentHost();
   if (isPrimaryHost(host)) {

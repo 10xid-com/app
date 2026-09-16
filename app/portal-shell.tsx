@@ -38,6 +38,12 @@ export function PortalShell({
                   Clients
                 </Link>
               ) : null}
+              <Link
+                href="/account/sessions"
+                className="transition-colors hover:text-white"
+              >
+                Sessions
+              </Link>
             </nav>
           </div>
           <div className="flex flex-none items-center gap-3">

@@ -29,6 +29,13 @@
       "when": 1789575087091,
       "tag": "0003_job_counter",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1789585164888,
+      "tag": "0004_staff_second_factor",
+      "breakpoints": true
     }
   ]
 }

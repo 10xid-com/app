@@ -56,6 +56,10 @@ export type SessionContext = {
   memberships: Awaited<ReturnType<typeof membershipsForUser>>;
   absoluteExpiresAt: Date;
   idleSeconds: number | null;
+  /** When this session cleared its second factor, if it has. */
+  secondFactorAt: Date | null;
+  /** True for a staff session that has passed the email code and nothing else. */
+  needsSecondFactor: boolean;
 };
 
 /** Which host this request arrived on. Used for cookies and branding only. */
@@ -179,11 +183,22 @@ export async function getSessionContext(): Promise<SessionContext | null> {
 
   const mships = await membershipsForUser(session.userId);
   const role = session.roleAtCreation as SessionRole;
-  const isStaff = role === "staff";
+
+  /**
+   * A staff session that has not cleared its second factor carries no
+   * authority at all.
+   *
+   * The redirect to the enrolment screen is the visible half; this is the half
+   * that matters. Even if some route forgets to redirect, the scope it receives
+   * is not staff and is bound to no client, so it can read nothing — the check
+   * is in what the session grants, not only in where it is sent.
+   */
+  const needsSecondFactor = role === "staff" && session.secondFactorAt === null;
+  const isStaff = role === "staff" && !needsSecondFactor;
 
   // For staff the scope comes from a live grant, so it lapses on its own
   // rather than lasting as long as the session does.
-  let organizationId = session.activeOrganizationId;
+  let organizationId = needsSecondFactor ? null : session.activeOrganizationId;
   if (isStaff) {
     const grant = await liveGrantForSession(session.id);
     organizationId = grant?.organizationId ?? null;
@@ -204,6 +219,8 @@ export async function getSessionContext(): Promise<SessionContext | null> {
     memberships: mships,
     absoluteExpiresAt: session.absoluteExpiresAt,
     idleSeconds: session.idleSeconds,
+    secondFactorAt: session.secondFactorAt,
+    needsSecondFactor,
   };
 }
 

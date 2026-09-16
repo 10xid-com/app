@@ -48,6 +48,28 @@ export async function findUserByEmail(email: string) {
   return rows[0] ?? null;
 }
 
+export async function setTotpSecret(userId: string, encrypted: string) {
+  await db
+    .update(users)
+    .set({ totpSecret: encrypted, totpConfirmedAt: null, updatedAt: new Date() })
+    .where(eq(users.id, userId));
+}
+
+export async function confirmTotp(userId: string) {
+  await db
+    .update(users)
+    .set({ totpConfirmedAt: new Date(), updatedAt: new Date() })
+    .where(eq(users.id, userId));
+}
+
+/** Records that this session cleared its second factor. */
+export async function markSecondFactorPassed(sessionId: string) {
+  await db
+    .update(sessions)
+    .set({ secondFactorAt: new Date() })
+    .where(eq(sessions.id, sessionId));
+}
+
 export async function markEmailVerified(userId: string) {
   await db
     .update(users)
@@ -204,6 +226,41 @@ export async function revokeAllSessionsForUser(userId: string) {
     .where(and(eq(sessions.userId, userId), isNull(sessions.revokedAt)))
     .returning({ id: sessions.id });
   return rows.length;
+}
+
+/** Sign out every other device, keeping the one being used right now. */
+export async function revokeOtherSessionsForUser(
+  userId: string,
+  keepSessionId: string,
+) {
+  const rows = await db
+    .update(sessions)
+    .set({ revokedAt: new Date() })
+    .where(
+      and(
+        eq(sessions.userId, userId),
+        isNull(sessions.revokedAt),
+        sql`${sessions.id} <> ${keepSessionId}`,
+      ),
+    )
+    .returning({ id: sessions.id });
+  return rows.length;
+}
+
+/** Revoke one session, but only if it belongs to this person. */
+export async function revokeOwnSession(userId: string, sessionId: string) {
+  const rows = await db
+    .update(sessions)
+    .set({ revokedAt: new Date() })
+    .where(
+      and(
+        eq(sessions.id, sessionId),
+        eq(sessions.userId, userId),
+        isNull(sessions.revokedAt),
+      ),
+    )
+    .returning({ id: sessions.id });
+  return rows.length === 1;
 }
 
 export async function activeSessionsForUser(userId: string) {

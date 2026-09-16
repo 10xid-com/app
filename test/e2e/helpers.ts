@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import type { Page } from "@playwright/test";
 import { Client } from "pg";
+import { createHmac } from "node:crypto";
 
 const SINK = process.env.DEV_CODE_SINK ?? "/tmp/portal-signin-codes.log";
 
@@ -55,6 +56,11 @@ export async function resetSignInState() {
   await db.connect();
   await db.query(
     "truncate sign_in_codes, sso_tickets, staff_grants, sessions cascade",
+  );
+  // Clear staff authenticator enrolment too, so each test walks the full
+  // second-factor path rather than depending on a secret a previous test set.
+  await db.query(
+    "update users set totp_secret = null, totp_confirmed_at = null",
   );
   await db.end();
 }
@@ -119,6 +125,59 @@ export async function seededIds() {
   };
 }
 
+/**
+ * Compute the current TOTP code from a base32 secret.
+ *
+ * Reimplemented here rather than imported from lib/auth/totp, which is marked
+ * server-only and throws outside a server context. Keeping the test's own
+ * implementation also means the code the app accepts is checked against an
+ * independent calculation rather than against itself.
+ */
+export function totpCode(secretBase32: string, at = Date.now()): string {
+  const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  let bits = 0, value = 0;
+  const bytes: number[] = [];
+  for (const ch of secretBase32.replace(/[^A-Z2-7]/gi, "").toUpperCase()) {
+    value = (value << 5) | ALPHABET.indexOf(ch);
+    bits += 5;
+    if (bits >= 8) { bytes.push((value >>> (bits - 8)) & 0xff); bits -= 8; }
+  }
+  const counter = Buffer.alloc(8);
+  counter.writeBigUInt64BE(BigInt(Math.floor(at / 1000 / 30)));
+  const digest = createHmac("sha1", Buffer.from(bytes)).update(counter).digest();
+  const offset = digest[digest.length - 1] & 0x0f;
+  const binary =
+    ((digest[offset] & 0x7f) << 24) |
+    ((digest[offset + 1] & 0xff) << 16) |
+    ((digest[offset + 2] & 0xff) << 8) |
+    (digest[offset + 3] & 0xff);
+  return String(binary % 1_000_000).padStart(6, "0");
+}
+
+/**
+ * Clear the staff second factor, if this sign-in landed on it.
+ *
+ * Staff must pass a second step because a staff session reaches every client.
+ * The enrolment screen shows the setup key, so the test reads it from the page
+ * exactly as a person would, then produces a code from it.
+ */
+export async function passSecondFactor(page: Page) {
+  if (!page.url().includes("/auth/2fa")) return;
+
+  const start = page.getByRole("button", { name: "Start setup" });
+  if (await start.isVisible().catch(() => false)) {
+    await start.click();
+    await page.waitForURL(/\/auth\/2fa/);
+  }
+
+  const key = (await page.getByText(/^[A-Z2-7 ]{20,}$/).first().innerText())
+    .replace(/\s+/g, "");
+
+  await page.getByLabel("Six-digit code").fill(totpCode(key));
+  await page.getByRole("button", { name: /Confirm and continue|Continue/ }).click();
+  await page.waitForURL((u) => !u.pathname.startsWith("/auth/"));
+}
+
 /** Complete the whole sign-in flow on the login host. */
 export async function signIn(page: Page, email: string, next = "/") {
   await page.goto(`/auth/login?next=${encodeURIComponent(next)}`);
@@ -130,5 +189,8 @@ export async function signIn(page: Page, email: string, next = "/") {
 
   await page.getByLabel("Six-digit code").fill(code);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await page.waitForURL((url) => !url.pathname.startsWith("/auth/"));
+  await page.waitForURL(
+    (url) => !url.pathname.startsWith("/auth/") || url.pathname === "/auth/2fa",
+  );
+  await passSecondFactor(page);
 }
