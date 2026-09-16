@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
-import { getSessionContext } from "@/lib/auth/session";
+import { currentHost, getSessionContext } from "@/lib/auth/session";
+import { isPrimaryHost } from "@/lib/auth/sso";
 import { signOutAction } from "./auth/actions";
 
 /**
@@ -13,7 +14,14 @@ import { signOutAction } from "./auth/actions";
  */
 export default async function Home() {
   const ctx = await getSessionContext();
-  if (!ctx) redirect("/auth/login");
+  if (!ctx) {
+    // On a client domain there is no sign-in form to show — sign-in happens on
+    // the login host and nowhere else. A cookie that exists but is expired or
+    // revoked gets past the proxy's presence check and lands here, so this is
+    // the point where the handoff restarts rather than a dead end.
+    const host = await currentHost();
+    redirect(isPrimaryHost(host) ? "/auth/login" : "/auth/sso/start?path=%2F");
+  }
 
   return (
     <main className="min-h-dvh bg-ground px-4 py-12">
