@@ -95,6 +95,25 @@ export default async function DashboardPage() {
 
   const barTotal = stats.byStatus.reduce((s, r) => s + r.n, 0) || 1;
 
+  // Every status, in workflow order, zeros included — the way the Rotary admin
+  // does it. A breakdown that hides its empty rows makes "nothing is waiting on
+  // approval" indistinguishable from "we do not track that".
+  const counts = new Map(stats.byStatus.map((s) => [s.status, s.n]));
+  const ORDER = [
+    "draft",
+    "open",
+    "in_progress",
+    "awaiting_approval",
+    "changes_requested",
+    "approved",
+    "completed",
+    "cancelled",
+  ] as const;
+  const fullBreakdown = ORDER.map((status) => ({
+    status,
+    n: counts.get(status) ?? 0,
+  }));
+
   return (
     <PortalShell
       email={ctx.email}
@@ -191,27 +210,33 @@ export default async function DashboardPage() {
           </div>
 
           <ul className="mt-4 space-y-2">
-            {stats.byStatus.length === 0 ? (
-              <li className="text-sm text-ink-faint">Nothing yet.</li>
-            ) : (
-              stats.byStatus.map((s) => (
-                <li
-                  key={s.status}
-                  className="flex items-center justify-between gap-3 text-sm"
+            {fullBreakdown.map((s) => (
+              <li
+                key={s.status}
+                className="flex items-center justify-between gap-3 text-sm"
+              >
+                <span
+                  className={`flex items-center gap-2 ${
+                    s.n === 0 ? "text-ink-faint" : "text-ink-soft"
+                  }`}
                 >
-                  <span className="flex items-center gap-2 text-ink-soft">
-                    <span
-                      aria-hidden
-                      className={`h-2 w-2 flex-none rounded-full ${
-                        STATUS_DOT[s.status] ?? "bg-ink-faint"
-                      }`}
-                    />
-                    {STATUS_LABEL[s.status] ?? s.status}
-                  </span>
-                  <span className="tabular-nums text-ink">{s.n}</span>
-                </li>
-              ))
-            )}
+                  <span
+                    aria-hidden
+                    className={`h-2 w-2 flex-none rounded-full ${
+                      s.n === 0 ? "bg-line" : STATUS_DOT[s.status] ?? "bg-ink-faint"
+                    }`}
+                  />
+                  {STATUS_LABEL[s.status] ?? s.status}
+                </span>
+                <span
+                  className={`tabular-nums ${
+                    s.n === 0 ? "text-ink-faint" : "text-ink"
+                  }`}
+                >
+                  {s.n}
+                </span>
+              </li>
+            ))}
           </ul>
         </section>
 
