@@ -6,8 +6,8 @@
 
 # Test info
 
-- Name: cross-domain.spec.ts >> cross-domain sign-in >> signed in at the login host, a client domain needs no second prompt
-- Location: test/e2e/cross-domain.spec.ts:47:7
+- Name: sign-in.spec.ts >> sign in with an emailed code >> a client session carries the 30-day cap and no idle timeout
+- Location: test/e2e/sign-in.spec.ts:23:7
 
 # Error details
 

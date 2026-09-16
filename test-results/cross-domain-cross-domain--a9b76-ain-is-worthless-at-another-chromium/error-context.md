@@ -6,8 +6,8 @@
 
 # Test info
 
-- Name: cross-domain.spec.ts >> cross-domain sign-in >> signed in at the login host, a client domain needs no second prompt
-- Location: test/e2e/cross-domain.spec.ts:47:7
+- Name: cross-domain.spec.ts >> cross-domain sign-in >> a ticket for one client domain is worthless at another
+- Location: test/e2e/cross-domain.spec.ts:149:7
 
 # Error details
 

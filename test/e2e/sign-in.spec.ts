@@ -1,5 +1,11 @@
 import { expect, test } from "@playwright/test";
-import { latestCodeFor, resetSignInState, signIn } from "./helpers";
+import {
+  expectSignedIn,
+  latestCodeFor,
+  latestSessionFor,
+  resetSignInState,
+  signIn,
+} from "./helpers";
 
 const CLIENT = "jane@rotary.test";
 const STRANGER = "nobody@nowhere.test";
@@ -10,7 +16,7 @@ test.describe("sign in with an emailed code", () => {
 
   test("a known person signs in and lands signed in", async ({ page }) => {
     await signIn(page, CLIENT);
-    await expect(page.getByText(`Signed in as`)).toBeVisible();
+    await expectSignedIn(page);
     await expect(page.getByText(CLIENT)).toBeVisible();
   });
 
@@ -18,14 +24,17 @@ test.describe("sign in with an emailed code", () => {
     page,
   }) => {
     await signIn(page, CLIENT);
+    await expectSignedIn(page);
 
-    await expect(page.getByText("none")).toBeVisible(); // idle timeout
-    const expiry = await page
-      .getByRole("definition")
-      .filter({ hasText: /\d{4}-\d{2}-\d{2}T/ })
-      .innerText();
+    // Asserted against the stored session, not against text on a page: these
+    // are the limits that will actually be enforced.
+    const session = await latestSessionFor(CLIENT);
+    expect(session).not.toBeNull();
+    expect(session.role_at_creation).toBe("client");
+    expect(session.idle_seconds).toBeNull();
 
-    const days = (new Date(expiry).getTime() - Date.now()) / 86_400_000;
+    const days =
+      (new Date(session.absolute_expires_at).getTime() - Date.now()) / 86_400_000;
     expect(days).toBeGreaterThan(29.5);
     expect(days).toBeLessThan(30.5);
   });
@@ -66,7 +75,7 @@ test.describe("sign in with an emailed code", () => {
     const code = await latestCodeFor(CLIENT);
     await page.getByLabel("Six-digit code").fill(code);
     await page.getByRole("button", { name: "Sign in" }).click();
-    await page.waitForURL((url) => !url.pathname.startsWith("/auth/"));
+    await expectSignedIn(page);
 
     // Same code, fresh browser state: must be rejected.
     await context.clearCookies();
@@ -100,7 +109,8 @@ test.describe("sign in with an emailed code", () => {
 
   test("signing out ends the session", async ({ page }) => {
     await signIn(page, CLIENT);
-    await page.getByRole("button", { name: "Sign out everywhere" }).click();
+    await expectSignedIn(page);
+    await page.getByRole("button", { name: "Sign out" }).click();
     await page.waitForURL(/\/auth\/login/);
 
     // Going back to a protected page must not restore it.

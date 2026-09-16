@@ -59,6 +59,43 @@ export async function resetSignInState() {
   await db.end();
 }
 
+/**
+ * Assert the portal is showing, whatever the landing page happens to be.
+ *
+ * Deliberately not a copy of some sentence on the page: the landing page has
+ * already been replaced once, which silently broke every test that asserted its
+ * wording. The portal chrome is the stable signal that someone is signed in.
+ */
+export async function expectSignedIn(page: Page) {
+  await page.waitForSelector("text=10XiD Portal", { timeout: 15_000 });
+}
+
+/**
+ * The session row the server actually stored.
+ *
+ * Better than reading the caps off a page: it asserts the policy that will be
+ * enforced, not a string that happened to be rendered next to it.
+ */
+export async function latestSessionFor(email: string) {
+  try {
+    process.loadEnvFile(".env.local");
+  } catch {
+    /* CI supplies the environment */
+  }
+  const db = new Client({ connectionString: process.env.DATABASE_URL });
+  await db.connect();
+  const { rows } = await db.query(
+    `select s.idle_seconds, s.absolute_expires_at, s.role_at_creation,
+            s.issued_for_host, s.revoked_at
+       from sessions s join users u on u.id = s.user_id
+      where u.email = $1
+      order by s.created_at desc limit 1`,
+    [email.toLowerCase()],
+  );
+  await db.end();
+  return rows[0] ?? null;
+}
+
 /** Look up seeded ids, so tests attack real rows rather than invented ones. */
 export async function seededIds() {
   try {

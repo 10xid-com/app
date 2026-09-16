@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { resetSignInState, signIn } from "./helpers";
+import { expectSignedIn, resetSignInState, signIn } from "./helpers";
 
 /**
  * Phase 1's first risky claim: sign in once at the login host, then land
@@ -48,7 +48,7 @@ test.describe("cross-domain sign-in", () => {
     page,
   }) => {
     await signIn(page, CLIENT);
-    await expect(page.getByText("Signed in as")).toBeVisible();
+    await expectSignedIn(page);
 
     const hops = recordHops(page);
     const started = Date.now();
@@ -58,7 +58,7 @@ test.describe("cross-domain sign-in", () => {
 
     // Landed on the client domain, signed in, with no form in between.
     expect(new URL(page.url()).host).toBe("rotary.portal-b.test:3000");
-    await expect(page.getByText("Signed in as")).toBeVisible();
+    await expectSignedIn(page);
     await expect(page.getByLabel("Email")).toHaveCount(0);
     await expect(page.getByLabel("Six-digit code")).toHaveCount(0);
 
@@ -91,10 +91,10 @@ test.describe("cross-domain sign-in", () => {
   }) => {
     await signIn(page, CLIENT);
     await page.goto(ROTARY + "/");
-    await expect(page.getByText("Signed in as")).toBeVisible();
+    await expectSignedIn(page);
 
     await page.goto(PRIMARY + "/");
-    await page.getByRole("button", { name: "Sign out everywhere" }).click();
+    await page.getByRole("button", { name: "Sign out" }).click();
     await page.waitForURL(/\/auth\/login/);
     const signedOutAt = Date.now();
 
@@ -104,7 +104,7 @@ test.describe("cross-domain sign-in", () => {
       await page.goto(ROTARY + "/");
       await page.waitForLoadState("load");
       const stillIn = await page
-        .getByText("Signed in as")
+        .getByText("10XiD Portal")
         .isVisible()
         .catch(() => false);
       if (!stillIn) {
@@ -136,7 +136,7 @@ test.describe("cross-domain sign-in", () => {
     });
 
     await page.goto(ROTARY + "/");
-    await expect(page.getByText("Signed in as")).toBeVisible();
+    await expectSignedIn(page);
     expect(callbackUrl).toContain("ticket=");
 
     // Replay it with no state cookie and no session: must be refused.
@@ -160,7 +160,7 @@ test.describe("cross-domain sign-in", () => {
     });
 
     await page.goto(ROTARY + "/");
-    await expect(page.getByText("Signed in as")).toBeVisible();
+    await expectSignedIn(page);
 
     // Same ticket, aimed at the other client's domain.
     const stolen = callbackUrl.replace(

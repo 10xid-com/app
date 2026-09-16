@@ -6,8 +6,8 @@
 
 # Test info
 
-- Name: cross-domain.spec.ts >> cross-domain sign-in >> signed in at the login host, a client domain needs no second prompt
-- Location: test/e2e/cross-domain.spec.ts:47:7
+- Name: cross-domain.spec.ts >> cross-domain sign-in >> signing out at the login host ends the session on the other domain
+- Location: test/e2e/cross-domain.spec.ts:89:7
 
 # Error details
 
