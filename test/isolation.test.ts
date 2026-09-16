@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { Client } from "pg";
 import { getJob, listJobs, createJob, type Scope } from "@/lib/db";
-import { closePool } from "@/lib/db/connection";
+import { assertRestrictedRole, closePool } from "@/lib/db/connection";
 
 /**
  * The non-negotiable rule, tested at BOTH layers.
@@ -61,6 +61,31 @@ const scopeFor = (organizationId: string | null, isStaff = false): Scope => ({
   email: "jane@rotary.test",
   isStaff,
   organizationId,
+});
+
+describe("the startup guard", () => {
+  test("accepts the restricted role the application actually uses", async () => {
+    // Runs against DATABASE_APP_URL, the same connection the app opens.
+    await expect(assertRestrictedRole()).resolves.toBeUndefined();
+  });
+
+  test("its detection query would catch a privileged connection", async () => {
+    // The guard cannot be pointed at another connection without rebuilding the
+    // pool, so the query it relies on is checked directly against the OWNER —
+    // proving the detection works rather than assuming it does. If this
+    // reported a clean bill of health for the owner, the guard would pass for
+    // a connection under which row-level security is inactive.
+    const { rows } = await owner.query(`
+      select r.rolsuper, r.rolbypassrls,
+             (select count(*)::int from pg_tables
+               where schemaname='public' and tablename in ('jobs','job_events')
+                 and tableowner = current_user) as owns
+        from pg_roles r where r.rolname = current_user
+    `);
+    const privileged =
+      rows[0].rolsuper || rows[0].rolbypassrls || rows[0].owns > 0;
+    expect(privileged).toBe(true);
+  });
 });
 
 describe("the database itself enforces the rule", () => {

@@ -71,9 +71,109 @@ try {
         "so the application will not be able to connect.",
     );
   }
+  await bootstrap(pool);
 } catch (error) {
   console.error("Migration failed:", error);
   process.exitCode = 1;
 } finally {
   await pool.end();
+}
+
+/**
+ * First-run seed.
+ *
+ * Accounts are invitation-only — there is no sign-up form — so a brand new
+ * deployment has no way in. This creates the first staff account, and a client
+ * account alongside it so both sides of the portal can be seen.
+ *
+ * Runs ONLY when the users table is completely empty. It is not an "upsert the
+ * admin" step: once anybody exists, this does nothing at all, so it can never
+ * resurrect a removed account or quietly re-grant staff to an address.
+ */
+async function bootstrap(pool) {
+  const staffEmail = process.env.BOOTSTRAP_EMAIL?.trim().toLowerCase();
+  if (!staffEmail) return;
+
+  const { rows: existing } = await pool.query(
+    "select count(*)::int as n from users",
+  );
+  if (existing[0].n > 0) {
+    console.log("Bootstrap skipped: accounts already exist.");
+    return;
+  }
+
+  // A plus-address by default, so both accounts land in the same inbox while
+  // remaining two distinct people to the system.
+  const [local, domain] = staffEmail.split("@");
+  const clientEmail =
+    process.env.BOOTSTRAP_CLIENT_EMAIL?.trim().toLowerCase() ??
+    `${local}+rotary@${domain}`;
+
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+
+    const org = async (type, name, slug, hex) =>
+      (
+        await client.query(
+          `insert into organizations (type, name, slug, brand_primary_hex)
+           values ($1,$2,$3,$4) returning id`,
+          [type, name, slug, hex],
+        )
+      ).rows[0].id;
+
+    const internal = await org("internal", "Branding Centres", "branding-centres", "#26467F");
+    const rotary = await org("client", "Rotary", "rotary", "#003F87");
+    const northstar = await org("client", "Northstar Roofing", "northstar", "#B5441F");
+
+    const user = async (email, name, isStaff) =>
+      (
+        await client.query(
+          `insert into users (email, full_name, is_staff, email_verified_at)
+           values ($1,$2,$3, now()) returning id`,
+          [email, name, isStaff],
+        )
+      ).rows[0].id;
+
+    const staffId = await user(staffEmail, "Paolo", true);
+    const clientId = await user(clientEmail, "Rotary contact", false);
+
+    await client.query(
+      `insert into memberships (user_id, organization_id, role) values ($1,$2,'staff')`,
+      [staffId, internal],
+    );
+    await client.query(
+      `insert into memberships (user_id, organization_id, role) values ($1,$2,'owner')`,
+      [clientId, rotary],
+    );
+
+    // Two clients with jobs, so tenant isolation has something to demonstrate:
+    // the Rotary account must never see the Northstar rows.
+    const job = async (orgId, ref, direction, title, createdBy, status) => {
+      const { rows } = await client.query(
+        `insert into jobs (id, organization_id, ref, direction, title, status, created_by)
+         values (gen_random_uuid(), $1,$2,$3,$4,$5,$6) returning id`,
+        [orgId, ref, direction, title, status, createdBy],
+      );
+      await client.query(
+        `insert into job_events (job_id, organization_id, actor_id, actor_email_at_time, action, after)
+         values ($1,$2,$3,$4,'created',$5)`,
+        [rows[0].id, orgId, createdBy, staffEmail, JSON.stringify({ title, status })],
+      );
+    };
+
+    await job(rotary, "ROT-0001", "from_client", "District 7070 banner artwork", staffId, "open");
+    await job(rotary, "ROT-0002", "to_client", "Club pin proof — second round", staffId, "in_progress");
+    await job(northstar, "NOR-0001", "from_client", "Fleet vehicle wrap — 3 vans", staffId, "open");
+
+    await client.query("update organizations set job_counter = 2 where type = 'client'");
+    await client.query("commit");
+
+    console.log(`Bootstrapped. Staff: ${staffEmail}  Client: ${clientEmail}`);
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
