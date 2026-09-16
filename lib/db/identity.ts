@@ -292,6 +292,42 @@ export async function setSessionActiveOrganization(
 /* Staff grants                                                        */
 /* ------------------------------------------------------------------ */
 
+/**
+ * The people in one company.
+ *
+ * Takes the organization id explicitly rather than reading it from anywhere
+ * ambient, and the caller passes it from the SESSION — memberships are not
+ * row-level-security protected (they are what produces a scope), so this is the
+ * one place the filter has to be supplied by hand and is worth reading twice.
+ */
+export async function teamFor(organizationId: string) {
+  return db
+    .select({
+      userId: users.id,
+      email: users.email,
+      fullName: users.fullName,
+      role: memberships.role,
+      isStaff: users.isStaff,
+      joinedAt: memberships.createdAt,
+    })
+    .from(memberships)
+    .innerJoin(users, eq(users.id, memberships.userId))
+    .where(
+      and(eq(memberships.organizationId, organizationId), isNull(users.deletedAt)),
+    )
+    .orderBy(users.fullName);
+}
+
+/** The internal organization — the staff side of the exchange. */
+export async function internalOrganization() {
+  const rows = await db
+    .select()
+    .from(organizations)
+    .where(and(eq(organizations.type, "internal"), isNull(organizations.deletedAt)))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
 /** The client picker staff choose from. Internal organizations are not clients. */
 export async function listClientOrganizations() {
   return db

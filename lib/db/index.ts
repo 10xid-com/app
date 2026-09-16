@@ -234,6 +234,147 @@ async function recordEvent(
   });
 }
 
+/* ------------------------------------------------------------------ */
+/* Dashboard                                                           */
+/* ------------------------------------------------------------------ */
+
+export type JobStats = {
+  total: number;
+  open: number;
+  inProgress: number;
+  completed: number;
+  awaitingUs: number;
+  oldestAwaitingDays: number | null;
+  sentThisMonth: number;
+  receivedThisMonth: number;
+  byStatus: Array<{ status: string; n: number }>;
+};
+
+/**
+ * The figures behind the dashboard, in one round trip.
+ *
+ * Every count goes through the same scoped transaction as everything else, so
+ * a client's dashboard is arithmetic over their own rows and a staff overview
+ * is arithmetic over all of them — without a second, differently-shaped query
+ * that could disagree with the list it sits above.
+ */
+export async function jobStats(scope: Scope): Promise<JobStats> {
+  return inTenantTransaction(
+    scope.organizationId,
+    isSurveying(scope),
+    async (tx) => {
+      const rows = await tx
+        .select({
+          status: jobs.status,
+          direction: jobs.direction,
+          n: sql<number>`count(*)::int`,
+          oldest: sql<string | null>`min(${jobs.createdAt})`,
+          thisMonth: sql<number>`count(*) filter (
+            where ${jobs.createdAt} >= date_trunc('month', now())
+          )::int`,
+        })
+        .from(jobs)
+        .where(sql`${jobs.archivedAt} is null`)
+        .groupBy(jobs.status, jobs.direction);
+
+      const total = rows.reduce((sum, r) => sum + r.n, 0);
+      const sum = (fn: (r: (typeof rows)[number]) => boolean) =>
+        rows.filter(fn).reduce((s, r) => s + r.n, 0);
+
+      const byStatusMap = new Map<string, number>();
+      for (const r of rows) {
+        byStatusMap.set(r.status, (byStatusMap.get(r.status) ?? 0) + r.n);
+      }
+
+      // "Awaiting a response" is work the other side sent in that nobody has
+      // picked up — the number that should make someone act.
+      const awaiting = rows.filter(
+        (r) => r.direction === "from_client" && r.status === "open",
+      );
+      const oldest = awaiting
+        .map((r) => (r.oldest ? new Date(r.oldest).getTime() : null))
+        .filter((t): t is number => t !== null)
+        .sort((a, b) => a - b)[0];
+
+      return {
+        total,
+        open: sum((r) => r.status === "open"),
+        inProgress: sum((r) => r.status === "in_progress"),
+        completed: sum((r) => r.status === "completed"),
+        awaitingUs: awaiting.reduce((s, r) => s + r.n, 0),
+        oldestAwaitingDays:
+          oldest === undefined
+            ? null
+            : Math.floor((Date.now() - oldest) / 86_400_000),
+        sentThisMonth: rows
+          .filter((r) => r.direction === "to_client")
+          .reduce((s, r) => s + r.thisMonth, 0),
+        receivedThisMonth: rows
+          .filter((r) => r.direction === "from_client")
+          .reduce((s, r) => s + r.thisMonth, 0),
+        byStatus: [...byStatusMap.entries()]
+          .map(([status, n]) => ({ status, n }))
+          .sort((a, b) => b.n - a.n),
+      };
+    },
+  );
+}
+
+export async function recentJobs(scope: Scope, limit = 6) {
+  return inTenantTransaction(scope.organizationId, isSurveying(scope), (tx) =>
+    tx
+      .select({
+        id: jobs.id,
+        ref: jobs.ref,
+        title: jobs.title,
+        status: jobs.status,
+        direction: jobs.direction,
+        createdAt: jobs.createdAt,
+        organizationId: jobs.organizationId,
+        organizationName: organizations.name,
+      })
+      .from(jobs)
+      .innerJoin(organizations, eq(organizations.id, jobs.organizationId))
+      .orderBy(desc(jobs.createdAt))
+      .limit(limit),
+  );
+}
+
+/**
+ * Per-person totals for the Team screen: what each person sent, what is
+ * assigned to them, and when they were last involved in anything.
+ *
+ * Scoped like everything else, so a client sees their own colleagues' activity
+ * and never another company's.
+ */
+export async function jobsPerPerson(scope: Scope) {
+  return inTenantTransaction(scope.organizationId, isSurveying(scope), (tx) =>
+    tx
+      .select({
+        userId: jobs.createdBy,
+        sent: sql<number>`count(*) filter (where ${jobs.direction} = 'to_client')::int`,
+        received: sql<number>`count(*) filter (where ${jobs.direction} = 'from_client')::int`,
+        raised: sql<number>`count(*)::int`,
+        lastActivity: sql<string | null>`max(${jobs.updatedAt})`,
+      })
+      .from(jobs)
+      .groupBy(jobs.createdBy),
+  );
+}
+
+export async function assignedPerPerson(scope: Scope) {
+  return inTenantTransaction(scope.organizationId, isSurveying(scope), (tx) =>
+    tx
+      .select({
+        userId: jobs.assignedTo,
+        assigned: sql<number>`count(*)::int`,
+      })
+      .from(jobs)
+      .where(sql`${jobs.assignedTo} is not null`)
+      .groupBy(jobs.assignedTo),
+  );
+}
+
 export async function listJobEvents(scope: Scope, jobId: string) {
   return inTenantTransaction(scope.organizationId, isSurveying(scope), (tx) =>
     tx

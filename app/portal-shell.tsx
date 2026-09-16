@@ -29,9 +29,15 @@ export function PortalShell({
             <Link href="/jobs" className="flex-none text-sm font-semibold tracking-wide">
               10XiD Portal
             </Link>
-            <nav className="flex items-center gap-4 text-sm text-white/70">
+            <nav className="flex items-center gap-4 overflow-x-auto whitespace-nowrap text-sm text-white/70">
+              <Link href="/dashboard" className="transition-colors hover:text-white">
+                Dashboard
+              </Link>
               <Link href="/jobs" className="transition-colors hover:text-white">
                 Jobs
+              </Link>
+              <Link href="/team" className="transition-colors hover:text-white">
+                Team
               </Link>
               {isStaff ? (
                 <Link href="/staff" className="transition-colors hover:text-white">

@@ -7,5 +7,5 @@ import { redirect } from "next/navigation";
  * is signed in, and send them straight back.
  */
 export default function Home() {
-  redirect("/jobs");
+  redirect("/dashboard");
 }

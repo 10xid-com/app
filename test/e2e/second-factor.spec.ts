@@ -96,7 +96,10 @@ test.describe("the staff second factor", () => {
 
     await page.getByLabel("Six-digit code").fill(totpCode(key));
     await page.getByRole("button", { name: /Confirm and continue/ }).click();
-    await page.waitForURL(/\/jobs/);
+    // Not a fixed path: the landing page has moved once already, and a test
+    // pinned to it breaks for a reason that has nothing to do with what it
+    // is checking.
+    await page.waitForURL((u) => !u.pathname.startsWith("/auth/"));
 
     // Second sign-in, clean browser: the secret is already confirmed, so the
     // setup key must NOT be shown again.
@@ -115,7 +118,7 @@ test.describe("the staff second factor", () => {
 
     await page.getByLabel("Six-digit code").fill(totpCode(key));
     await page.getByRole("button", { name: "Continue" }).click();
-    await page.waitForURL(/\/jobs/);
-    await expect(page.getByRole("heading", { name: "Jobs" })).toBeVisible();
+    await page.waitForURL((u) => !u.pathname.startsWith("/auth/"));
+    await expect(page.getByText("10XiD Portal")).toBeVisible();
   });
 });
