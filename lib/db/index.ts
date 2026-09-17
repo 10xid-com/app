@@ -1,5 +1,5 @@
 import "server-only";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { inTenantTransaction, type Transaction } from "./connection";
 import { jobEvents, jobs, organizations } from "./schema";
 import { uuidv7 } from "../ids";
@@ -383,6 +383,126 @@ export async function assignedPerPerson(scope: Scope) {
       .where(sql`${jobs.assignedTo} is not null`)
       .groupBy(jobs.assignedTo),
   );
+}
+
+export type RequestCard = {
+  id: string;
+  ref: string;
+  title: string;
+  status: JobRow["status"];
+  createdAt: Date;
+  organizationId: string;
+  organizationName: string;
+  driveFolderId: string | null;
+  driveFolderUrl: string | null;
+  details: Record<string, string> | null;
+};
+
+/**
+ * What came in, with what the sender actually wrote.
+ *
+ * A request is work arriving from the client's side — an estimate enquiry off
+ * their website, or a job somebody raised in the portal. The submitted details
+ * are read off the creation event rather than from columns on `jobs`, because
+ * they are a record of one moment and must not drift as the job is worked on.
+ * The audit table cannot be rewritten by the application role, which is exactly
+ * the property that record needs.
+ *
+ * One query rather than a fetch-then-loop: a card list that issues a second
+ * query per card is the thing that quietly turns one page load into forty.
+ */
+export async function recentRequests(
+  scope: Scope,
+  limit = 12,
+): Promise<RequestCard[]> {
+  const rows = await inTenantTransaction(
+    scope.organizationId,
+    isSurveying(scope),
+    (tx) =>
+      tx
+        .select({
+          id: jobs.id,
+          ref: jobs.ref,
+          title: jobs.title,
+          status: jobs.status,
+          createdAt: jobs.createdAt,
+          organizationId: jobs.organizationId,
+          organizationName: organizations.name,
+          driveFolderId: jobs.driveFolderId,
+          driveFolderUrl: jobs.driveFolderUrl,
+          details: sql<unknown>`(
+            select e.after -> 'details'
+              from job_events e
+             where e.job_id = ${jobs.id} and e.action = 'created'
+             order by e.id asc
+             limit 1
+          )`,
+        })
+        .from(jobs)
+        .innerJoin(organizations, eq(organizations.id, jobs.organizationId))
+        .where(
+          and(
+            eq(jobs.direction, "from_client"),
+            sql`${jobs.archivedAt} is null`,
+          ),
+        )
+        .orderBy(desc(jobs.createdAt))
+        .limit(limit),
+  );
+
+  return rows.map((row) => ({ ...row, details: narrowDetails(row.details) }));
+}
+
+/**
+ * The details column is jsonb, so what comes back is whatever was written.
+ * This narrows it rather than trusting it — every value is rendered as text,
+ * because by definition some of it was typed by an anonymous member of the
+ * public into a form on a website.
+ */
+function narrowDetails(value: unknown): Record<string, string> | null {
+  if (typeof value !== "object" || value === null) return null;
+  const out: Record<string, string> = {};
+  for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof v === "string" && v.length > 0) out[key] = v;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+/**
+ * Record which Drive folder belongs to this job.
+ *
+ * Scoped like every other write, so a folder cannot be attached to another
+ * client's job — and the event is appended, so "who filed this away and when"
+ * survives in the same place as everything else about the job.
+ */
+export async function attachDriveFolder(
+  scope: Scope,
+  jobId: string,
+  folder: { id: string; url: string },
+): Promise<JobRow | null> {
+  const organizationId = requireWritableOrg(scope);
+
+  return inTenantTransaction(organizationId, false, async (tx) => {
+    const [after] = await tx
+      .update(jobs)
+      .set({
+        driveFolderId: folder.id,
+        driveFolderUrl: folder.url,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(jobs.id, jobId), isNull(jobs.driveFolderId)))
+      .returning();
+
+    // Already had one. Not an error — two people pressed the button — but
+    // nothing is overwritten and no second event is written.
+    if (!after) return null;
+
+    await recordEvent(tx, scope, after, "drive_folder_created", null, {
+      driveFolderUrl: folder.url,
+    });
+
+    return after;
+  });
 }
 
 /**

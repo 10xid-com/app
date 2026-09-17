@@ -419,6 +419,21 @@ export const jobs = pgTable(
     quotedAmountCents: integer("quoted_amount_cents"),
     currency: char("currency", { length: 3 }),
 
+    /**
+     * Where this job's files live in Google Drive.
+     *
+     * A reference, not a copy: the portal records which folder belongs to which
+     * job and nothing else. Drive stays the place the files are, so nobody has
+     * to wonder which of two systems has the current version.
+     *
+     * Null until somebody asks for a folder. Creating one is deliberately an
+     * action rather than something that happens to every request that arrives,
+     * because most enquiries never become work and a Drive full of empty
+     * folders is worse than no folders.
+     */
+    driveFolderId: text("drive_folder_id"),
+    driveFolderUrl: text("drive_folder_url"),
+
     createdAt,
     updatedAt,
     /** The archive is a timestamp, not a second table to forget to scope. */

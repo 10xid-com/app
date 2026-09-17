@@ -1,6 +1,12 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { Client } from "pg";
-import { getJob, listJobs, createJob, type Scope } from "@/lib/db";
+import {
+  attachDriveFolder,
+  createJob,
+  getJob,
+  listJobs,
+  type Scope,
+} from "@/lib/db";
 import { assertRestrictedRole, closePool } from "@/lib/db/connection";
 
 /**
@@ -210,6 +216,35 @@ describe("the shared helper enforces the same rule", () => {
 
     // And the same through the single-row path, by exact id.
     expect(await getJob(scopeFor(rotaryId, true), northstarJobId)).toBeNull();
+  });
+
+  test("a Drive folder cannot be attached without a client chosen", async () => {
+    // The dashboard hides the button in this case, but hiding a button is not
+    // security — this is the check that actually stops it, and it is the same
+    // one every other write goes through.
+    await expect(
+      attachDriveFolder(scopeFor(null, true), northstarJobId, {
+        id: "folder-id",
+        url: "https://drive.google.com/drive/folders/folder-id",
+      }),
+    ).rejects.toThrow(/not scoped to a client/i);
+  });
+
+  test("a Drive folder cannot be attached to another client's job", async () => {
+    // Scoped to Rotary, pointed at Northstar's job by its exact id. The row is
+    // not visible, so the update matches nothing — no error, no folder, and no
+    // confirmation that the job exists.
+    const result = await attachDriveFolder(scopeFor(rotaryId), northstarJobId, {
+      id: "folder-id",
+      url: "https://drive.google.com/drive/folders/folder-id",
+    });
+    expect(result).toBeNull();
+
+    const { rows } = await owner.query(
+      "select drive_folder_id from jobs where id = $1",
+      [northstarJobId],
+    );
+    expect(rows[0].drive_folder_id).toBeNull();
   });
 
   test("staff surveying every client still cannot write to one", async () => {

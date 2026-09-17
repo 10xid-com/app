@@ -1,9 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { jobStats, recentJobs } from "@/lib/db";
+import { jobStats, recentJobs, recentRequests } from "@/lib/db";
 import { requireSession } from "@/lib/auth/require";
 import { liveGrantForSession, organizationById } from "@/lib/db/identity";
+import { driveIsConfigured } from "@/lib/integrations/google-drive";
 import { PortalShell } from "../portal-shell";
+import { Requests } from "./requests";
 
 export const metadata: Metadata = { title: "Dashboard" };
 
@@ -76,12 +78,37 @@ function Tile({
   );
 }
 
-export default async function DashboardPage() {
-  const ctx = await requireSession("/dashboard");
+const NOTICES: Record<string, { tone: "good" | "bad"; text: string }> = {
+  filed: { tone: "good", text: "Drive folder created, with the request in it." },
+  already: { tone: "good", text: "That request already has a folder." },
+  unknown: { tone: "bad", text: "That request no longer exists." },
+  drive_unconfigured: {
+    tone: "bad",
+    text: "Google Drive is not connected for this deployment yet.",
+  },
+  drive_failed: {
+    tone: "bad",
+    text: "Google Drive would not create the folder. Nothing was changed.",
+  },
+  drive_partial: {
+    tone: "bad",
+    text: "The folder was created, but the request summary did not upload into it.",
+  },
+};
 
-  const [stats, recent] = await Promise.all([
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ done?: string; error?: string }>;
+}) {
+  const ctx = await requireSession("/dashboard");
+  const params = await searchParams;
+  const notice = NOTICES[params.done ?? params.error ?? ""] ?? null;
+
+  const [stats, recent, requests] = await Promise.all([
     jobStats(ctx.scope),
     recentJobs(ctx.scope, 6),
+    recentRequests(ctx.scope, 12),
   ]);
 
   const grant = ctx.scope.isStaff
@@ -128,6 +155,19 @@ export default async function DashboardPage() {
           ? "Work in flight across every client."
           : "Work in flight, both directions."}
       </p>
+
+      {notice ? (
+        <p
+          role={notice.tone === "bad" ? "alert" : "status"}
+          className={`mt-4 rounded-lg border px-3 py-2 text-sm ${
+            notice.tone === "bad"
+              ? "border-bad/30 bg-bad/5 text-bad"
+              : "border-good/30 bg-good/5 text-good"
+          }`}
+        >
+          {notice.text}
+        </p>
+      ) : null}
 
       {stats.awaitingUs > 0 ? (
         <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-bad/30 bg-bad/5 px-4 py-3">
@@ -294,6 +334,14 @@ export default async function DashboardPage() {
           </ul>
         </section>
       </div>
+
+      <Requests
+        requests={requests}
+        // Writing a folder onto a job needs a session scoped to one company —
+        // which for staff means holding a grant with a typed reason.
+        canFile={ctx.scope.organizationId !== null}
+        driveConfigured={driveIsConfigured()}
+      />
     </PortalShell>
   );
 }
