@@ -1,0 +1,130 @@
+@import "tailwindcss";
+
+/**
+ * Theme tokens.
+ *
+ * The existing Rotary site has a real design system — a brand blue, a gold
+ * accent, an ivory ground, an ink scale, a card shadow scale — but its values
+ * are hard-coded under a `rotary` namespace, so a second client would mean a
+ * second build.
+ *
+ * Here the same token ROLES are defined as CSS variables on :root, and Tailwind
+ * generates utilities that reference the variables rather than baking the
+ * values in. A client's brand is then applied at request time by overriding a
+ * handful of variables for that hostname — one build, every client.
+ *
+ * Phase 2 wires the override to organizations.brand_primary_hex. These are the
+ * defaults every client starts from.
+ */
+
+:root {
+  --brand-primary: #26467f;
+  --brand-primary-dark: #1b3563;
+  --brand-primary-soft: #e4eaf6;
+  --brand-accent: #c9a84c;
+
+  --ground: #f7f9f8;
+  --surface: #ffffff;
+  --surface-sunk: #eef1f5;
+
+  --ink: #0e1b20;
+  --ink-soft: #44545f;
+  --ink-faint: #71818c;
+
+  --line: #d8dee6;
+  --line-soft: #e7eaef;
+
+  --good: #2d7a55;
+  --warn: #b06a12;
+  --bad: #b03a28;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --brand-primary: #7fa0dc;
+    --brand-primary-dark: #a9c0e9;
+    --brand-primary-soft: #1b2739;
+    --brand-accent: #e0c06a;
+
+    --ground: #12161a;
+    --surface: #191f25;
+    --surface-sunk: #0d1114;
+
+    --ink: #e8ecf0;
+    --ink-soft: #a8b4be;
+    --ink-faint: #7b8893;
+
+    --line: #2c353e;
+    --line-soft: #222a30;
+
+    --good: #63b98d;
+    --warn: #d7a254;
+    --bad: #df8878;
+  }
+}
+
+:root[data-theme="dark"] {
+  --brand-primary: #7fa0dc;
+  --brand-primary-dark: #a9c0e9;
+  --brand-primary-soft: #1b2739;
+  --brand-accent: #e0c06a;
+
+  --ground: #12161a;
+  --surface: #191f25;
+  --surface-sunk: #0d1114;
+
+  --ink: #e8ecf0;
+  --ink-soft: #a8b4be;
+  --ink-faint: #7b8893;
+
+  --line: #2c353e;
+  --line-soft: #222a30;
+
+  --good: #63b98d;
+  --warn: #d7a254;
+  --bad: #df8878;
+}
+
+/* `inline` makes the generated utilities reference the variables, so a
+   per-client override at runtime actually takes effect. */
+@theme inline {
+  --color-brand: var(--brand-primary);
+  --color-brand-dark: var(--brand-primary-dark);
+  --color-brand-soft: var(--brand-primary-soft);
+  --color-accent: var(--brand-accent);
+
+  --color-ground: var(--ground);
+  --color-surface: var(--surface);
+  --color-sunk: var(--surface-sunk);
+
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-faint: var(--ink-faint);
+
+  --color-line: var(--line);
+  --color-line-soft: var(--line-soft);
+
+  --color-good: var(--good);
+  --color-warn: var(--warn);
+  --color-bad: var(--bad);
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+
+  --shadow-card: 0 1px 3px 0 rgb(0 0 0 / 0.08), 0 1px 2px -1px rgb(0 0 0 / 0.08);
+  --shadow-card-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.08);
+}
+
+html,
+body {
+  background: var(--ground);
+  color: var(--ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
