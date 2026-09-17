@@ -9,6 +9,7 @@ import {
   recentCodeRequests,
   storeSignInCode,
 } from "@/lib/db/identity";
+import { acceptInvitation, liveInvitationFor } from "@/lib/db/invitations";
 import { sixDigitCode } from "@/lib/ids";
 import { sendSignInCode } from "./mailer";
 import { SIGN_IN_CODE } from "./policy";
@@ -38,6 +39,27 @@ function hashCode(email: string, code: string): Buffer {
 }
 
 export type RequestOutcome = "sent" | "rate_limited";
+
+/**
+ * Is there an account, or a live invitation, behind this address?
+ *
+ * Used only to decide whether a code is worth sending. The ANSWER IS NEVER
+ * RETURNED TO THE CALLER — every outcome above is "sent" — because a form that
+ * distinguished them would be a way to enumerate both who has an account and
+ * who has been invited.
+ */
+async function worthSendingTo(email: string): Promise<boolean> {
+  const user = await findUserByEmail(email);
+  if (user) {
+    // A service account has no inbox and is refused at verification anyway. An
+    // account with a confirmed authenticator gets its code from the
+    // authenticator, so an email would be useless and misleading.
+    return !user.isService && !user.totpConfirmedAt;
+  }
+  // No account yet — but an invitation makes this a sign-up, and a sign-up is
+  // exactly the case where the emailed code is the right first step.
+  return (await liveInvitationFor(email)) !== null;
+}
 
 /**
  * Always reports the same thing to the caller whether or not the address is
@@ -71,18 +93,11 @@ export async function requestSignInCode(
     requestedIp,
   });
 
-  const user = await findUserByEmail(email);
-
-  // Three reasons nothing is sent, and the caller is told the same thing in all
-  // of them, because the answer is what would otherwise reveal who has what.
-  //
-  //  * No account. Sending would confirm the address exists.
-  //  * A service account: not a person, no inbox, and refused at verification.
-  //  * An account with a confirmed authenticator. Its code comes from the
-  //    authenticator now, so an email would be both useless and misleading —
-  //    and, more to the point, the emailed code no longer opens that account.
-  const usesAuthenticator = Boolean(user?.totpConfirmedAt);
-  if (user && !user.isService && !usesAuthenticator) {
+  // Nothing is sent to an address with no account and no invitation, to a
+  // service account, or to one whose code now comes from an authenticator —
+  // and the caller is told the same thing in every case, because the answer is
+  // what would otherwise reveal who has what.
+  if (await worthSendingTo(email)) {
     await sendSignInCode({ to: email, code, expiresInMinutes: 10 });
   }
 
@@ -187,9 +202,34 @@ export async function verifySignInCode(
 
   // Re-read rather than reusing `account` from above: the code was valid, and
   // this is the last moment before a session exists, so an account removed in
-  // between must not still get one. Nothing is created here either — accounts
-  // come from invitations, never from the sign-in form.
-  const user = await findUserByEmail(email);
+  // between must not still get one.
+  let user = await findUserByEmail(email);
+
+  /**
+   * Signing up: the code proved they hold the address, and an invitation says
+   * which company that address belongs to. The account is created HERE and not
+   * a moment earlier — an invitation on its own is not an account, so
+   * withdrawing one before it is used leaves nothing behind.
+   *
+   * The company comes off the invitation, never from anything typed into the
+   * form. The person chooses their address; they do not choose their company.
+   */
+  if (!user) {
+    const invitation = await liveInvitationFor(email);
+    if (!invitation) return { ok: false, reason: "invalid" };
+
+    const created = await acceptInvitation({
+      invitationId: invitation.id,
+      organizationId: invitation.organizationId,
+      email,
+      role: invitation.role,
+    });
+    // Lost the race to another sign-up with the same code. One winner.
+    if (!created) return { ok: false, reason: "invalid" };
+
+    user = await findUserByEmail(email);
+  }
+
   if (!user || user.isService) return { ok: false, reason: "invalid" };
 
   if (!user.emailVerifiedAt) await markEmailVerified(user.id);

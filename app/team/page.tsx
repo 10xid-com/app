@@ -7,7 +7,9 @@ import {
   organizationById,
   teamFor,
 } from "@/lib/db/identity";
+import { listInvitations } from "@/lib/db/invitations";
 import { PortalShell } from "../portal-shell";
+import { inviteAction, revokeInvitationAction } from "./actions";
 
 export const metadata: Metadata = { title: "Team" };
 
@@ -19,8 +21,25 @@ export const metadata: Metadata = { title: "Team" };
  * client, that client's people. The organization id comes from the session,
  * never from the URL.
  */
-export default async function TeamPage() {
+const ERRORS: Record<string, string> = {
+  email: "That does not look like an email address.",
+  notowner: "Only an owner of this company can invite people.",
+  unknown: "That invitation no longer exists.",
+  mail: "The invitation was created, but the email did not send. Tell them to go to the sign-up screen with this address.",
+};
+
+const DONE: Record<string, string> = {
+  invited: "Invitation sent. It lapses in 14 days if unused.",
+  revoked: "Invitation withdrawn.",
+};
+
+export default async function TeamPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string; done?: string }>;
+}) {
   const ctx = await requireSession("/team");
+  const params = await searchParams;
 
   const grant = ctx.scope.isStaff
     ? await liveGrantForSession(ctx.sessionId)
@@ -35,11 +54,23 @@ export default async function TeamPage() {
     ? actingOrg ?? internal ?? (await organizationById(teamOrgId))
     : null;
 
-  const [members, raised, assigned] = await Promise.all([
+  const [members, raised, assigned, pending] = await Promise.all([
     teamOrgId ? teamFor(teamOrgId) : Promise.resolve([]),
     jobsPerPerson(ctx.scope),
     assignedPerPerson(ctx.scope),
+    listInvitations(ctx.scope),
   ]);
+
+  // Inviting writes into one company's data, so it needs a session scoped to
+  // one — for staff that means holding a grant. Owners may invite into their
+  // own company; members may not, because one compromised account quietly
+  // becoming several is the failure that matters here.
+  const ownHere = ctx.memberships.find(
+    (m) => m.organizationId === ctx.scope.organizationId,
+  );
+  const mayInvite =
+    ctx.scope.organizationId !== null &&
+    (ctx.scope.isStaff || ownHere?.role === "owner");
 
   const raisedBy = new Map(raised.map((r) => [r.userId, r]));
   const assignedTo = new Map(assigned.map((r) => [r.userId, r.assigned]));
@@ -63,6 +94,122 @@ export default async function TeamPage() {
           "Choose a client to see their people."
         )}
       </p>
+
+      {params.done ? (
+        <p
+          role="status"
+          className="mt-4 rounded-lg border border-good/30 bg-good/5 px-3 py-2 text-sm text-good"
+        >
+          {DONE[params.done] ?? "Done."}
+        </p>
+      ) : null}
+
+      {params.error ? (
+        <p
+          role="alert"
+          className="mt-4 rounded-lg border border-bad/30 bg-bad/5 px-3 py-2 text-sm text-bad"
+        >
+          {ERRORS[params.error] ?? "That did not work."}
+        </p>
+      ) : null}
+
+      {mayInvite ? (
+        <form
+          action={inviteAction}
+          className="mt-6 flex flex-wrap items-end gap-3 rounded-xl border
+                     border-line bg-surface p-4 shadow-card"
+        >
+          <div className="min-w-0 flex-1">
+            <label
+              htmlFor="invite-email"
+              className="mb-1 block text-xs font-medium text-ink-soft"
+            >
+              Invite someone to {teamOrg?.name ?? "this company"}
+            </label>
+            <input
+              id="invite-email"
+              name="email"
+              type="email"
+              required
+              maxLength={320}
+              placeholder="them@company.com"
+              className="w-full rounded-lg border border-line bg-surface px-3 py-2
+                         text-sm text-ink placeholder:text-ink-faint
+                         focus:border-brand focus:outline-2 focus:outline-brand/30"
+            />
+          </div>
+          <div>
+            <label
+              htmlFor="invite-role"
+              className="mb-1 block text-xs font-medium text-ink-soft"
+            >
+              Can invite others
+            </label>
+            <select
+              id="invite-role"
+              name="role"
+              defaultValue="member"
+              className="rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink
+                         focus:border-brand focus:outline-2 focus:outline-brand/30"
+            >
+              <option value="member">No — member</option>
+              <option value="owner">Yes — owner</option>
+            </select>
+          </div>
+          <button
+            type="submit"
+            className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white
+                       transition-colors duration-150 hover:bg-brand-dark
+                       focus-visible:outline-2 focus-visible:outline-offset-2
+                       focus-visible:outline-brand"
+          >
+            Send invitation
+          </button>
+        </form>
+      ) : null}
+
+      {pending.length > 0 ? (
+        <div className="mt-4 overflow-hidden rounded-xl border border-line bg-surface shadow-card">
+          <p className="border-b border-line-soft bg-sunk px-5 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-ink-faint">
+            Invited, not yet set up
+          </p>
+          <ul className="divide-y divide-line-soft">
+            {pending.map((invitation) => (
+              <li
+                key={invitation.id}
+                className="flex flex-wrap items-center gap-x-4 gap-y-1 px-5 py-3"
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm text-ink">{invitation.email}</p>
+                  <p className="mt-0.5 truncate text-xs text-ink-faint">
+                    {invitation.organizationName} · {invitation.role} · lapses{" "}
+                    {new Date(invitation.expiresAt).toISOString().slice(0, 10)}
+                  </p>
+                </div>
+                {mayInvite &&
+                invitation.organizationId === ctx.scope.organizationId ? (
+                  <form action={revokeInvitationAction} className="flex-none">
+                    <input
+                      type="hidden"
+                      name="invitationId"
+                      value={invitation.id}
+                    />
+                    <button
+                      type="submit"
+                      className="rounded-md border border-line px-2.5 py-1 text-xs
+                                 font-medium text-ink-soft transition-colors hover:bg-sunk
+                                 focus-visible:outline-2 focus-visible:outline-offset-2
+                                 focus-visible:outline-brand"
+                    >
+                      Withdraw
+                    </button>
+                  </form>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       <div className="mt-6 overflow-hidden rounded-xl border border-line bg-surface shadow-card">
         <div className="hidden grid-cols-[minmax(0,2fr)_repeat(3,minmax(0,0.6fr))_minmax(0,0.9fr)] gap-4 border-b border-line-soft bg-sunk px-5 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-ink-faint sm:grid">

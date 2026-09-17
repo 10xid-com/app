@@ -80,9 +80,11 @@ test.describe("cross-domain sign-in", () => {
     await page.goto(ROTARY + "/");
     await page.waitForLoadState("load");
 
-    // Sign-in happens on the login host and nowhere else.
+    // Sign-in happens on the login host and nowhere else. Keyed on the heading
+    // rather than on a sentence of body copy — this assertion has now broken
+    // twice for a wording change that had nothing to do with what it checks.
     expect(new URL(page.url()).host).toBe("login.portal-a.test:3000");
-    await expect(page.getByText("Welcome back")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
     expect(hops.some((h) => h.includes("rotary.portal-b.test"))).toBe(true);
   });
 

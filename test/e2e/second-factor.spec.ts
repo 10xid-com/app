@@ -35,7 +35,7 @@ test.describe("the staff second factor", () => {
     // Sign in by code only, without clearing the second factor.
     await page.goto("/auth/login?next=%2Fjobs");
     await page.getByLabel("Email").fill(STAFF);
-    await page.getByRole("button", { name: "Send me a code" }).click();
+    await page.getByRole("button", { name: "Continue" }).click();
     await page.waitForURL(/\/auth\/verify/);
     await page.getByLabel("Six-digit code").fill(await latestCodeFor(STAFF));
     await page.getByRole("button", { name: "Sign in" }).click();
@@ -47,7 +47,7 @@ test.describe("the staff second factor", () => {
   test("a half-signed-in staff session can reach nothing", async ({ page }) => {
     await page.goto("/auth/login");
     await page.getByLabel("Email").fill(STAFF);
-    await page.getByRole("button", { name: "Send me a code" }).click();
+    await page.getByRole("button", { name: "Continue" }).click();
     await page.waitForURL(/\/auth\/verify/);
     await page.getByLabel("Six-digit code").fill(await latestCodeFor(STAFF));
     await page.getByRole("button", { name: "Sign in" }).click();
@@ -68,7 +68,7 @@ test.describe("the staff second factor", () => {
   test("a wrong authenticator code is refused", async ({ page }) => {
     await page.goto("/auth/login");
     await page.getByLabel("Email").fill(STAFF);
-    await page.getByRole("button", { name: "Send me a code" }).click();
+    await page.getByRole("button", { name: "Continue" }).click();
     await page.waitForURL(/\/auth\/verify/);
     await page.getByLabel("Six-digit code").fill(await latestCodeFor(STAFF));
     await page.getByRole("button", { name: "Sign in" }).click();
@@ -97,7 +97,7 @@ test.describe("the staff second factor", () => {
     await context.clearCookies();
     await page.goto("/auth/login");
     await page.getByLabel("Email").fill(STAFF);
-    await page.getByRole("button", { name: "Send me a code" }).click();
+    await page.getByRole("button", { name: "Continue" }).click();
     await page.waitForURL(/\/auth\/verify/);
 
     await page.getByLabel("Six-digit code").fill(totpCode(secret));

@@ -218,6 +218,43 @@ export const signInCodes = pgTable(
 );
 
 /**
+ * How somebody comes to have an account at all.
+ *
+ * There is no open registration, and this is the reason the sign-up screen can
+ * exist without one: a portal is a set of separate companies' data, and an
+ * address typed into a form carries nothing that says which company it belongs
+ * to. Guessing would be the whole tenancy model decided by a stranger.
+ *
+ * So an account starts here instead. Somebody who already has access names an
+ * address and a company, and the invitation is what the sign-up screen checks
+ * against. Until it is accepted there is no user row — an invitation on its own
+ * grants nothing and can be withdrawn.
+ */
+export const invitations = pgTable(
+  "invitations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** Stored lowercase, matched exactly. */
+    email: text("email").notNull(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    role: membershipRole("role").notNull(),
+    invitedBy: uuid("invited_by")
+      .notNull()
+      .references(() => users.id),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt,
+  },
+  (t) => [
+    index("invitations_email_idx").on(t.email),
+    index("invitations_org_idx").on(t.organizationId),
+  ],
+);
+
+/**
  * The way back in when the authenticator is gone.
  *
  * Once an account holds a confirmed authenticator, the emailed code stops
@@ -430,4 +467,5 @@ export const TENANT_SCOPED_TABLES = [
   "jobs",
   "job_events",
   "api_keys",
+  "invitations",
 ] as const;

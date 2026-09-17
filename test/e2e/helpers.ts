@@ -236,7 +236,7 @@ export async function enrolAuthenticator(
 ): Promise<{ secret: string; recoveryCodes: string[] }> {
   await page.goto("/auth/login");
   await page.getByLabel("Email").fill(email);
-  await page.getByRole("button", { name: "Send me a code" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
   await page.waitForURL(/\/auth\/verify/);
   await page.getByLabel("Six-digit code").fill(await latestCodeFor(email));
   await page.getByRole("button", { name: "Sign in" }).click();
@@ -276,7 +276,7 @@ export async function signOut(page: Page) {
 export async function signIn(page: Page, email: string, next = "/") {
   await page.goto(`/auth/login?next=${encodeURIComponent(next)}`);
   await page.getByLabel("Email").fill(email);
-  await page.getByRole("button", { name: "Send me a code" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
 
   await page.waitForURL(/\/auth\/verify/);
   const code = await latestCodeFor(email);

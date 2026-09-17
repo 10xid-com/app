@@ -35,7 +35,7 @@ test.describe("the authenticator is the way in", () => {
 
     await page.goto("/auth/login");
     await page.getByLabel("Email").fill(STAFF);
-    await page.getByRole("button", { name: "Send me a code" }).click();
+    await page.getByRole("button", { name: "Continue" }).click();
     await page.waitForURL(/\/auth\/verify/);
 
     await page.getByLabel("Six-digit code").fill(totpCode(secret));
@@ -62,7 +62,7 @@ test.describe("the authenticator is the way in", () => {
 
     await page.goto("/auth/login");
     await page.getByLabel("Email").fill(STAFF);
-    await page.getByRole("button", { name: "Send me a code" }).click();
+    await page.getByRole("button", { name: "Continue" }).click();
     await page.waitForURL(/\/auth\/verify/);
 
     // Nothing new reached the sink, because nothing was sent — the code comes
@@ -105,7 +105,7 @@ test.describe("the authenticator is the way in", () => {
 
     await page.goto("/auth/login");
     await page.getByLabel("Email").fill(STAFF);
-    await page.getByRole("button", { name: "Send me a code" }).click();
+    await page.getByRole("button", { name: "Continue" }).click();
     await page.waitForURL(/\/auth\/verify/);
 
     await page.getByLabel("Six-digit code").fill(planted);
@@ -120,7 +120,7 @@ test.describe("the authenticator is the way in", () => {
   }) => {
     await page.goto("/auth/login");
     await page.getByLabel("Email").fill(CLIENT);
-    await page.getByRole("button", { name: "Send me a code" }).click();
+    await page.getByRole("button", { name: "Continue" }).click();
     await page.waitForURL(/\/auth\/verify/);
 
     await page.getByLabel("Six-digit code").fill(await latestCodeFor(CLIENT));
@@ -137,7 +137,7 @@ test.describe("the authenticator is the way in", () => {
     const screenFor = async (email: string) => {
       await page.goto("/auth/login");
       await page.getByLabel("Email").fill(email);
-      await page.getByRole("button", { name: "Send me a code" }).click();
+      await page.getByRole("button", { name: "Continue" }).click();
       await page.waitForURL(/\/auth\/verify/);
       // The address itself is echoed back, so it is removed before comparing —
       // what must not differ is everything else.
@@ -187,7 +187,7 @@ test.describe("recovery codes", () => {
 
     await page.goto("/auth/login");
     await page.getByLabel("Email").fill(STAFF);
-    await page.getByRole("button", { name: "Send me a code" }).click();
+    await page.getByRole("button", { name: "Continue" }).click();
     await page.waitForURL(/\/auth\/verify/);
 
     await page.getByLabel("Six-digit code").fill(recoveryCodes[0]);
@@ -202,7 +202,7 @@ test.describe("recovery codes", () => {
     const signInWith = async (code: string) => {
       await page.goto("/auth/login");
       await page.getByLabel("Email").fill(STAFF);
-      await page.getByRole("button", { name: "Send me a code" }).click();
+      await page.getByRole("button", { name: "Continue" }).click();
       await page.waitForURL(/\/auth\/verify/);
       await page.getByLabel("Six-digit code").fill(code);
       await page.getByRole("button", { name: "Sign in" }).click();
@@ -228,7 +228,7 @@ test.describe("recovery codes", () => {
 
     await page.goto("/auth/login");
     await page.getByLabel("Email").fill(STAFF);
-    await page.getByRole("button", { name: "Send me a code" }).click();
+    await page.getByRole("button", { name: "Continue" }).click();
     await page.waitForURL(/\/auth\/verify/);
 
     await page.getByLabel("Six-digit code").fill("ZZZZ-9999");

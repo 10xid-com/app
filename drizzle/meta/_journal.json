@@ -50,6 +50,13 @@
       "when": 1789650406852,
       "tag": "0006_recovery_codes",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1789652687269,
+      "tag": "0007_invitations",
+      "breakpoints": true
     }
   ]
 }

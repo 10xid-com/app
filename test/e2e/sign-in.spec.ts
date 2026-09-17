@@ -81,7 +81,7 @@ test.describe("sign in with an emailed code", () => {
     // Enumeration resistance: the form must not reveal who has an account.
     await page.goto("/auth/login");
     await page.getByLabel("Email").fill(STRANGER);
-    await page.getByRole("button", { name: "Send me a code" }).click();
+    await page.getByRole("button", { name: "Continue" }).click();
 
     await page.waitForURL(/\/auth\/verify/);
     // The screen is deliberately neutral about where the code comes from: it
@@ -98,7 +98,7 @@ test.describe("sign in with an emailed code", () => {
   test("a wrong code is refused", async ({ page }) => {
     await page.goto("/auth/login");
     await page.getByLabel("Email").fill(CLIENT);
-    await page.getByRole("button", { name: "Send me a code" }).click();
+    await page.getByRole("button", { name: "Continue" }).click();
     await page.waitForURL(/\/auth\/verify/);
 
     await page.getByLabel("Six-digit code").fill("000000");
@@ -110,7 +110,7 @@ test.describe("sign in with an emailed code", () => {
   test("a code works once and only once", async ({ page, context }) => {
     await page.goto("/auth/login");
     await page.getByLabel("Email").fill(CLIENT);
-    await page.getByRole("button", { name: "Send me a code" }).click();
+    await page.getByRole("button", { name: "Continue" }).click();
     await page.waitForURL(/\/auth\/verify/);
 
     const code = await latestCodeFor(CLIENT);
@@ -136,7 +136,7 @@ test.describe("sign in with an emailed code", () => {
     for (let i = 0; i < 7; i++) {
       await page.goto("/auth/login");
       await page.getByLabel("Email").fill(email);
-      await page.getByRole("button", { name: "Send me a code" }).click();
+      await page.getByRole("button", { name: "Continue" }).click();
       await page.waitForURL(/\/auth\/(verify|login)/);
       if (page.url().includes("error=rate")) {
         sawLimit = true;

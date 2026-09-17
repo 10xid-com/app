@@ -55,3 +55,61 @@ export async function sendSignInCode(input: {
     ].join("\n"),
   });
 }
+
+/**
+ * Tell somebody they have been invited.
+ *
+ * Carries no credential. The invitation lives in the database against this
+ * address, and the sign-up screen checks it there — so this message being
+ * forwarded, quoted or leaked hands nobody an account. What proves the person
+ * is who the invitation names is the six-digit code that follows, which only
+ * reaches this mailbox.
+ */
+export async function sendInvitation(input: {
+  to: string;
+  organizationName: string;
+  invitedByEmail: string;
+  signUpUrl: string;
+}): Promise<void> {
+  const apiKey = process.env.RESEND_API_KEY;
+
+  const body = [
+    `${input.invitedByEmail} has invited you to the 10XiD portal for ${input.organizationName}.`,
+    ``,
+    `To set up your account, go to:`,
+    `  ${input.signUpUrl}`,
+    ``,
+    `Enter this address and we will email you a six-digit code. After that you`,
+    `will set up an authenticator app, which is how you will sign in from then`,
+    `on — there is no password.`,
+    ``,
+    `If you were not expecting this, you can ignore it. The invitation grants`,
+    `nothing on its own and lapses on its own.`,
+  ].join("\n");
+
+  if (!apiKey) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error(
+        "RESEND_API_KEY is not set, so invitations cannot be delivered. " +
+          "Refusing to fall back to writing them to disk in production.",
+      );
+    }
+    await appendFile(
+      DEV_CODE_SINK,
+      `${new Date().toISOString()}\t${input.to}\tINVITED\t${input.organizationName}\n`,
+      "utf8",
+    );
+    console.log(`[dev] invitation for ${input.to} → ${input.organizationName}`);
+    return;
+  }
+
+  const { Resend } = await import("resend");
+  const resend = new Resend(apiKey);
+
+  await resend.emails.send({
+    from: process.env.MAIL_FROM ?? "10XiD <no-reply@10xid.com>",
+    to: input.to,
+    subject: `You have been invited to the 10XiD portal`,
+    text: body,
+  });
+}

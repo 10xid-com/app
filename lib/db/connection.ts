@@ -62,7 +62,7 @@ export async function assertRestrictedRole(): Promise<void> {
       (select count(*)::int
          from pg_tables
         where schemaname = 'public'
-          and tablename in ('jobs','job_events','api_keys')
+          and tablename in ('jobs','job_events','api_keys','invitations')
           and tableowner = current_user) as owns_tenant_tables
     from pg_roles r
     where r.rolname = current_user

@@ -78,7 +78,7 @@ describe("the startup guard", () => {
     const { rows } = await owner.query(`
       select r.rolsuper, r.rolbypassrls,
              (select count(*)::int from pg_tables
-               where schemaname='public' and tablename in ('jobs','job_events')
+               where schemaname='public' and tablename in ('jobs','job_events','api_keys','invitations')
                  and tableowner = current_user) as owns
         from pg_roles r where r.rolname = current_user
     `);
@@ -93,7 +93,7 @@ describe("the database itself enforces the rule", () => {
     const { rows } = await appRole.query(`
       select current_user as role, r.rolsuper, r.rolbypassrls,
              (select count(*)::int from pg_tables
-               where schemaname='public' and tablename in ('jobs','job_events')
+               where schemaname='public' and tablename in ('jobs','job_events','api_keys','invitations')
                  and tableowner = current_user) as owns
         from pg_roles r where r.rolname = current_user
     `);

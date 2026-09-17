@@ -18,7 +18,12 @@ import { Client } from "pg";
  */
 
 /** Protected by row-level security. Must have RLS on AND at least one policy. */
-const MUST_BE_PROTECTED = ["jobs", "job_events", "api_keys"];
+const MUST_BE_PROTECTED = [
+  "jobs",
+  "job_events",
+  "api_keys",
+  "invitations",
+];
 
 /** Read before a scope exists. Each entry needs a reason that survives review. */
 const EXEMPT: Record<string, string> = {
