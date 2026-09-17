@@ -213,7 +213,10 @@ export async function listKeys(scope: {
       })
       .from(apiKeys)
       .innerJoin(organizations, eq(organizations.id, apiKeys.organizationId))
-      .orderBy(desc(apiKeys.createdAt)),
+      // Live keys first. Revoked ones are never deleted — that is what keeps
+      // the work they filed attributable — so after a year of ordinary
+      // rotation they would otherwise bury the two keys anybody cares about.
+      .orderBy(sql`${apiKeys.revokedAt} is not null`, desc(apiKeys.createdAt)),
   );
 }
 

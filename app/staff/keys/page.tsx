@@ -1,12 +1,102 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { requireSession } from "@/lib/auth/require";
-import { listKeys } from "@/lib/db/api-keys";
+import { listKeys, type KeyRow } from "@/lib/db/api-keys";
 import { liveGrantForSession, organizationById } from "@/lib/db/identity";
 import { PortalShell } from "../../portal-shell";
 import { mintKeyAction, revokeKeyAction } from "./actions";
 
 export const metadata: Metadata = { title: "Keys" };
+
+/**
+ * One table of keys.
+ *
+ * `actingOrgId` decides whether a row offers a Revoke button: revoking writes
+ * into a company's data, so it is only offered for the company this session
+ * currently holds a grant on. That is a matter of not showing a button that
+ * would fail — the action itself refuses on the same grounds, and the tenant
+ * policy refuses underneath that.
+ */
+function KeyTable({
+  keys,
+  actingOrgId,
+  empty,
+}: {
+  keys: KeyRow[];
+  actingOrgId: string | null;
+  empty: string;
+}) {
+  return (
+    <div className="mt-6 overflow-hidden rounded-xl border border-line bg-surface shadow-card">
+      <div className="hidden grid-cols-[minmax(0,2fr)_minmax(0,1fr)_repeat(3,minmax(0,0.8fr))] gap-4 border-b border-line-soft bg-sunk px-5 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-ink-faint sm:grid">
+        <span>Key</span>
+        <span>Company</span>
+        <span className="text-right">Jobs filed</span>
+        <span className="text-right">Last used</span>
+        <span className="text-right">Status</span>
+      </div>
+
+      <ul className="divide-y divide-line-soft">
+        {keys.length === 0 ? (
+          <li className="px-5 py-10 text-center text-sm text-ink-faint">
+            {empty}
+          </li>
+        ) : (
+          keys.map((key) => (
+            <li
+              key={key.id}
+              className="grid grid-cols-2 gap-x-4 gap-y-1 px-5 py-3
+                         sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_repeat(3,minmax(0,0.8fr))]"
+            >
+              <div className="col-span-2 min-w-0 sm:col-span-1">
+                <p className="truncate text-sm font-medium text-ink">
+                  {key.label}
+                </p>
+                <p className="mt-0.5 truncate font-mono text-xs text-ink-faint">
+                  {key.prefix}
+                  <span aria-label="hidden remainder">…</span>
+                </p>
+              </div>
+              <span className="truncate text-sm text-ink-soft">
+                {key.organizationName}
+              </span>
+              <span className="text-right text-sm tabular-nums text-ink">
+                {key.jobsFiled}
+              </span>
+              <span className="text-right text-xs tabular-nums text-ink-faint">
+                {key.lastUsedAt
+                  ? new Date(key.lastUsedAt).toISOString().slice(0, 10)
+                  : "never"}
+              </span>
+              <span className="text-right">
+                {key.revokedAt ? (
+                  <span className="text-xs text-ink-faint">
+                    revoked {new Date(key.revokedAt).toISOString().slice(0, 10)}
+                  </span>
+                ) : actingOrgId === key.organizationId ? (
+                  <form action={revokeKeyAction}>
+                    <input type="hidden" name="keyId" value={key.id} />
+                    <button
+                      type="submit"
+                      className="rounded-md border border-line px-2.5 py-1 text-xs
+                                 font-medium text-bad transition-colors hover:bg-bad/5
+                                 focus-visible:outline-2 focus-visible:outline-offset-2
+                                 focus-visible:outline-bad"
+                    >
+                      Revoke
+                    </button>
+                  </form>
+                ) : (
+                  <span className="text-xs text-good">live</span>
+                )}
+              </span>
+            </li>
+          ))
+        )}
+      </ul>
+    </div>
+  );
+}
 
 const ERRORS: Record<string, string> = {
   label: "Give the key a name of at least three characters, so it can be told apart later.",
@@ -34,6 +124,8 @@ export default async function KeysPage({
   const grant = await liveGrantForSession(ctx.sessionId);
   const actingOrg = grant ? await organizationById(grant.organizationId) : null;
   const keys = await listKeys(ctx.scope);
+  const live = keys.filter((k) => k.revokedAt === null);
+  const revoked = keys.filter((k) => k.revokedAt !== null);
 
   return (
     <PortalShell
@@ -127,74 +219,32 @@ export default async function KeysPage({
         </p>
       )}
 
-      <div className="mt-6 overflow-hidden rounded-xl border border-line bg-surface shadow-card">
-        <div className="hidden grid-cols-[minmax(0,2fr)_minmax(0,1fr)_repeat(3,minmax(0,0.8fr))] gap-4 border-b border-line-soft bg-sunk px-5 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-ink-faint sm:grid">
-          <span>Key</span>
-          <span>Company</span>
-          <span className="text-right">Jobs filed</span>
-          <span className="text-right">Last used</span>
-          <span className="text-right">Status</span>
-        </div>
+      <KeyTable
+        keys={live}
+        actingOrgId={actingOrg?.id ?? null}
+        empty="No live keys."
+      />
 
-        <ul className="divide-y divide-line-soft">
-          {keys.length === 0 ? (
-            <li className="px-5 py-10 text-center text-sm text-ink-faint">
-              No keys yet.
-            </li>
-          ) : (
-            keys.map((key) => (
-              <li
-                key={key.id}
-                className="grid grid-cols-2 gap-x-4 gap-y-1 px-5 py-3
-                           sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_repeat(3,minmax(0,0.8fr))]"
-              >
-                <div className="col-span-2 min-w-0 sm:col-span-1">
-                  <p className="truncate text-sm font-medium text-ink">
-                    {key.label}
-                  </p>
-                  <p className="mt-0.5 truncate font-mono text-xs text-ink-faint">
-                    {key.prefix}
-                    <span aria-label="hidden remainder">…</span>
-                  </p>
-                </div>
-                <span className="truncate text-sm text-ink-soft">
-                  {key.organizationName}
-                </span>
-                <span className="text-right text-sm tabular-nums text-ink">
-                  {key.jobsFiled}
-                </span>
-                <span className="text-right text-xs tabular-nums text-ink-faint">
-                  {key.lastUsedAt
-                    ? new Date(key.lastUsedAt).toISOString().slice(0, 10)
-                    : "never"}
-                </span>
-                <span className="text-right">
-                  {key.revokedAt ? (
-                    <span className="text-xs text-ink-faint">revoked</span>
-                  ) : actingOrg && actingOrg.id === key.organizationId ? (
-                    <form action={revokeKeyAction}>
-                      <input type="hidden" name="keyId" value={key.id} />
-                      <button
-                        type="submit"
-                        className="rounded-md border border-line px-2.5 py-1 text-xs
-                                   font-medium text-bad transition-colors hover:bg-bad/5
-                                   focus-visible:outline-2 focus-visible:outline-offset-2
-                                   focus-visible:outline-bad"
-                      >
-                        Revoke
-                      </button>
-                    </form>
-                  ) : (
-                    <span className="text-xs text-good">live</span>
-                  )}
-                </span>
-              </li>
-            ))
-          )}
-        </ul>
-      </div>
+      {/*
+        Revoked keys are never deleted — that is what keeps the work they filed
+        attributable to something. But after a few rounds of rotation they would
+        bury the two keys anybody is actually looking for, so they are folded
+        away rather than listed alongside.
+      */}
+      {revoked.length > 0 ? (
+        <details className="mt-4 group">
+          <summary className="cursor-pointer text-sm text-ink-soft transition-colors hover:text-ink">
+            {revoked.length} revoked{" "}
+            {revoked.length === 1 ? "key" : "keys"} — kept so the work they
+            filed stays attributable
+          </summary>
+          <div className="mt-3">
+            <KeyTable keys={revoked} actingOrgId={null} empty="None." />
+          </div>
+        </details>
+      ) : null}
 
-      <p className="mt-3 max-w-prose text-xs text-ink-faint">
+      <p className="mt-4 max-w-prose text-xs text-ink-faint">
         Keys are sent as <code className="font-mono">Authorization: Bearer …</code>{" "}
         to <code className="font-mono">/api/v1/jobs</code>, from the sending
         system&rsquo;s own server. Never from a web page: a key in browser
