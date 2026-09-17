@@ -12,6 +12,8 @@ import {
 import { sixDigitCode } from "@/lib/ids";
 import { sendSignInCode } from "./mailer";
 import { SIGN_IN_CODE } from "./policy";
+import { looksLikeRecoveryCode, redeemRecoveryCode } from "./recovery";
+import { decryptSecret, verifyCode } from "./totp";
 
 /**
  * Sign-in by a six-digit code sent to the address on file.
@@ -70,11 +72,17 @@ export async function requestSignInCode(
   });
 
   const user = await findUserByEmail(email);
-  // Service accounts are not people and have no inbox — their addresses are on
-  // a domain reserved never to resolve. Nothing is sent to them, and the
-  // verification step refuses them outright as well, so a key's identity can
-  // never become a way to sign in.
-  if (user && !user.isService) {
+
+  // Three reasons nothing is sent, and the caller is told the same thing in all
+  // of them, because the answer is what would otherwise reveal who has what.
+  //
+  //  * No account. Sending would confirm the address exists.
+  //  * A service account: not a person, no inbox, and refused at verification.
+  //  * An account with a confirmed authenticator. Its code comes from the
+  //    authenticator now, so an email would be both useless and misleading —
+  //    and, more to the point, the emailed code no longer opens that account.
+  const usesAuthenticator = Boolean(user?.totpConfirmedAt);
+  if (user && !user.isService && !usesAuthenticator) {
     await sendSignInCode({ to: email, code, expiresInMinutes: 10 });
   }
 
@@ -82,18 +90,61 @@ export async function requestSignInCode(
 }
 
 export type VerifyResult =
-  | { ok: true; userId: string }
+  | { ok: true; userId: string; secondFactorPassed: boolean }
   | { ok: false; reason: "invalid" | "too_many_attempts" };
 
 /**
- * Verify a code.
+ * Sign in with the authenticator, for an account that has one.
+ *
+ * This REPLACES the emailed code rather than sitting beside it. If both worked,
+ * anyone holding the inbox could simply ignore the authenticator and it would
+ * be decorative — so for an account with a confirmed authenticator, the emailed
+ * code is not accepted at all. `verifySignInCode` below enforces that by
+ * routing here and never falling through.
+ *
+ * A recovery code is accepted here too, because with the emailed code closed
+ * off it is the only remaining way back in from a lost phone. It is spent in
+ * the process, so the same one never works twice.
+ */
+async function verifyAuthenticator(
+  user: NonNullable<Awaited<ReturnType<typeof findUserByEmail>>>,
+  submitted: string,
+): Promise<VerifyResult> {
+  if (!user.totpSecret) return { ok: false, reason: "invalid" };
+
+  if (verifyCode(decryptSecret(user.totpSecret), submitted)) {
+    // The authenticator IS the factor that was checked, so the session it
+    // produces has already cleared its second factor. Sending it to the
+    // enrolment screen afterwards would be asking for the same code twice.
+    return { ok: true, userId: user.id, secondFactorPassed: true };
+  }
+
+  if (
+    looksLikeRecoveryCode(submitted) &&
+    (await redeemRecoveryCode(user.id, submitted))
+  ) {
+    return { ok: true, userId: user.id, secondFactorPassed: true };
+  }
+
+  return { ok: false, reason: "invalid" };
+}
+
+/**
+ * Verify whatever was typed into the one code box.
+ *
+ * There is a single screen for this, identical for everybody, and it has to
+ * stay that way: a form that behaved differently for an account with an
+ * authenticator would be a way to discover which addresses have accounts and
+ * which people are staff, just by watching how the page answers.
+ *
+ * So the branch happens HERE, on the server, after the address is resolved:
+ *
+ *   * A confirmed authenticator → the code must come from it, or be a recovery
+ *     code. The emailed code is not accepted, and there is no fallthrough.
+ *   * Otherwise → the emailed code, exactly as before.
  *
  * Wrong code, expired code, no code, unknown address and already-used code all
  * return the same "invalid" — a caller learns only that it did not work.
- *
- * The comparison is timing-safe. The code is then consumed by an atomic update
- * whose WHERE clause requires it to still be unconsumed, so two simultaneous
- * submissions produce exactly one winner rather than both succeeding.
  */
 export async function verifySignInCode(
   emailRaw: string,
@@ -101,6 +152,18 @@ export async function verifySignInCode(
 ): Promise<VerifyResult> {
   const email = emailRaw.trim().toLowerCase();
   const code = codeRaw.trim();
+
+  const account = await findUserByEmail(email);
+
+  // Service accounts are the identity an API key acts as and must never hold a
+  // session: a key is deliberately write-only, and signing in as the account
+  // behind it would hand over exactly the read access it was built not to have.
+  // Checked before anything else, so no path below can miss it.
+  if (account?.isService) return { ok: false, reason: "invalid" };
+
+  if (account?.totpConfirmedAt) {
+    return verifyAuthenticator(account, code);
+  }
 
   const row = await latestLiveCode(email);
   if (!row) return { ok: false, reason: "invalid" };
@@ -122,21 +185,16 @@ export async function verifySignInCode(
   const consumed = await consumeSignInCode(row.id);
   if (!consumed) return { ok: false, reason: "invalid" };
 
+  // Re-read rather than reusing `account` from above: the code was valid, and
+  // this is the last moment before a session exists, so an account removed in
+  // between must not still get one. Nothing is created here either — accounts
+  // come from invitations, never from the sign-in form.
   const user = await findUserByEmail(email);
-  if (!user) {
-    // The code was valid but no account exists — possible only if the account
-    // was removed between request and verification. Nothing is created here:
-    // accounts come from invitations, never from the sign-in form.
-    return { ok: false, reason: "invalid" };
-  }
-
-  // A service account is the identity an API key acts as. It must never become
-  // a session: a key is deliberately write-only and cannot read a client's
-  // jobs, and signing in as the account behind it would hand over exactly the
-  // read access the key was designed not to have.
-  if (user.isService) return { ok: false, reason: "invalid" };
+  if (!user || user.isService) return { ok: false, reason: "invalid" };
 
   if (!user.emailVerifiedAt) await markEmailVerified(user.id);
 
-  return { ok: true, userId: user.id };
+  // An emailed code is one factor. Staff without an authenticator are still
+  // sent to enrol before their session carries any authority at all.
+  return { ok: true, userId: user.id, secondFactorPassed: false };
 }

@@ -1,7 +1,12 @@
 "use server";
 
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { z } from "zod";
+import {
+  RECOVERY_FLASH_COOKIE,
+  issueRecoveryCodes,
+} from "@/lib/auth/recovery";
 import {
   confirmTotp,
   markSecondFactorPassed,
@@ -47,10 +52,78 @@ export async function verifySecondFactorAction(formData: FormData) {
   }
 
   // The first accepted code confirms the enrolment as well as the session.
-  if (!user.totpConfirmedAt) await confirmTotp(user.id);
+  const firstTime = !user.totpConfirmedAt;
+  if (firstTime) await confirmTotp(user.id);
   await markSecondFactorPassed(ctx.sessionId);
 
+  /**
+   * Confirming enrolment is the moment the emailed code STOPS working for this
+   * account — from here on the authenticator is the way in. So it is also the
+   * moment recovery codes have to exist, because a lost phone would otherwise
+   * be a permanent lockout on the account that reaches every client.
+   *
+   * Not optional and not a later reminder: issued here, shown immediately.
+   */
+  if (firstTime) {
+    await stashCodesForOneViewing(await issueRecoveryCodes(user.id));
+    redirect(`/auth/recovery-codes?next=${encodeURIComponent(next)}`);
+  }
+
   // Land where they were originally heading, not on a fixed page.
+  redirect(next);
+}
+
+/**
+ * Hand the freshly issued codes to the screen that shows them.
+ *
+ * It is the person's own browser, the cookie cannot be read by script, it is
+ * cleared the moment they acknowledge the screen, and it lapses on its own in
+ * five minutes either way. The name lives in lib/auth/recovery.ts, because a
+ * "use server" module may only export async functions.
+ */
+async function stashCodesForOneViewing(codes: string[]) {
+  const jar = await cookies();
+  jar.set(RECOVERY_FLASH_COOKIE, codes.join(" "), {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.SESSION_COOKIE_SECURE !== "false",
+    path: "/auth",
+    maxAge: 300,
+  });
+}
+
+/**
+ * A fresh set, replacing whatever is left.
+ *
+ * Needed after using one — or after losing the piece of paper. Requires a live,
+ * fully authenticated session, so it is not a way in for anyone who has not
+ * already proved who they are.
+ */
+export async function regenerateRecoveryCodesAction(formData: FormData) {
+  const ctx = await getSessionContext();
+  if (!ctx) redirect("/auth/login");
+  if (ctx.needsSecondFactor) redirect("/auth/2fa");
+
+  const user = await userById(ctx.userId);
+  if (!user?.totpConfirmedAt) redirect("/auth/2fa");
+
+  await stashCodesForOneViewing(await issueRecoveryCodes(user.id));
+  redirect(
+    `/auth/recovery-codes?next=${encodeURIComponent(safePath(formData.get("next")))}`,
+  );
+}
+
+/** Acknowledged and written down: drop the carrier and get on with it. */
+export async function acknowledgeRecoveryCodesAction(formData: FormData) {
+  const next = safePath(formData.get("next"));
+  const jar = await cookies();
+  jar.set(RECOVERY_FLASH_COOKIE, "", {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.SESSION_COOKIE_SECURE !== "false",
+    path: "/auth",
+    maxAge: 0,
+  });
   redirect(next);
 }
 

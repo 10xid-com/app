@@ -1,6 +1,9 @@
 import { cookies } from "next/headers";
 import { NextResponse, type NextRequest } from "next/server";
-import { redeemTicket } from "@/lib/db/identity";
+import {
+  redeemTicket,
+  sourceSessionClearedSecondFactor,
+} from "@/lib/db/identity";
 import { startSession, writeSessionCookie } from "@/lib/auth/session";
 import { SESSION_POLICY } from "@/lib/auth/policy";
 import {
@@ -53,9 +56,18 @@ export async function GET(request: NextRequest) {
   const redeemed = await redeemTicket(hashTicket(ticket), host);
   if (!redeemed) return fail();
 
+  // Carry across how they proved who they are, not just that they did. The
+  // login host checked the second factor moments ago, in this same browser;
+  // asking for the same authenticator code again on arrival is friction with
+  // nothing bought by it.
+  const clearedSecondFactor = await sourceSessionClearedSecondFactor(
+    redeemed.sourceSessionId,
+  );
+
   const { token, role } = await startSession({
     userId: redeemed.userId,
     host,
+    secondFactorPassed: clearedSecondFactor,
   });
 
   await writeSessionCookie(

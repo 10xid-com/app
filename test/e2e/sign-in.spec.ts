@@ -84,7 +84,12 @@ test.describe("sign in with an emailed code", () => {
     await page.getByRole("button", { name: "Send me a code" }).click();
 
     await page.waitForURL(/\/auth\/verify/);
-    await expect(page.getByText("Check your email")).toBeVisible();
+    // The screen is deliberately neutral about where the code comes from: it
+    // cannot say "check your email" to someone whose code comes from an
+    // authenticator, and it must not say which applies to this address.
+    await expect(
+      page.getByRole("heading", { name: "Enter your code" }),
+    ).toBeVisible();
 
     // ...and no code was actually issued to it.
     await expect(latestCodeFor(STRANGER)).rejects.toThrow(/No sign-in code/);

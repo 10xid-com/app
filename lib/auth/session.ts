@@ -78,6 +78,17 @@ export async function currentHost(): Promise<string> {
 export async function startSession(input: {
   userId: string;
   host: string;
+  /**
+   * True when the thing that was just checked WAS the second factor — an
+   * authenticator code, or a recovery code standing in for one. Such a session
+   * starts already cleared, because sending it to the enrolment screen would be
+   * asking for the same code twice in a row.
+   *
+   * It is passed in by the caller that did the checking rather than inferred
+   * here, so there is no way for this function to assume a factor was presented
+   * when it was not.
+   */
+  secondFactorPassed?: boolean;
 }): Promise<{ token: string; sessionId: string; role: SessionRole }> {
   const mships = await membershipsForUser(input.userId);
   const role: SessionRole = mships.some((m) => m.organizationType === "internal")
@@ -103,6 +114,7 @@ export async function startSession(input: {
     absoluteExpiresAt: new Date(Date.now() + policy.absoluteSeconds * 1000),
     roleAtCreation: role,
     activeOrganizationId,
+    secondFactorAt: input.secondFactorPassed ? new Date() : null,
   });
 
   return { token, sessionId: session.id, role };

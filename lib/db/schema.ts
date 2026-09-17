@@ -218,6 +218,33 @@ export const signInCodes = pgTable(
 );
 
 /**
+ * The way back in when the authenticator is gone.
+ *
+ * Once an account holds a confirmed authenticator, the emailed code stops
+ * working for it — otherwise anyone holding the inbox could simply ignore the
+ * authenticator, and it would be decorative. That is the right trade, but it
+ * means a lost or wiped phone is a permanent lockout unless something else
+ * exists. These are that something else.
+ *
+ * Ten codes, issued at enrolment, shown once and stored only as hashes. Each
+ * works exactly once, consumed by an atomic update, so a list photographed over
+ * a shoulder is worth less with every code that gets used.
+ */
+export const recoveryCodes = pgTable(
+  "recovery_codes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    codeHash: sha256("code_hash").notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    createdAt,
+  },
+  (t) => [index("recovery_codes_user_idx").on(t.userId)],
+);
+
+/**
  * The cross-domain handoff, shaped as an OAuth authorization code.
  *
  * Opaque 32 random bytes, stored hashed, valid for seconds, redeemable exactly

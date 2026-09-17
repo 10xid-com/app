@@ -192,8 +192,8 @@ export function totpCode(secretBase32: string, at = Date.now()): string {
  * The enrolment screen shows the setup key, so the test reads it from the page
  * exactly as a person would, then produces a code from it.
  */
-export async function passSecondFactor(page: Page) {
-  if (!page.url().includes("/auth/2fa")) return;
+export async function passSecondFactor(page: Page): Promise<string | null> {
+  if (!page.url().includes("/auth/2fa")) return null;
 
   const start = page.getByRole("button", { name: "Start setup" });
   if (await start.isVisible().catch(() => false)) {
@@ -206,7 +206,70 @@ export async function passSecondFactor(page: Page) {
 
   await page.getByLabel("Six-digit code").fill(totpCode(key));
   await page.getByRole("button", { name: /Confirm and continue|Continue/ }).click();
+
+  // First enrolment now lands on the recovery codes, because confirming is the
+  // moment the emailed code stops working for this account. Acknowledge them so
+  // the rest of the suite carries on to wherever it was heading.
+  await page.waitForURL(
+    (u) => !u.pathname.startsWith("/auth/") || u.pathname === "/auth/recovery-codes",
+  );
+  if (page.url().includes("/auth/recovery-codes")) {
+    await page.getByRole("button", { name: /I have saved these/ }).click();
+    await page.waitForURL((u) => !u.pathname.startsWith("/auth/"));
+  }
+
+  return key;
+}
+
+/**
+ * Enrol an authenticator through the interface, as a person would, and come
+ * back with the things only shown once.
+ *
+ * Done through the screens rather than by writing an encrypted secret into the
+ * database directly: the secret is stored encrypted with a key from the
+ * environment, so a test that wrote its own would be testing its own
+ * encryption rather than the application's.
+ */
+export async function enrolAuthenticator(
+  page: Page,
+  email: string,
+): Promise<{ secret: string; recoveryCodes: string[] }> {
+  await page.goto("/auth/login");
+  await page.getByLabel("Email").fill(email);
+  await page.getByRole("button", { name: "Send me a code" }).click();
+  await page.waitForURL(/\/auth\/verify/);
+  await page.getByLabel("Six-digit code").fill(await latestCodeFor(email));
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.waitForURL(/\/auth\/2fa/);
+
+  const start = page.getByRole("button", { name: "Start setup" });
+  if (await start.isVisible().catch(() => false)) {
+    await start.click();
+    await page.waitForURL(/\/auth\/2fa/);
+  }
+
+  const secret = (await page.getByText(/^[A-Z2-7 ]{20,}$/).first().innerText())
+    .replace(/\s+/g, "");
+
+  await page.getByLabel("Six-digit code").fill(totpCode(secret));
+  await page.getByRole("button", { name: /Confirm and continue/ }).click();
+  await page.waitForURL(/\/auth\/recovery-codes/);
+
+  const recoveryCodes = await page
+    .locator("li.font-mono")
+    .allInnerTexts()
+    .then((texts) => texts.map((t) => t.trim()).filter(Boolean));
+
+  await page.getByRole("button", { name: /I have saved these/ }).click();
   await page.waitForURL((u) => !u.pathname.startsWith("/auth/"));
+
+  return { secret, recoveryCodes };
+}
+
+/** End the session without clearing the enrolment, unlike resetSignInState. */
+export async function signOut(page: Page) {
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await page.waitForURL(/\/auth\/login/);
 }
 
 /** Complete the whole sign-in flow on the login host. */

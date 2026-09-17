@@ -47,7 +47,22 @@ function clientIp(h: Headers): string | null {
 }
 
 const emailSchema = z.string().trim().toLowerCase().email().max(320);
-const codeSchema = z.string().trim().regex(/^\d{6}$/);
+
+/**
+ * One box, three shapes of thing that can go in it.
+ *
+ * Six digits is an emailed code or an authenticator code — which of those it is
+ * depends on the account, and is decided on the server so the form gives
+ * nothing away. Eight characters, optionally hyphenated, is a recovery code.
+ *
+ * Deliberately permissive rather than clever: anything that does not match is
+ * rejected identically to a wrong code, so the shape of what was typed is not
+ * itself an answer.
+ */
+const codeSchema = z
+  .string()
+  .trim()
+  .regex(/^(\d{6}|[0-9A-Za-z]{4}-?[0-9A-Za-z]{4})$/);
 
 export async function requestCodeAction(formData: FormData) {
   const parsed = emailSchema.safeParse(formData.get("email"));
@@ -96,6 +111,7 @@ export async function verifyCodeAction(formData: FormData) {
   const { token, role } = await startSession({
     userId: result.userId,
     host,
+    secondFactorPassed: result.secondFactorPassed,
   });
 
   await writeSessionCookie(

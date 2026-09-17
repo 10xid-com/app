@@ -5,6 +5,7 @@ import {
   memberships,
   organizationDomains,
   organizations,
+  recoveryCodes,
   sessions,
   signInCodes,
   ssoTickets,
@@ -172,6 +173,78 @@ export async function consumeSignInCode(id: string): Promise<boolean> {
 }
 
 /* ------------------------------------------------------------------ */
+/* Recovery codes                                                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Replace the whole set.
+ *
+ * The old codes are RETIRED, not deleted — marked spent, exactly as if they had
+ * been redeemed. Two reasons, and the database enforces the first: the
+ * application role holds no DELETE on this table, so erasing history is a
+ * permission error rather than a decision anyone can quietly make. The second
+ * is that "this code was issued and then superseded" and "this code never
+ * existed" are different facts, and only one of them is worth having in an
+ * incident.
+ *
+ * In one transaction, because a half-applied replacement is the worst of both:
+ * the old set retired and the new one not yet written is an account with no way
+ * back in at all.
+ */
+export async function replaceRecoveryCodes(
+  userId: string,
+  hashes: Buffer[],
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx
+      .update(recoveryCodes)
+      .set({ usedAt: new Date() })
+      .where(
+        and(eq(recoveryCodes.userId, userId), isNull(recoveryCodes.usedAt)),
+      );
+    if (hashes.length > 0) {
+      await tx
+        .insert(recoveryCodes)
+        .values(hashes.map((codeHash) => ({ userId, codeHash })));
+    }
+  });
+}
+
+/**
+ * Spend one, atomically.
+ *
+ * `used_at IS NULL` in the WHERE clause is what makes it single-use: two
+ * simultaneous submissions of the same code produce exactly one winner, and the
+ * loser gets no row back. Checking first and updating after would let both in.
+ */
+export async function consumeRecoveryCode(
+  userId: string,
+  codeHash: Buffer,
+): Promise<boolean> {
+  const rows = await db
+    .update(recoveryCodes)
+    .set({ usedAt: new Date() })
+    .where(
+      and(
+        eq(recoveryCodes.userId, userId),
+        eq(recoveryCodes.codeHash, codeHash),
+        isNull(recoveryCodes.usedAt),
+      ),
+    )
+    .returning({ id: recoveryCodes.id });
+  return rows.length === 1;
+}
+
+/** How many are left, for the warning on the sessions screen. */
+export async function recoveryCodesRemaining(userId: string): Promise<number> {
+  const rows = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(recoveryCodes)
+    .where(and(eq(recoveryCodes.userId, userId), isNull(recoveryCodes.usedAt)));
+  return rows[0]?.n ?? 0;
+}
+
+/* ------------------------------------------------------------------ */
 /* Sessions                                                            */
 /* ------------------------------------------------------------------ */
 
@@ -183,6 +256,7 @@ export async function insertSession(input: {
   absoluteExpiresAt: Date;
   roleAtCreation: string;
   activeOrganizationId: string | null;
+  secondFactorAt: Date | null;
 }) {
   const rows = await db.insert(sessions).values(input).returning();
   return rows[0];
@@ -479,6 +553,30 @@ export async function redeemTicket(
       sourceSessionId: ssoTickets.sourceSessionId,
     });
   return rows[0] ?? null;
+}
+
+/**
+ * Did the session that minted a ticket already clear its second factor?
+ *
+ * The handoff vouches for who someone is. It should vouch for HOW they proved
+ * it too: the same person, in the same browser, satisfied the second factor at
+ * the login host seconds ago, and asking for the same authenticator code again
+ * on arrival is friction without a corresponding gain. This is the same thing
+ * OpenID Connect carries as an `amr` claim — the issuer telling the relying
+ * party which factors were actually used.
+ *
+ * Read from the source session rather than from anything in the request, so it
+ * cannot be asserted by the caller.
+ */
+export async function sourceSessionClearedSecondFactor(
+  sessionId: string,
+): Promise<boolean> {
+  const rows = await db
+    .select({ secondFactorAt: sessions.secondFactorAt })
+    .from(sessions)
+    .where(and(eq(sessions.id, sessionId), isNull(sessions.revokedAt)))
+    .limit(1);
+  return rows[0]?.secondFactorAt !== null && rows[0]?.secondFactorAt !== undefined;
 }
 
 /** Sign-out kills tickets still in flight, not just established sessions. */

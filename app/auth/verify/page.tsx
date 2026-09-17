@@ -35,18 +35,26 @@ export default async function VerifyPage({
 
   return (
     <AuthCard
-      title="Check your email"
+      title="Enter your code"
+      /*
+        Deliberately covers both ways in without saying which applies to this
+        address. The page cannot ask, and must not: one that greeted an
+        authenticator holder differently would be a way to discover which
+        addresses have accounts and which people are staff, just by typing
+        addresses into the form and watching how it answers.
+      */
       intro={
         email ? (
           <>
-            We sent a six-digit code to <strong className="text-ink">{email}</strong>.
-            It expires in ten minutes and works once.
+            If <strong className="text-ink">{email}</strong> uses an
+            authenticator app, enter the code it is showing. Otherwise we have
+            just emailed a six-digit code, good for ten minutes and one use.
           </>
         ) : (
-          "Enter the six-digit code we sent you."
+          "Enter the six-digit code from your authenticator app, or the one we emailed you."
         )
       }
-      footer="Didn't arrive? Check spam, or request another code."
+      footer="Expecting an email? Check spam, or request another code."
     >
       <form action={verifyCodeAction}>
         <input type="hidden" name="email" value={email} />
@@ -55,14 +63,20 @@ export default async function VerifyPage({
         <label htmlFor="code" className={labelClass}>
           Six-digit code
         </label>
+        {/*
+          The pattern allows a recovery code too. Constraining this to six
+          digits would mean somebody locked out of their phone gets a browser
+          tooltip telling them their own recovery code is invalid, before the
+          form is ever submitted.
+        */}
         <input
           id="code"
           name="code"
           type="text"
           inputMode="numeric"
           autoComplete="one-time-code"
-          pattern="[0-9]{6}"
-          maxLength={6}
+          pattern="[0-9]{6}|[0-9A-Za-z]{4}-?[0-9A-Za-z]{4}"
+          maxLength={9}
           required
           autoFocus
           placeholder="000000"
@@ -75,6 +89,10 @@ export default async function VerifyPage({
       </form>
 
       <p className="mt-4 text-center text-xs text-ink-faint">
+        Lost your authenticator? Enter one of your recovery codes above instead.
+      </p>
+
+      <p className="mt-2 text-center text-xs text-ink-faint">
         <Link
           href={`/auth/login?next=${encodeURIComponent(params.next ?? "/")}&email=${encodeURIComponent(email)}`}
           className="underline underline-offset-2 hover:text-ink-soft transition-colors"
