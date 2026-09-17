@@ -33,6 +33,32 @@ const STATUSES = [
  * ids are real, and it will happily enumerate a competitor's workload for
  * anyone patient enough to ask.
  */
+/**
+ * Pull the submitted payload out of the creation event.
+ *
+ * The event's `after` column is jsonb, so what comes back is whatever was
+ * written — this narrows it rather than trusting it. Values are rendered as
+ * text and never as markup, because they are, by definition, strings typed by
+ * an anonymous member of the public into a form.
+ */
+function submittedDetails(
+  events: Array<{ action: string; after: unknown }>,
+): Record<string, string> | null {
+  const created = events.find((e) => e.action === "created");
+  if (!created || typeof created.after !== "object" || created.after === null) {
+    return null;
+  }
+
+  const details = (created.after as Record<string, unknown>).details;
+  if (typeof details !== "object" || details === null) return null;
+
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(details)) {
+    if (typeof value === "string" && value.length > 0) out[key] = value;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
 export default async function JobPage({
   params,
 }: {
@@ -45,6 +71,12 @@ export default async function JobPage({
   if (!job) notFound();
 
   const events = await listJobEvents(ctx.scope, id);
+
+  // What the sender filled in, if this job arrived from a form rather than from
+  // these screens. It is read off the creation event rather than from columns on
+  // the job, so it is the submission as it was made and stays that way however
+  // the job is later edited — the audit table cannot be rewritten.
+  const submitted = submittedDetails(events);
 
   const grant = ctx.scope.isStaff
     ? await liveGrantForSession(ctx.sessionId)
@@ -136,6 +168,35 @@ export default async function JobPage({
           </form>
         ) : null}
       </div>
+
+      {submitted ? (
+        <section className="mt-6">
+          <h2 className="mb-3 text-sm font-semibold text-ink">
+            Submitted details
+          </h2>
+          <dl className="overflow-hidden rounded-xl border border-line bg-surface shadow-card">
+            {Object.entries(submitted).map(([label, value]) => (
+              <div
+                key={label}
+                className="grid gap-1 border-b border-line-soft px-5 py-3 last:border-b-0
+                           sm:grid-cols-[minmax(0,1fr)_minmax(0,2.5fr)] sm:gap-4"
+              >
+                <dt className="text-xs uppercase tracking-wider text-ink-faint">
+                  {label.replace(/_/g, " ")}
+                </dt>
+                <dd className="min-w-0 text-sm whitespace-pre-wrap text-ink">
+                  {value}
+                </dd>
+              </div>
+            ))}
+          </dl>
+          <p className="mt-2 text-xs text-ink-faint">
+            Exactly as it arrived, from the creation record. Nothing here has
+            been interpreted as an instruction — it is text somebody typed into a
+            form on a public website.
+          </p>
+        </section>
+      ) : null}
 
       <section className="mt-6">
         <h2 className="mb-3 text-sm font-semibold text-ink">History</h2>

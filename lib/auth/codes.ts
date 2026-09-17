@@ -70,7 +70,11 @@ export async function requestSignInCode(
   });
 
   const user = await findUserByEmail(email);
-  if (user) {
+  // Service accounts are not people and have no inbox — their addresses are on
+  // a domain reserved never to resolve. Nothing is sent to them, and the
+  // verification step refuses them outright as well, so a key's identity can
+  // never become a way to sign in.
+  if (user && !user.isService) {
     await sendSignInCode({ to: email, code, expiresInMinutes: 10 });
   }
 
@@ -125,6 +129,12 @@ export async function verifySignInCode(
     // accounts come from invitations, never from the sign-in form.
     return { ok: false, reason: "invalid" };
   }
+
+  // A service account is the identity an API key acts as. It must never become
+  // a session: a key is deliberately write-only and cannot read a client's
+  // jobs, and signing in as the account behind it would hand over exactly the
+  // read access the key was designed not to have.
+  if (user.isService) return { ok: false, reason: "invalid" };
 
   if (!user.emailVerifiedAt) await markEmailVerified(user.id);
 

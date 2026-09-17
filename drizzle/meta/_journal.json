@@ -36,6 +36,13 @@
       "when": 1789585164888,
       "tag": "0004_staff_second_factor",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1789624760866,
+      "tag": "0005_api_keys",
+      "breakpoints": true
     }
   ]
 }

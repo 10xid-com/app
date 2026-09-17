@@ -40,9 +40,17 @@ export function PortalShell({
                 Team
               </Link>
               {isStaff ? (
-                <Link href="/staff" className="transition-colors hover:text-white">
-                  Clients
-                </Link>
+                <>
+                  <Link href="/staff" className="transition-colors hover:text-white">
+                    Clients
+                  </Link>
+                  <Link
+                    href="/staff/keys"
+                    className="transition-colors hover:text-white"
+                  >
+                    Keys
+                  </Link>
+                </>
               ) : null}
               <Link
                 href="/account/sessions"

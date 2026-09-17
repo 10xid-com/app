@@ -98,9 +98,20 @@ export default async function TeamPage() {
                           you
                         </span>
                       ) : null}
+                      {/*
+                        A service account is a system, not a colleague, and it
+                        is listed here on purpose: work it files is counted
+                        against a named thing rather than appearing to come
+                        from a person who never sent it.
+                      */}
+                      {person.isService ? (
+                        <span className="ml-2 rounded-full bg-sunk px-2 py-0.5 text-[11px] font-medium text-ink-faint">
+                          integration
+                        </span>
+                      ) : null}
                     </p>
                     <p className="mt-0.5 truncate text-xs text-ink-faint">
-                      {person.email} · {person.role}
+                      {person.isService ? "key" : person.email} · {person.role}
                     </p>
                   </div>
 

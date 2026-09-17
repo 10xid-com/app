@@ -308,6 +308,7 @@ export async function teamFor(organizationId: string) {
       fullName: users.fullName,
       role: memberships.role,
       isStaff: users.isStaff,
+      isService: users.isService,
       joinedAt: memberships.createdAt,
     })
     .from(memberships)

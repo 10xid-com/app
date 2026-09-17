@@ -62,7 +62,7 @@ export async function assertRestrictedRole(): Promise<void> {
       (select count(*)::int
          from pg_tables
         where schemaname = 'public'
-          and tablename in ('jobs','job_events')
+          and tablename in ('jobs','job_events','api_keys')
           and tableowner = current_user) as owns_tenant_tables
     from pg_roles r
     where r.rolname = current_user
@@ -110,6 +110,36 @@ export async function inTenantTransaction<T>(
         set_config('app.org_id', ${organizationId ?? ""}, true),
         set_config('app.is_staff', ${isStaff ? "on" : "off"}, true)
     `);
+    return fn(tx);
+  });
+}
+
+/**
+ * The one transaction that is allowed to read a row before a scope exists.
+ *
+ * An API key has to be looked up before anyone knows which company it belongs
+ * to — the key is what PRODUCES the scope, so it cannot require one, the same
+ * circular problem sessions and memberships have. Those tables resolve it by
+ * sitting outside row-level security entirely, with the reason written down in
+ * scripts/check-rls.ts.
+ *
+ * Keys do not, because the same table is also managed through the ordinary
+ * screens, and that management must be isolated per client like everything
+ * else. So the table keeps its tenant policy, and this adds one narrow,
+ * named exception: a SELECT-only policy that only applies while this flag is
+ * set. The flag is transaction-local, is set here and nowhere else, and the
+ * only query that runs inside it is a lookup by the hash of the presented key.
+ *
+ * It admits every key row, which sounds worse than it is: the rows hold hashes,
+ * so what it can see is not a credential. Nothing may write inside it.
+ */
+export async function inAuthenticationTransaction<T>(
+  fn: (tx: Transaction) => Promise<T>,
+): Promise<T> {
+  return db.transaction(async (tx) => {
+    await tx.execute(
+      sql`select set_config('app.authenticating', 'on', true)`,
+    );
     return fn(tx);
   });
 }

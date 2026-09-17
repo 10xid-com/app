@@ -117,6 +117,15 @@ export type NewJob = {
   direction: "from_client" | "to_client";
   dueAt?: Date | null;
   assignedTo?: string | null;
+  /**
+   * Whatever the sender filled in, when the job arrived from a form rather than
+   * from this application's own screens — a name, an address, what they want
+   * quoting. It is kept on the creation event rather than in columns on `jobs`,
+   * because it is a record of what was submitted at one moment and must not
+   * drift as the job is worked on. The audit table is append-only at the
+   * database, which is exactly the property that record needs.
+   */
+  details?: Record<string, string> | null;
 };
 
 export async function createJob(
@@ -148,6 +157,7 @@ export async function createJob(
       title: job.title,
       direction: job.direction,
       status: job.status,
+      ...(input.details ? { details: input.details } : {}),
     });
 
     return job;
@@ -373,6 +383,34 @@ export async function assignedPerPerson(scope: Scope) {
       .where(sql`${jobs.assignedTo} is not null`)
       .groupBy(jobs.assignedTo),
   );
+}
+
+/**
+ * How many jobs one account has filed recently.
+ *
+ * This is the rate limit behind the intake endpoint, and it is deliberately a
+ * database count rather than a counter held in memory. The application runs as
+ * more than one instance, and an in-memory limit is really one limit per
+ * instance — so a limit of sixty becomes a limit of sixty times however many
+ * containers happen to be running, which is a number nobody has written down.
+ */
+export async function jobsFiledSince(
+  scope: Scope,
+  creatorId: string,
+  since: Date,
+): Promise<number> {
+  const rows = await inTenantTransaction(
+    scope.organizationId,
+    isSurveying(scope),
+    (tx) =>
+      tx
+        .select({ n: sql<number>`count(*)::int` })
+        .from(jobs)
+        .where(
+          and(eq(jobs.createdBy, creatorId), sql`${jobs.createdAt} >= ${since}`),
+        ),
+  );
+  return rows[0]?.n ?? 0;
 }
 
 export async function listJobEvents(scope: Scope, jobId: string) {

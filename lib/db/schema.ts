@@ -111,6 +111,17 @@ export const users = pgTable("users", {
   /** Derived from membership of the internal organization; stored for speed. */
   isStaff: boolean("is_staff").notNull().default(false),
   /**
+   * A service account: the identity an API key acts as, so automated work is
+   * attributable to a named thing rather than to a person's login.
+   *
+   * It is a real row in this table on purpose — a job raised by Northstar's
+   * website has the same shape as one raised by a person, so nothing downstream
+   * needs a second code path. What it must never do is sign in: the sign-in
+   * route refuses these accounts outright, so possession of the mailbox (there
+   * is none — the address is on a .invalid domain) would still achieve nothing.
+   */
+  isService: boolean("is_service").notNull().default(false),
+  /**
    * TOTP shared secret, encrypted at rest with AES-256-GCM. A database dump
    * therefore yields no working second factor — which is the whole point of
    * having one, since the first factor already lives in an inbox.
@@ -263,6 +274,52 @@ export const staffGrants = pgTable(
   (t) => [index("staff_grants_session_idx").on(t.sessionId)],
 );
 
+/**
+ * Keys for machines.
+ *
+ * A client's own website has work to hand over — Northstar's estimate requests —
+ * and there is no person behind that request to sign in. The alternative people
+ * reach for is to let the automation use someone's personal login, which means
+ * one leaked credential is both a human's whole account and every script that
+ * ever borrowed it. So a key is its own credential:
+ *
+ *   * bound to ONE company, which is where its jobs land, and to a service
+ *     account, which is who they are attributed to;
+ *   * stored as a hash, so this table leaks nothing if it is read;
+ *   * write-only in what it can do — there is no read endpoint behind it, so a
+ *     stolen key can file work, not extract it;
+ *   * revocable on its own, without touching anybody's login.
+ *
+ * `prefix` is the first few characters of the key, kept in clear. It is not a
+ * secret and cannot be used to authenticate; it exists so a key can be told
+ * apart from its siblings in a list, and so a leaked key found in a log can be
+ * matched to a row and revoked.
+ */
+export const apiKeys = pgTable(
+  "api_keys",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    /** The service account jobs filed with this key are attributed to. */
+    serviceUserId: uuid("service_user_id")
+      .notNull()
+      .references(() => users.id),
+    /** What this key is for, in words: "Northstar website — estimate form". */
+    label: text("label").notNull(),
+    keyHash: sha256("key_hash").notNull().unique(),
+    prefix: text("prefix").notNull(),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt,
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (t) => [index("api_keys_org_idx").on(t.organizationId)],
+);
+
 /* ------------------------------------------------------------------ */
 /* The work                                                            */
 /* ------------------------------------------------------------------ */
@@ -345,4 +402,5 @@ export const jobEvents = pgTable(
 export const TENANT_SCOPED_TABLES = [
   "jobs",
   "job_events",
+  "api_keys",
 ] as const;

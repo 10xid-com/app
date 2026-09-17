@@ -28,6 +28,12 @@ export function proxy(request: NextRequest) {
   // build a redirect loop that only shows up on the one domain you did not test.
   if (pathname.startsWith("/auth/")) return NextResponse.next();
 
+  // Nor with the machine endpoints. They carry an API key rather than a cookie,
+  // and redirecting one into the sign-in handoff would answer a POST with a
+  // 307 to an HTML page — which a caller reads as "it worked, sort of", and
+  // which is a far more confusing failure than a plain 401.
+  if (pathname.startsWith("/api/")) return NextResponse.next();
+
   // A cookie being PRESENT is all that is checked. Whether it is valid is the
   // application's business, not this layer's.
   if (SESSION_COOKIES.some((name) => request.cookies.has(name))) {

@@ -51,6 +51,20 @@ export const SSO_TICKET_TTL_SECONDS = 30;
 export const STAFF_GRANT_SECONDS = 30 * 60;
 
 /**
+ * What one API key may file, per hour.
+ *
+ * A client's contact form is the thing on the other end, so this is sized for a
+ * busy day rather than for a machine: sixty an hour is far more than any real
+ * form produces and far less than a script pointed at the endpoint would. The
+ * count comes from the database rather than from memory, because the
+ * application runs as more than one instance.
+ */
+export const API_KEY_RATE = {
+  maxJobsPerWindow: 60,
+  windowSeconds: 60 * 60,
+};
+
+/**
  * Browsers cap every cookie at 400 days regardless of what the server asks for,
  * so no configuration above this is real. It is only a backstop — liveness is
  * decided from the session row, never from the cookie's own expiry, because a
