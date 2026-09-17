@@ -22,6 +22,21 @@ function ago(date: Date): string {
 }
 
 /**
+ * How long this session has left, in words.
+ *
+ * A session lasts until it is signed out, so its stored expiry is the browser's
+ * own 400-day ceiling rather than a policy anybody chose. Printing that date
+ * would invite the reading that something expires then — so it says what is
+ * actually true, and only names a date for a session that really is running out
+ * (one created under the older, shorter policy, which some still are).
+ */
+function lifetime(expiresAt: Date): string {
+  const daysLeft = (expiresAt.getTime() - Date.now()) / 86_400_000;
+  if (daysLeft > 365) return "lasts until you sign out";
+  return `expires ${expiresAt.toISOString().slice(0, 16).replace("T", " ")}`;
+}
+
+/**
  * Every session this person holds, and a way to end any of them.
  *
  * The cheapest incident-response tool there is. A session reaching a laptop
@@ -56,8 +71,10 @@ export default async function SessionsPage({
             Your sessions
           </h1>
           <p className="mt-1 max-w-prose text-sm text-ink-soft">
-            Each domain you have signed in on holds its own session. Ending one
-            takes effect on its next request.
+            Each domain you have signed in on holds its own session, and they
+            last until you sign out. This screen is how you end one you no
+            longer want — on a laptop left somewhere, say — and it takes effect
+            on that session&rsquo;s very next request.
           </p>
         </div>
         {others > 0 ? (
@@ -97,8 +114,8 @@ export default async function SessionsPage({
                   {session.issuedForHost}
                 </p>
                 <p className="mt-0.5 text-xs text-ink-faint">
-                  {session.roleAtCreation} · last used {ago(session.lastSeenAt)} ·
-                  expires {new Date(session.absoluteExpiresAt).toISOString().slice(0, 16).replace("T", " ")}
+                  {session.roleAtCreation} · last used {ago(session.lastSeenAt)} ·{" "}
+                  {lifetime(session.absoluteExpiresAt)}
                 </p>
               </div>
 

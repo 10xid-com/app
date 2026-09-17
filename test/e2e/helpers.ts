@@ -102,6 +102,37 @@ export async function latestSessionFor(email: string) {
   return rows[0] ?? null;
 }
 
+/**
+ * Push a person's newest session back in time.
+ *
+ * The only way to test "you are not logged out while you are away" without
+ * waiting out the clock. It moves `last_seen_at` and `created_at`, which are
+ * the two values every expiry decision is made from, so the server sees a
+ * session that has genuinely been idle for that long.
+ */
+export async function ageNewestSession(email: string, days: number) {
+  try {
+    process.loadEnvFile(".env.local");
+  } catch {
+    /* CI supplies the environment */
+  }
+  const db = new Client({ connectionString: process.env.DATABASE_URL });
+  await db.connect();
+  await db.query(
+    `update sessions
+        set last_seen_at = now() - ($2 || ' days')::interval,
+            created_at   = now() - ($2 || ' days')::interval
+      where id = (
+        select s.id from sessions s
+          join users u on u.id = s.user_id
+         where u.email = $1 and s.revoked_at is null
+         order by s.created_at desc limit 1
+      )`,
+    [email.toLowerCase(), String(days)],
+  );
+  await db.end();
+}
+
 /** Look up seeded ids, so tests attack real rows rather than invented ones. */
 export async function seededIds() {
   try {

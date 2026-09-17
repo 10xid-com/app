@@ -556,8 +556,8 @@
       <div class="decision">
         <div class="n">04</div>
         <div>
-          <h4>Clients 30 days, staff 8 hours plus a 30-minute idle timeout</h4>
-          <p>A staff session reaches every client's data, so it expires while a client's renews silently. No hosted vendor can express this; our own session table does it in two columns.</p>
+          <h4>A session lasts until you sign out</h4>
+          <p>Both clocks are off. An expiry nobody asked for is indistinguishable from the thing being broken, and it rebuilds the "can you let me back in" burden the portal exists to remove. What bounds a staff session is not time but reach: one client at a time, through a grant that carries a reason and lapses in 30 minutes.</p>
         </div>
       </div>
       <div class="decision">
@@ -701,29 +701,61 @@
 
   <!-- ============================================ -->
   <section>
-    <h2>Sessions: two clocks</h2>
-    <p class="sub">The requirement no vendor could meet</p>
+    <h2>Sessions: until you sign out</h2>
+    <p class="sub">And what bounds them instead of a clock</p>
 
     <p>
       Every session row carries two expiry times, both enforced on the server:
       an <strong>idle clock</strong> that restarts on every visit, and an
       <strong>absolute cap</strong> that renewal can never push past.
+      <strong>Both are switched off.</strong> A session ends when it is signed
+      out, and not before.
     </p>
 
     <div class="scroller">
       <table>
         <thead><tr><th>Role</th><th>Idle timeout</th><th>Absolute cap</th><th>Second factor</th></tr></thead>
         <tbody>
-          <tr><td>Client</td><td class="num">—</td><td class="num">30 days</td><td>No</td></tr>
-          <tr><td>Staff</td><td class="num">30 minutes</td><td class="num">8 hours</td><td>Yes</td></tr>
+          <tr><td>Client</td><td class="num">—</td><td class="num">—</td><td>No</td></tr>
+          <tr><td>Staff</td><td class="num">—</td><td class="num">—</td><td>Yes</td></tr>
         </tbody>
       </table>
     </div>
 
     <p>
-      Both values are <strong>copied onto the session row when it is created</strong>. Promote
-      someone to staff tomorrow and their existing session does not retroactively stretch to 30
-      days — it keeps the caps it was born with.
+      This was a deliberate reversal. Staff previously expired after 8 hours, or
+      30 minutes idle, on the reasoning that a staff session reaches every
+      client. In practice an expiry nobody asked for is indistinguishable from
+      the thing being broken, and it rebuilds exactly the "can you let me back
+      in" burden the portal exists to remove.
+    </p>
+
+    <div class="note">
+      <span class="note-label">What replaces the clock — and what does not</span>
+      <p>
+        Stated plainly: a stolen session cookie now works until somebody notices
+        and ends it, where a staff one previously died within 8 hours on its own.
+        Three things still bound it, and none of them is time.
+      </p>
+      <p>
+        <strong>Staff reach one client at a time</strong>, through a grant that
+        carries a typed reason and lapses after 30 minutes. An endless session
+        does not become endless access to every client — that clock is
+        deliberately untouched, because reaching a particular client's data is
+        the privilege, and staying signed in is only convenience.
+        <strong>Sessions live server-side</strong>, so revoking one from the
+        Sessions screen takes effect on its very next request rather than
+        whenever a token would have expired. And <strong>staff still pass a
+        second factor</strong> to establish a session at all.
+      </p>
+    </div>
+
+    <p>
+      Both values are still <strong>copied onto the session row when it is
+      created</strong>. Promote someone to staff tomorrow and their existing
+      session does not retroactively change — it keeps the limits it was born
+      with. Which also means a policy change like this one reaches a session
+      only when it is next created: one more sign-in, then not again.
     </p>
 
     <ul>
@@ -735,12 +767,18 @@
     </ul>
 
     <div class="note">
-      <span class="note-label">Why no 400-day option exists</span>
+      <span class="note-label">"Until you sign out" means 400 days, honestly</span>
       <p>
         Chrome and Firefox both hard-cap every cookie at 400 days regardless of what the server
-        asks for. A session that never expires is not achievable in any current browser — and a
-        session that reaches every client's data is precisely the one you most need to be able
-        to kill.
+        asks for, so a session that literally never expires is not achievable in any current
+        browser. The session row is therefore stamped with that same 400 days rather than with
+        some longer number: the row and the cookie lapse together, instead of the row outliving
+        a cookie the browser has already stopped sending.
+      </p>
+      <p>
+        In practice that is "until you sign out" for anyone using the portal more than once a
+        year — and if a session ever does reach the ceiling, the next sign-in is one six-digit
+        code.
       </p>
     </div>
   </section>
