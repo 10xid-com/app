@@ -52,7 +52,12 @@ async function main() {
   console.log(`  ${VICTIM}`);
   await page.goto(`${base}/auth/login?next=%2Fjobs`);
   await page.getByLabel("Email").fill(VICTIM);
-  await page.getByRole("button", { name: "Send me a code" }).click();
+  // The sign-in button was renamed to "Continue" in d982641, when signing up
+  // was separated from signing in. This selector was never updated, so the
+  // proof has been failing on a 30-second timeout ever since rather than
+  // proving anything. Only the selector changes here — every assertion below
+  // is untouched.
+  await page.getByRole("button", { name: "Continue" }).click();
   await page.waitForURL(/\/auth\/verify/);
 
   const log = await readFile(SINK, "utf8").catch(() => "");
