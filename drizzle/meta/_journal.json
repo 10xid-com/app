@@ -64,6 +64,20 @@
       "when": 1789653933560,
       "tag": "0008_job_drive_folder",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1789823517680,
+      "tag": "0009_accounts_ids_and_emails",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1789823727629,
+      "tag": "0010_primary_email_on_insert",
+      "breakpoints": true
     }
   ]
 }

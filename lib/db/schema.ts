@@ -133,6 +133,101 @@ export const users = pgTable("users", {
   deletedAt: timestamp("deleted_at", { withTimezone: true }),
 });
 
+/**
+ * An address is a CLAIM attached to an account, never the account itself.
+ *
+ * The obvious design puts one `email` column on the person, and it is wrong in
+ * two ways that only surface once there are real users. People change
+ * addresses — and if the address IS the identity, changing it either forks the
+ * account or quietly rewrites who did what. Worse, shared mailboxes are normal
+ * in this trade: `orders@club.org` is one address and frequently several
+ * humans, and `jane@club.org` arriving two years later is the same person who
+ * used to be `orders@`.
+ *
+ * So addresses live here — many per account, each verified on its own — and
+ * signing in resolves THROUGH this table. One address is marked primary,
+ * because outbound mail needs a single answer, and a partial unique index
+ * enforces exactly one per account rather than trusting every writer to.
+ *
+ * `email` is unique across the whole table, which is what stops two accounts
+ * claiming the same address and gives "who is this?" one answer at sign-in.
+ */
+export const userEmails = pgTable(
+  "user_emails",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    /** Stored lowercase. Unique across every account, not merely per account. */
+    email: text("email").notNull().unique(),
+    /**
+     * Where mail goes. Exactly one per account, enforced by a partial unique
+     * index in the migration — Drizzle cannot express `WHERE is_primary`, and a
+     * plain unique index here would permit only one NON-primary address too.
+     */
+    isPrimary: boolean("is_primary").notNull().default(false),
+    /**
+     * Verified independently of every other address. An unverified address can
+     * be claimed but cannot be signed in with, so adding somebody else's
+     * address to your account achieves nothing.
+     */
+    verifiedAt: timestamp("verified_at", { withTimezone: true }),
+    createdAt,
+  },
+  (t) => [index("user_emails_user_idx").on(t.userId)],
+);
+
+/**
+ * The iD — and the reason it is a table rather than a column on `users`.
+ *
+ * Everybody who signs in anywhere gets an ACCOUNT. Far fewer will hold an iD:
+ * it is issued deliberately, it can be given up, and it may one day be
+ * transferred. Those are all things that happen TO an identifier, and none of
+ * them should be able to reach the account's history.
+ *
+ * Hence the rule this table exists to make enforceable: NOTHING references
+ * `id_code`. Jobs, memberships, audit rows and sessions all point at
+ * `users.id`, a uuid that never changes for the life of the account.
+ * Transferring an iD therefore moves one row and rewrites nothing. Were a job
+ * ever to record "assigned to 10X-4K7P2" instead of the account uuid, a
+ * transfer would silently reassign that job's history to whoever holds the code
+ * next — and the evidence of the previous holder is exactly what would be
+ * overwritten, so it could not be detected afterwards, let alone undone.
+ *
+ * Two constraints carry the model, both in the database, because neither
+ * survives being a convention:
+ *
+ *   * at most ONE live iD per account — a partial unique index on user_id
+ *     where revoked_at is null, so revoked ones do not block a reissue;
+ *   * an id_code is unique FOREVER, revoked rows included, so a code that was
+ *     once somebody's can never be handed to somebody else.
+ */
+export const identities = pgTable(
+  "identities",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    /**
+     * The public identifier. Unique across every row this table has ever held,
+     * including revoked ones — see above.
+     *
+     * Deliberately NOT a foreign key target anywhere in this schema.
+     */
+    idCode: text("id_code").notNull().unique(),
+    issuedAt: timestamp("issued_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    /** Set rather than deleted, so "was issued and given up" stays a fact. */
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt,
+    updatedAt,
+  },
+  (t) => [index("identities_user_idx").on(t.userId)],
+);
+
 export const memberships = pgTable(
   "memberships",
   {

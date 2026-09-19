@@ -1,7 +1,8 @@
 import "server-only";
-import { and, desc, eq, gt, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, gt, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { db } from "./connection";
 import {
+  identities,
   memberships,
   organizationDomains,
   organizations,
@@ -10,6 +11,7 @@ import {
   signInCodes,
   ssoTickets,
   staffGrants,
+  userEmails,
   users,
 } from "./schema";
 
@@ -40,13 +42,198 @@ export async function userById(id: string) {
   return rows[0] ?? null;
 }
 
+/**
+ * Resolve an address to the account that holds it.
+ *
+ * Reads through `user_emails`, not `users.email`, because an account may hold
+ * several addresses and any of them should reach the same person. The
+ * predicate is the load-bearing part:
+ *
+ *   the account's PRIMARY address, or a secondary one that has been VERIFIED
+ *
+ * A secondary address counts only once verified, which closes the obvious
+ * abuse: adding somebody else's address to your own account would otherwise
+ * let a code sent to their inbox open your session, and — because addresses
+ * are globally unique — would also squat the address so its real owner could
+ * never claim it.
+ *
+ * The primary is exempt from that test on purpose. Every account that exists
+ * has one, service accounts included (they are never verified because there is
+ * no inbox to verify), and requiring verification here would change who
+ * resolves at sign-in. This function returns exactly what it returned when the
+ * address was a column on `users`.
+ */
 export async function findUserByEmail(email: string) {
   const rows = await db
     .select()
     .from(users)
-    .where(and(eq(users.email, email.toLowerCase()), isNull(users.deletedAt)))
+    .innerJoin(userEmails, eq(userEmails.userId, users.id))
+    .where(
+      and(
+        eq(userEmails.email, email.toLowerCase()),
+        isNull(users.deletedAt),
+        or(eq(userEmails.isPrimary, true), isNotNull(userEmails.verifiedAt)),
+      ),
+    )
+    .limit(1);
+  return rows[0]?.users ?? null;
+}
+
+/** Every address on an account, primary first. */
+export async function emailsForUser(userId: string) {
+  return db
+    .select({
+      id: userEmails.id,
+      email: userEmails.email,
+      isPrimary: userEmails.isPrimary,
+      verifiedAt: userEmails.verifiedAt,
+      createdAt: userEmails.createdAt,
+    })
+    .from(userEmails)
+    .where(eq(userEmails.userId, userId))
+    .orderBy(desc(userEmails.isPrimary), userEmails.createdAt);
+}
+
+/**
+ * Claim an address for an account, unverified.
+ *
+ * Unverified is the whole point: until it is confirmed it cannot be signed in
+ * with. The unique constraint means a claim on an address already held
+ * elsewhere fails outright rather than silently moving it, so this returns null
+ * instead of throwing — "somebody already has that" is an ordinary answer, not
+ * an exceptional one.
+ */
+export async function addEmailToAccount(userId: string, emailRaw: string) {
+  const rows = await db
+    .insert(userEmails)
+    .values({ userId, email: emailRaw.trim().toLowerCase(), isPrimary: false })
+    .onConflictDoNothing({ target: userEmails.email })
+    .returning();
+  return rows[0] ?? null;
+}
+
+/** Confirm control of an address. Only then can it be signed in with. */
+export async function verifyEmail(userId: string, emailRaw: string) {
+  const rows = await db
+    .update(userEmails)
+    .set({ verifiedAt: new Date() })
+    .where(
+      and(
+        eq(userEmails.userId, userId),
+        eq(userEmails.email, emailRaw.trim().toLowerCase()),
+      ),
+    )
+    .returning({ id: userEmails.id });
+  return rows.length === 1;
+}
+
+/**
+ * Move the primary flag, and the `users.email` mirror with it.
+ *
+ * `users.email` is kept as a denormalised copy of the primary address — the
+ * same bargain `users.is_staff` already makes in this schema — so that listing
+ * a team does not need a join per row. The cost of a denormalisation is that it
+ * can drift, so this transaction is the ONLY writer of it. Nothing else may set
+ * `users.email`.
+ *
+ * Refuses an unverified address: promoting one would let an unconfirmed claim
+ * become the address the system writes to.
+ *
+ * One statement clears the old primary and the next sets the new, both inside a
+ * transaction, because the partial unique index permits exactly one primary per
+ * account and would reject the pair applied in the other order.
+ */
+export async function setPrimaryEmail(
+  userId: string,
+  emailRaw: string,
+): Promise<boolean> {
+  const email = emailRaw.trim().toLowerCase();
+  return db.transaction(async (tx) => {
+    const candidate = await tx
+      .select({ id: userEmails.id, verifiedAt: userEmails.verifiedAt })
+      .from(userEmails)
+      .where(and(eq(userEmails.userId, userId), eq(userEmails.email, email)))
+      .limit(1);
+    if (!candidate[0] || candidate[0].verifiedAt === null) return false;
+
+    await tx
+      .update(userEmails)
+      .set({ isPrimary: false })
+      .where(and(eq(userEmails.userId, userId), eq(userEmails.isPrimary, true)));
+    await tx
+      .update(userEmails)
+      .set({ isPrimary: true })
+      .where(eq(userEmails.id, candidate[0].id));
+    await tx
+      .update(users)
+      .set({ email, updatedAt: new Date() })
+      .where(eq(users.id, userId));
+    return true;
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* The iD                                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The live iD on an account, if it holds one.
+ *
+ * Most accounts will not. That is the design — an account is what everybody who
+ * signs in anywhere gets, and an iD is a thing issued on top of it.
+ */
+export async function identityForUser(userId: string) {
+  const rows = await db
+    .select()
+    .from(identities)
+    .where(and(eq(identities.userId, userId), isNull(identities.revokedAt)))
     .limit(1);
   return rows[0] ?? null;
+}
+
+export async function identityByCode(idCode: string) {
+  const rows = await db
+    .select()
+    .from(identities)
+    .where(eq(identities.idCode, idCode))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+/**
+ * Issue an iD.
+ *
+ * Returns null rather than throwing on either refusal, because both are
+ * ordinary answers: the account already holds a live iD (the partial unique
+ * index says one at a time), or the code has been used before by anyone, ever,
+ * including on a revoked row. Codes are never reissued — the previous holder's
+ * history is what a reuse would silently reattribute.
+ */
+export async function issueIdentity(userId: string, idCode: string) {
+  const rows = await db
+    .insert(identities)
+    .values({ userId, idCode })
+    .onConflictDoNothing()
+    .returning();
+  return rows[0] ?? null;
+}
+
+/**
+ * Give up an iD.
+ *
+ * The row stays and is stamped, so "held this code and gave it up" remains a
+ * fact — the application role holds no DELETE on this table, so erasing it is a
+ * permission error rather than anybody's decision. Nothing else in the schema
+ * references the code, so this touches no memberships, no jobs and no audit
+ * rows: revoking an iD changes what somebody is called, never what they did.
+ */
+export async function revokeIdentity(userId: string): Promise<boolean> {
+  const rows = await db
+    .update(identities)
+    .set({ revokedAt: new Date(), updatedAt: new Date() })
+    .where(and(eq(identities.userId, userId), isNull(identities.revokedAt)))
+    .returning({ id: identities.id });
+  return rows.length === 1;
 }
 
 export async function setTotpSecret(userId: string, encrypted: string) {
