@@ -52,10 +52,33 @@ try {
       await client.query("SELECT set_config('portal.app_password', $1, false)", [
         appPassword,
       ]);
+      // NOSUPERUSER is deliberately absent, and its absence is load-bearing.
+      //
+      // Postgres permits only a superuser to CHANGE the SUPERUSER attribute —
+      // including changing it to the value it already has. On Railway the owner
+      // in DATABASE_URL is a superuser, so naming it here was free. On a managed
+      // Postgres where the owner is not a superuser it is fatal: the whole
+      // statement fails with
+      //
+      //   permission denied to alter role
+      //   DETAIL: Only roles with the SUPERUSER attribute may change the
+      //           SUPERUSER attribute.
+      //
+      // and because this is a pre-deploy step, the deploy dies before the role
+      // is given its password — so the application cannot connect at all.
+      // Supabase's `postgres` is exactly such a role: not a superuser, though it
+      // does hold BYPASSRLS and CREATEROLE.
+      //
+      // Dropping the word costs nothing. The role is created NOSUPERUSER by
+      // 0001_rls_and_grants.sql, an owner that is not a superuser could not
+      // grant superuser even if asked, and assertRestrictedRole() re-checks the
+      // attribute at every boot. NOBYPASSRLS stays, because that one can be set
+      // by a non-superuser holding BYPASSRLS and it is the attribute that
+      // silently disables every policy if it is ever wrong.
       await client.query(
         `DO $$ BEGIN
            EXECUTE format(
-             'ALTER ROLE portal_app WITH LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD %L',
+             'ALTER ROLE portal_app WITH LOGIN NOBYPASSRLS PASSWORD %L',
              current_setting('portal.app_password')
            );
          END $$;`,
