@@ -128,3 +128,36 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+/**
+ * No form field smaller than 16px on a phone.
+ *
+ * WebKit zooms the whole page in when a text field is focused and its text is
+ * under 16px — a readability behaviour, not a bug. The zoom then SURVIVES the
+ * form submit and the redirect, so the page you land on is rendered zoomed and
+ * panned off to one side. Signing in looks broken, and only a pinch-out fixes
+ * it. Reported on an iPhone landing on the dashboard with the first character
+ * of every line cut off.
+ *
+ * This is every iOS browser, not just Safari: Apple requires them all to use
+ * WebKit, so Chrome and Firefox on iOS inherit it exactly. Desktop Chrome does
+ * NOT do this, which is why the whole layout measures clean at every width and
+ * the fault cannot be reproduced outside a real device.
+ *
+ * Written here as plain CSS rather than by changing the shared input class,
+ * because `text-sm` and `text-lg` are both font-size utilities and which one
+ * wins is decided by their order in the compiled stylesheet, not the order
+ * they are written in the class attribute. Editing the shared class would
+ * therefore risk silently shrinking the six-digit code field, which sets its
+ * own larger size on purpose.
+ *
+ * 640px matches Tailwind's `sm` breakpoint. Above it, pointing devices are the
+ * norm, no browser auto-zooms, and the designed sizes apply untouched.
+ */
+@media (max-width: 640px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
