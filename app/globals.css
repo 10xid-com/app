@@ -130,6 +130,39 @@ body {
 }
 
 /**
+ * The sideways-scrolling nav, with its scrollbar put somewhere sensible.
+ *
+ * Six links do not fit across a phone, so the strip scrolls. The previous
+ * version reached for overflow-x-auto and nothing else, and two things went
+ * wrong: the browser drew its default scrollbar straight THROUGH the link
+ * text, and on a desktop there was no indication the strip scrolled at all.
+ *
+ * The track now sits in its own space — the nav carries pb-2 -mb-2, which
+ * reserves room below the text without making the header taller — and the bar
+ * itself is thin and tinted rather than the browser's slab.
+ *
+ * It is deliberately NOT hidden. A scrolling region with no affordance is menu
+ * items nobody knows exist, which is the same defect as not rendering them.
+ */
+.portal-nav-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+
+.portal-nav-scroll::-webkit-scrollbar {
+  height: 3px;
+}
+
+.portal-nav-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.portal-nav-scroll::-webkit-scrollbar-thumb {
+  background-color: var(--line);
+  border-radius: 999px;
+}
+
+/**
  * No form field smaller than 16px on a phone.
  *
  * WebKit zooms the whole page in when a text field is focused and its text is

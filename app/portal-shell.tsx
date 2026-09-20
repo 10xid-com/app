@@ -1,81 +1,85 @@
-import Link from "next/link";
 import type { ReactNode } from "react";
 import { signOutAction } from "./auth/actions";
 import { exitClientAction } from "./staff/actions";
+import { PortalHeader, menuItemClass } from "./portal-nav";
 
 /**
  * The frame every signed-in screen sits in.
  *
- * Follows the conventions of the existing Rotary storefront's admin area — a
- * slim brand-coloured bar, a horizontal nav, a max-width content column — so
- * the portal reads as part of the same family.
+ * The header is a light bar carrying the ORGANIZATION on the left and the
+ * 10XiD mark on the right, rather than a brand-coloured slab with the product
+ * name in the corner. That is the right way round: on any given screen the
+ * thing a person most needs to be sure of is whose data they are looking at —
+ * staff move between clients all day — and 10XiD is the platform underneath,
+ * not the subject of the page.
+ *
+ * The mark on the right is the account control: sign out, switch organization,
+ * personal details. Muted, because it is the one thing on the bar that is
+ * about you rather than about the work.
  */
 export function PortalShell({
   children,
   email,
   isStaff,
   actingOn,
+  organization,
 }: {
   children: ReactNode;
   email: string;
   isStaff: boolean;
   actingOn: { name: string; reason: string } | null;
+  /**
+   * Whose screen this is. Optional for now: every caller passing it means
+   * every page fetching it, and the pages are being reworked for Flow anyway.
+   * When absent the platform name stands in, which is honest — it says "you
+   * are in 10XiD" rather than naming the wrong company.
+   *
+   * While staff hold a grant, the client they are acting on wins, because that
+   * is the organization whose rows are on screen.
+   */
+  organization?: { name: string; logoUrl: string | null } | null;
 }) {
+  const shown = actingOn
+    ? { name: actingOn.name, logoUrl: organization?.logoUrl ?? null }
+    : (organization ?? { name: "10XiD Portal", logoUrl: null });
+
+  const links = [
+    { href: "/dashboard", label: "Dashboard" },
+    { href: "/jobs", label: "Jobs" },
+    { href: "/team", label: "Team" },
+    ...(isStaff
+      ? [
+          { href: "/staff", label: "Clients" },
+          { href: "/staff/keys", label: "Keys" },
+        ]
+      : []),
+  ];
+
   return (
     <div className="min-h-dvh bg-ground">
-      <header className="bg-brand text-white">
-        <div className="mx-auto flex h-14 max-w-5xl items-center justify-between gap-4 px-4">
-          <div className="flex min-w-0 items-center gap-6">
-            <Link href="/jobs" className="flex-none text-sm font-semibold tracking-wide">
-              10XiD Portal
-            </Link>
-            <nav className="flex items-center gap-4 overflow-x-auto whitespace-nowrap text-sm text-white/70">
-              <Link href="/dashboard" className="transition-colors hover:text-white">
-                Dashboard
-              </Link>
-              <Link href="/jobs" className="transition-colors hover:text-white">
-                Jobs
-              </Link>
-              <Link href="/team" className="transition-colors hover:text-white">
-                Team
-              </Link>
-              {isStaff ? (
-                <>
-                  <Link href="/staff" className="transition-colors hover:text-white">
-                    Clients
-                  </Link>
-                  <Link
-                    href="/staff/keys"
-                    className="transition-colors hover:text-white"
-                  >
-                    Keys
-                  </Link>
-                </>
-              ) : null}
-              <Link
-                href="/account/sessions"
-                className="transition-colors hover:text-white"
-              >
-                Sessions
-              </Link>
-            </nav>
-          </div>
-          <div className="flex flex-none items-center gap-3">
-            <span className="hidden text-xs text-white/70 sm:inline">{email}</span>
+      <PortalHeader
+        organizationName={shown.name}
+        organizationLogoUrl={shown.logoUrl}
+        email={email}
+        links={links}
+        menu={
+          <>
+            <a href="/account/sessions" className={menuItemClass}>
+              Your details and devices
+            </a>
+            {isStaff ? (
+              <a href="/staff" className={menuItemClass}>
+                Switch organization
+              </a>
+            ) : null}
             <form action={signOutAction}>
-              <button
-                type="submit"
-                className="rounded-md border border-white/25 px-2.5 py-1 text-xs
-                           font-medium transition-colors hover:bg-white/10
-                           focus-visible:outline-2 focus-visible:outline-offset-2
-                           focus-visible:outline-white"
-              >
+              <button type="submit" className={menuItemClass}>
                 Sign out
               </button>
             </form>
-          </div>
-        </div>
-      </header>
+          </>
+        }
+      />
 
       {/*
         The acting-as banner is not decoration. Staff reach every client's data,

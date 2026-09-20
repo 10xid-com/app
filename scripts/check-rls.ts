@@ -23,6 +23,9 @@ const MUST_BE_PROTECTED = [
   "job_events",
   "api_keys",
   "invitations",
+  "departments",
+  "department_members",
+  "permissions",
 ];
 
 /** Read before a scope exists. Each entry needs a reason that survives review. */
@@ -40,6 +43,15 @@ const EXEMPT: Record<string, string> = {
   sessions:
     "Holds active_organization_id as part of the scope itself. Sessions are " +
     "found by token hash, never enumerated.",
+  connections:
+    "Holds rows with a NULL organization_id — two people who scanned each " +
+    "other's iD know each other personally, and that belongs to no company. " +
+    "A tenant policy compares organization_id to the current scope, and NULL " +
+    "never matches, so protecting this table would silently erase every " +
+    "personal connection from every query rather than isolating anything. " +
+    "It is also an INPUT to visibility, in the same way memberships is an " +
+    "input to scope: it is read to work out who a person may see, which " +
+    "cannot itself require knowing who they may see.",
 };
 
 async function main() {

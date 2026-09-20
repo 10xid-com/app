@@ -39,6 +39,41 @@ export const membershipRole = pgEnum("membership_role", [
   "member",
   "staff",
 ]);
+/**
+ * Can people inside one organization see each other at all?
+ *
+ * `closed` is the default and the interesting case. An agency does not want
+ * its client meeting the contractor doing the work, and a company of two
+ * hundred does not want a new starter able to enumerate everybody. So being
+ * in the same organization grants NOTHING on its own — visibility comes from
+ * an explicit connection, and the admin decides whether membership creates
+ * one automatically.
+ */
+export const memberVisibility = pgEnum("member_visibility", ["open", "closed"]);
+
+/** Why two people can see each other. Kept because "how" changes what may be revoked. */
+export const connectionSource = pgEnum("connection_source", [
+  /** The organization is `open`, so membership alone did it. */
+  "org_open",
+  /** One invited the other, or an admin put them together. */
+  "invitation",
+  /** They scanned each other's iD — the two people were in a room. */
+  "id_scan",
+  /** They ended up on the same piece of work. */
+  "shared_work",
+  /** Someone with the authority simply said so. */
+  "manual",
+]);
+
+/** What a granted capability applies TO. */
+export const permissionScope = pgEnum("permission_scope", [
+  "organization",
+  "department",
+  "task_type",
+  "task",
+  "user",
+]);
+
 export const jobDirection = pgEnum("job_direction", [
   "from_client",
   "to_client",
@@ -72,6 +107,19 @@ export const organizations = pgTable("organizations", {
    * at the same moment cannot be handed the same number.
    */
   jobCounter: integer("job_counter").notNull().default(0),
+  /**
+   * Whether belonging to this organization lets you see the other people in
+   * it. Defaults to `closed` — the safe answer, and the one an agency needs.
+   */
+  memberVisibility: memberVisibility("member_visibility")
+    .notNull()
+    .default("closed"),
+  /**
+   * The person answerable for this organization. Set when a brand is created,
+   * and the reason a brand can be handed over: selling one is transferring
+   * this, not migrating anybody's account.
+   */
+  ownerUserId: uuid("owner_user_id"),
   createdAt,
   updatedAt,
   deletedAt: timestamp("deleted_at", { withTimezone: true }),
@@ -245,6 +293,159 @@ export const memberships = pgTable(
   (t) => [
     uniqueIndex("memberships_user_org_idx").on(t.userId, t.organizationId),
     index("memberships_org_idx").on(t.organizationId),
+  ],
+);
+
+/**
+ * A subdivision of an organization — marketing, graphic design, the shop floor.
+ *
+ * Departments exist because "who may see this" is usually answered by team
+ * rather than by person. Granting a capability to a department and moving
+ * people in and out of it is the difference between administering a company
+ * of twenty and administering one of two hundred.
+ */
+export const departments = pgTable(
+  "departments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    name: text("name").notNull(),
+    slug: text("slug").notNull(),
+    createdAt,
+    updatedAt,
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("departments_org_slug_idx").on(t.organizationId, t.slug),
+    index("departments_org_idx").on(t.organizationId),
+  ],
+);
+
+export const departmentMembers = pgTable(
+  "department_members",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    departmentId: uuid("department_id")
+      .notNull()
+      .references(() => departments.id),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    createdAt,
+  },
+  (t) => [
+    uniqueIndex("department_members_dept_user_idx").on(t.departmentId, t.userId),
+    index("department_members_user_idx").on(t.userId),
+  ],
+);
+
+/**
+ * Who can see whom.
+ *
+ * The rule this table exists to enforce: **people are invisible to each other
+ * until something makes them visible.** Sharing an employer is not that
+ * something, and neither is sharing a job — both are decisions an admin makes,
+ * not facts the database should assume.
+ *
+ * The worked example this was designed against. Tom is one of eighteen
+ * designers. John, a marketing head, sends a booth to Jane, who micromanages:
+ * everything routes through her, so John and Tom never need to see each other.
+ * John sends a banner to Sam, who works the other way: she picks Tom and steps
+ * back, so John and Tom DO need to see each other, and only for that job. Same
+ * company, same two people, opposite answers — which is why this cannot be
+ * derived from membership and has to be recorded.
+ *
+ * A pair is stored ONCE, with the lower uuid in `a_user_id`. Seeing is mutual:
+ * there is no direction in which Tom can see John but John cannot see Tom, and
+ * a two-row design would eventually hold exactly that contradiction.
+ *
+ * Revoked rather than deleted, because "we were connected and no longer are"
+ * is a different fact from "we never were", and the first one explains why
+ * somebody can still see a task they were part of.
+ */
+export const connections = pgTable(
+  "connections",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /**
+     * The organization this connection lives inside, or NULL when two people
+     * simply know each other — the QR-scan case. A personal connection is not
+     * an organization's to revoke, and outlives anybody's employment.
+     */
+    organizationId: uuid("organization_id").references(() => organizations.id),
+    /** Always the numerically lower uuid of the pair. Enforced by a check. */
+    aUserId: uuid("a_user_id")
+      .notNull()
+      .references(() => users.id),
+    bUserId: uuid("b_user_id")
+      .notNull()
+      .references(() => users.id),
+    source: connectionSource("source").notNull(),
+    createdBy: uuid("created_by").references(() => users.id),
+    createdAt,
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("connections_a_idx").on(t.aUserId),
+    index("connections_b_idx").on(t.bUserId),
+    index("connections_org_idx").on(t.organizationId),
+  ],
+);
+
+/**
+ * What somebody may do, stored as data rather than written as code.
+ *
+ * `capability` is deliberately free text — "task.create", "person.see",
+ * "task.approve", whatever tomorrow needs. Adding a capability is inserting a
+ * row, not shipping a migration and a deploy. That is the whole point: roles
+ * that cannot be invented after the fact are roles that stop fitting the
+ * business within a year, and this business intends to keep refining them
+ * indefinitely.
+ *
+ * `scopeType` and `scopeId` say what it applies to: the whole organization, a
+ * department, a kind of work, one specific task, or one specific person. So
+ * "Sam may assign graphic design work" and "Tom may see John, but only on the
+ * banner" are the same shape of row.
+ *
+ * The three coarse roles on `memberships` stay. They are the sensible default
+ * a new member arrives with; this table is how that default gets narrowed or
+ * widened afterwards without inventing a new role each time.
+ */
+export const permissions = pgTable(
+  "permissions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    capability: text("capability").notNull(),
+    scopeType: permissionScope("scope_type").notNull(),
+    /** Null when the scope is the organization itself. */
+    scopeId: uuid("scope_id"),
+    /**
+     * Grants are positive by default. A DENY wins over any grant, so one row
+     * can carve a person out of something their department was given — which
+     * is otherwise only expressible by taking the grant off the department and
+     * re-granting it to everybody else one at a time.
+     */
+    deny: boolean("deny").notNull().default(false),
+    grantedBy: uuid("granted_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt,
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("permissions_user_idx").on(t.userId, t.organizationId),
+    index("permissions_org_capability_idx").on(t.organizationId, t.capability),
   ],
 );
 
