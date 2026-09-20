@@ -49,6 +49,122 @@ function useHideOnScrollDown() {
   return visible;
 }
 
+/**
+ * Watch a scrolling strip and report where it is.
+ *
+ * Needed because the browser's own scrollbar cannot do this job here. On iOS
+ * and on modern macOS the scrollbar is an OVERLAY: it fades in while a scroll
+ * is in progress and disappears again a moment later. At rest — which is how a
+ * page looks when you arrive on it — there is nothing on screen to say the
+ * strip scrolls at all, so the links past the fold may as well not be rendered.
+ * `scrollbar-width: thin` does not change that; it styles a bar that is still
+ * only drawn during a scroll.
+ *
+ * So the bar is drawn by hand from these numbers instead, and it is always
+ * there while there is anything to scroll to.
+ *
+ * Returns fractions rather than pixels, so the caller can lay the thumb out in
+ * percentages and never has to re-measure on a resize.
+ *
+ * The ref comes back as its own value rather than a key on the returned
+ * object, which is not a style choice: react-hooks/refs treats any object
+ * holding a `ref` property as a ref itself, and then reads every other field
+ * off it as an access to `.current` during render. A tuple keeps the numbers
+ * plainly numbers.
+ */
+function useScrollTrack(
+  deps: unknown,
+): [
+  React.RefObject<HTMLElement | null>,
+  {
+    overflowing: boolean;
+    size: number;
+    start: number;
+    onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => void;
+  },
+] {
+  const ref = useRef<HTMLElement>(null);
+  const [track, setTrack] = useState({ overflowing: false, size: 1, start: 0 });
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+
+    const measure = () => {
+      const { scrollWidth, clientWidth, scrollLeft } = el;
+      const hidden = scrollWidth - clientWidth;
+
+      // A fraction of a pixel of overflow is a rounding artefact, not content.
+      if (hidden <= 1) {
+        setTrack({ overflowing: false, size: 1, start: 0 });
+        return;
+      }
+
+      /*
+       * The thumb is as wide a share of the track as the visible strip is of
+       * the whole strip — but never narrower than an eighth, or with enough
+       * links it becomes a speck nobody can see or grab.
+       *
+       * Once that floor is in play the thumb no longer travels the full track,
+       * so its position is the scroll PROGRESS (0 to 1) across whatever travel
+       * is left. Using scrollLeft/scrollWidth instead would run the thumb off
+       * the end of the track at the last link.
+       */
+      const size = Math.max(clientWidth / scrollWidth, 0.125);
+      const progress = scrollLeft / hidden;
+      setTrack({ overflowing: true, size, start: progress * (1 - size) });
+    };
+
+    measure();
+    el.addEventListener("scroll", measure, { passive: true });
+
+    // Catches the bar getting narrower, and the links changing with it.
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    for (const child of Array.from(el.children)) observer.observe(child);
+
+    return () => {
+      el.removeEventListener("scroll", measure);
+      observer.disconnect();
+    };
+  }, [deps]);
+
+  /**
+   * Drag the thumb, or tap anywhere on the track to jump there.
+   *
+   * Pointer events rather than mouse events, so a finger and a trackpad take
+   * the same path, and pointer capture so the drag survives the pointer
+   * leaving a 3px-tall target — which it will, immediately.
+   */
+  const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    const el = ref.current;
+    if (!el) return;
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const hidden = el.scrollWidth - el.clientWidth;
+
+    const scrollTo = (clientX: number) => {
+      // Centre the visible strip on the pointer, which is what makes a tap on
+      // the track land where the eye expects rather than one strip-width off.
+      const fraction = (clientX - rect.left) / rect.width;
+      el.scrollLeft = Math.min(hidden, Math.max(0, fraction * el.scrollWidth - el.clientWidth / 2));
+    };
+
+    event.currentTarget.setPointerCapture(event.pointerId);
+    scrollTo(event.clientX);
+
+    const onMove = (e: PointerEvent) => scrollTo(e.clientX);
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+
+  return [ref, { ...track, onPointerDown }];
+}
+
 export function PortalHeader({
   organizationName,
   organizationLogoUrl,
@@ -64,6 +180,7 @@ export function PortalHeader({
   menu: ReactNode;
 }) {
   const visible = useHideOnScrollDown();
+  const [stripRef, strip] = useScrollTrack(links.length);
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
 
@@ -206,23 +323,61 @@ export function PortalHeader({
           own space below the pills (pb-2 -mb-2), and it is thin and tinted
           rather than the browser's default slab — see .portal-nav-scroll.
         */}
-        <nav
-          aria-label="Sections"
-          className="portal-nav-scroll -mb-2 flex min-w-0 flex-1 items-center gap-2
-                     overflow-x-auto whitespace-nowrap pb-2"
-        >
-          {links.map((l) => (
-            <Link
-              key={l.href}
-              href={l.href}
-              className="flex-none rounded-full border border-line-soft bg-sunk
-                         px-[13px] py-[7px] text-[13px] font-[520] text-ink
-                         transition-colors hover:border-line hover:bg-brand-soft"
+        <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+          <nav
+            ref={stripRef}
+            aria-label="Sections"
+            className="portal-nav-scroll flex items-center gap-2
+                       overflow-x-auto whitespace-nowrap"
+          >
+            {links.map((l) => (
+              <Link
+                key={l.href}
+                href={l.href}
+                className="flex-none rounded-full border border-line-soft bg-sunk
+                           px-[13px] py-[7px] text-[13px] font-[520] text-ink
+                           transition-colors hover:border-line hover:bg-brand-soft"
+              >
+                {l.label}
+              </Link>
+            ))}
+          </nav>
+
+          {/*
+            The scrollbar, drawn rather than left to the browser.
+
+            It is hidden when everything fits, because a full-width bar under a
+            strip that does not scroll is a control that does nothing.
+
+            aria-hidden, and that is deliberate rather than an oversight. This
+            is a redundant POINTER affordance: a keyboard user tabs through the
+            pills and the browser scrolls each one into view on focus, which is
+            the accessible path and works whether this bar exists or not.
+            Announcing a second scroll control to a screen reader would add a
+            thing to get past, not a thing to use.
+
+            The hit area is 14px tall while the bar itself is 3px, because a
+            3px drag target is a target nobody hits. The padding does the work
+            and the negative margin gives the height back to the bar.
+          */}
+          {strip.overflowing ? (
+            <div
+              aria-hidden
+              onPointerDown={strip.onPointerDown}
+              className="-my-[5.5px] cursor-pointer touch-none py-[5.5px]"
             >
-              {l.label}
-            </Link>
-          ))}
-        </nav>
+              <div className="h-[3px] w-full rounded-full bg-line-soft">
+                <div
+                  className="h-full rounded-full bg-ink-faint"
+                  style={{
+                    width: `${strip.size * 100}%`,
+                    marginLeft: `${strip.start * 100}%`,
+                  }}
+                />
+              </div>
+            </div>
+          ) : null}
+        </div>
 
         {/*
           RIGHT — the Pin. It opens the account menu: personal details, switch

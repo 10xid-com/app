@@ -72,8 +72,15 @@
 
      Neutral, not the ink scale — --ink-soft and --ink-faint both carry a slight
      blue cast, which is right for body text sitting under a blue brand and
-     wrong for the one element whose whole job is having no hue. */
-  --pin-ink: #404040;
+     wrong for the one element whose whole job is having no hue.
+
+     #5f5f5f rather than the #404040 that was here before, because the artwork
+     changed under it. /10xid-pin.png used to cap out at 29% alpha and the fill
+     had to be near-black to show through at all; the alpha is now normalised,
+     so the same fill would have made the Pin louder than it has any business
+     being. Measured on the served CSS: the bold strokes land near 6:1 against
+     the bar, clear of the 3:1 non-text floor and far quieter than the Mark. */
+  --pin-ink: #5f5f5f;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -102,11 +109,11 @@
     --warn: #d7a254;
     --bad: #df8878;
 
-    /* Grey on a dark bar too, mirrored rather than recoloured: the light theme
-       paints dark grey at the artwork's own low alpha over a white bar, so the
-       dark theme paints light grey over a dark one. Same rule, same muting,
-       opposite side of the contrast. */
-    --pin-ink: #d9d9d9;
+    /* Grey on a dark bar too, mirrored rather than recoloured: light paints a
+       darker grey over a white bar, dark paints a lighter grey over a dark
+       one. Same rule, opposite side of the contrast. Both are tuned against
+       the normalised artwork rather than against its old 29% alpha ceiling. */
+    --pin-ink: #929292;
   }
 }
 
@@ -135,11 +142,11 @@
   --warn: #d7a254;
   --bad: #df8878;
 
-  /* Grey on a dark bar too, mirrored rather than recoloured: the light theme
-     paints dark grey at the artwork's own low alpha over a white bar, so the
-     dark theme paints light grey over a dark one. Same rule, same muting,
-     opposite side of the contrast. */
-  --pin-ink: #d9d9d9;
+  /* Grey on a dark bar too, mirrored rather than recoloured: light paints a
+     darker grey over a white bar, dark paints a lighter grey over a dark one.
+     Same rule, opposite side of the contrast. Both are tuned against the
+     normalised artwork rather than against its old 29% alpha ceiling. */
+  --pin-ink: #929292;
 }
 
 /* `inline` makes the generated utilities reference the variables, so a
@@ -191,23 +198,43 @@ body {
 }
 
 /**
- * The sideways-scrolling nav, with its scrollbar put somewhere sensible.
+ * The sideways-scrolling nav.
  *
- * Six links do not fit across a phone, so the strip scrolls. The previous
- * version reached for overflow-x-auto and nothing else, and two things went
- * wrong: the browser drew its default scrollbar straight THROUGH the link
- * text, and on a desktop there was no indication the strip scrolled at all.
+ * Six links do not fit across a phone, so the strip scrolls, and every version
+ * of this has come down to the same question: how does anybody KNOW it scrolls?
  *
- * The track now sits in its own space — the nav carries pb-2 -mb-2, which
- * reserves room below the text without making the header taller — and the bar
- * itself is thin and tinted rather than the browser's slab.
+ *   1. overflow-x-auto and nothing else. The browser drew its default bar
+ *      straight through the link text.
+ *   2. scrollbar-width: thin, with the track given its own space below the
+ *      pills. Fixed the overlap, fixed nothing else — because on iOS and on
+ *      default macOS the scrollbar is an overlay that only exists during a
+ *      scroll. At rest the strip looked like it ended at the right edge.
+ *   3. Where it is now: the native bar is hidden and the component draws its
+ *      own, which is always visible while there is anything to scroll to,
+ *      tracks the position, and can be dragged.
  *
- * It is deliberately NOT hidden. A scrolling region with no affordance is menu
- * items nobody knows exist, which is the same defect as not rendering them.
+ * The rule that survived all three: a scrolling region with no affordance is
+ * menu items nobody knows exist, which is the same defect as not rendering
+ * them. Hiding the native bar is only allowed BECAUSE something replaces it.
  */
 .portal-nav-scroll {
-  scrollbar-width: thin;
-  scrollbar-color: var(--line) transparent;
+  /*
+   * The browser's own scrollbar is hidden here, and the bar you see under the
+   * pills is drawn by the component instead. That is not decoration.
+   *
+   * On iOS, and on macOS with the default "when scrolling" setting, the
+   * scrollbar is an OVERLAY: it fades in during a scroll and fades out again
+   * a moment later. At rest — which is how a page looks when you arrive on
+   * it — there is nothing on screen saying the strip scrolls, so the links
+   * past the right edge may as well not exist. Reported from a phone: the
+   * pills "aren't working well".
+   *
+   * `scrollbar-width: thin` was the previous attempt and cannot fix this. It
+   * restyles a bar that is still only painted while a scroll is happening.
+   * Nor is this the old defect of hiding the scrollbar and offering nothing:
+   * what replaces it is always visible, tracks position, and can be dragged.
+   */
+  scrollbar-width: none;
 
   /*
    * `safe` is doing real work here and is not decoration.
@@ -226,17 +253,10 @@ body {
   justify-content: safe center;
 }
 
+/* Safari and Chrome need the prefixed pseudo-element; scrollbar-width alone
+   leaves the overlay bar in place on exactly the phone this was reported from. */
 .portal-nav-scroll::-webkit-scrollbar {
-  height: 3px;
-}
-
-.portal-nav-scroll::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.portal-nav-scroll::-webkit-scrollbar-thumb {
-  background-color: var(--line);
-  border-radius: 999px;
+  display: none;
 }
 
 /**
@@ -246,22 +266,30 @@ body {
  * YOU rather than about the organization whose Mark sits on the left, so it has
  * to be legible without ever pulling the eye off the Mark.
  *
- * The house artwork does that with alpha, not with colour: /10xid-pin.png is a
- * pure WHITE glyph whose own alpha never exceeds 74/255 (29%), with a second
- * tier around 34/255 for the lighter strokes. Painted over the reference's
- * near-black header it reads as a dark, desaturated 10XiD glyph in a rounded
- * square, because most of what you see through it is the bar behind.
+ * The glyph is used as a MASK over a solid fill: /10xid-pin.png is a pure WHITE
+ * 10XiD glyph in a rounded square, its alpha channel is the shape, and the
+ * colour underneath is what changes between themes. Dropping the file into an
+ * <img> does not work — it is white artwork, invisible on a white bar — and
+ * filter: invert() is worse, because it has to be undone again for dark mode.
  *
- * Dropping that file into an <img> here does not work. This bar is WHITE in the
- * default theme, and a 29%-alpha white glyph on white is nothing at all — the
- * first attempt rendered a blank 34px square. filter: invert() was tried next
- * and is worse: it flips a greyscale glyph to black, which is a hard, fully
- * neutral mark that competes with the Mark instead of deferring to it, and it
- * has to be undone again for dark mode.
+ * WHERE THE MUTING LIVES, and this changed once already.
  *
- * So the glyph is used as a MASK over a solid fill. The PNG's alpha is what
- * gets masked through, so the reference's exact 29%/13% two-tier muting is
- * preserved untouched; only the colour underneath changes.
+ * As drawn, the file was muted in its own ALPHA: two tiers, 25% for the bold
+ * strokes and 14% for the light ones, which over the reference's near-black
+ * header reads as a soft grey because most of what you see through it is the
+ * bar behind. That muting does not survive a white bar. 25% of any colour over
+ * white cannot beat 1.9:1 — measured — so the Pin rendered as a ghost and was
+ * reported as not showing clearly. No choice of fill could have fixed it: the
+ * ceiling was in the artwork, not the CSS.
+ *
+ * So the file's alpha is now NORMALISED — the bold tier taken to fully opaque,
+ * the light tier lifted with it on a curve that keeps the two distinguishable
+ * (they land at 100% and 67%) — and the muting moved into --pin-ink, where a
+ * value can be chosen per theme and measured. Same look, one layer down.
+ *
+ * The rule that follows from this: the Pin's quietness is the FILL's job now.
+ * Do not re-mute the artwork, and if the bar's colour ever changes, retune
+ * --pin-ink rather than reaching for opacity.
  *
  * That colour is --pin-ink, and it is a NEUTRAL GREY. "The mark is in colour,
  * the Pin is grayscale" is the house rule, dated 2026-09-19, and the reason
