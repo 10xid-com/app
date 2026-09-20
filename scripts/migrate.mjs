@@ -26,6 +26,33 @@ if (!url) {
 
 const pool = new pg.Pool({ connectionString: url, max: 1 });
 
+/**
+ * Let a migration talk to the deploy log.
+ *
+ * RAISE NOTICE is the only way a .sql file can report what it found, and
+ * node-postgres throws notices away unless something is listening: they arrive
+ * as a `notice` event on the client, and an event with no listener is dropped
+ * silently. Without this listener a migration can print a full account of
+ * what it did to production and not one word of it reaches the log.
+ *
+ * Attached to `connect` rather than to a client, because the pool makes its own
+ * clients and the migrator never hands us one. It is attached before migrate()
+ * runs, so the first connection is covered too.
+ *
+ * There is no read path into the production database from a developer's
+ * machine — the ports are closed — so the deploy log is the only window onto
+ * what a data migration actually found there. 0012 depends on this entirely.
+ */
+pool.on("connect", (client) => {
+  client.on("notice", (msg) => {
+    // WARNING and INFO arrive down the same channel as NOTICE. The severity is
+    // kept when it is not the ordinary one, so a warning does not read as an
+    // ordinary line in the log.
+    const severity = msg.severity && msg.severity !== "NOTICE" ? `${msg.severity}: ` : "";
+    console.log(`${severity}${msg.message ?? String(msg)}`);
+  });
+});
+
 try {
   await migrate(drizzle(pool), { migrationsFolder: "./drizzle" });
   console.log("Migrations applied.");
