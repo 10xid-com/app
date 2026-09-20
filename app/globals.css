@@ -37,6 +37,11 @@
   --good: #2d7a55;
   --warn: #b06a12;
   --bad: #b03a28;
+
+  /* The Pin's fill. #17599b is lifted straight out of the Mark artwork — it is
+     the blue field the red stroke crosses — so the Pin is tinted with the
+     Mark's own colour rather than a second blue that competes with it. */
+  --pin-tint: #17599b;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -60,6 +65,11 @@
     --good: #63b98d;
     --warn: #d7a254;
     --bad: #df8878;
+
+    /* The Mark's blue is mixed for a white bar and vanishes into a dark one, so
+       on a dark surface the Pin takes the theme's own lifted brand blue. Same
+       role, same muting — only the side of the contrast it sits on changes. */
+    --pin-tint: #7fa0dc;
   }
 }
 
@@ -83,6 +93,11 @@
   --good: #63b98d;
   --warn: #d7a254;
   --bad: #df8878;
+
+  /* The Mark's blue is mixed for a white bar and vanishes into a dark one, so
+     on a dark surface the Pin takes the theme's own lifted brand blue. Same
+     role, same muting — only the side of the contrast it sits on changes. */
+  --pin-tint: #7fa0dc;
 }
 
 /* `inline` makes the generated utilities reference the variables, so a
@@ -147,6 +162,22 @@ body {
 .portal-nav-scroll {
   scrollbar-width: thin;
   scrollbar-color: var(--line) transparent;
+
+  /*
+   * `safe` is doing real work here and is not decoration.
+   *
+   * The links are the middle zone of the bar, so they want centring. Plain
+   * `center` cannot be used on a strip that also scrolls: when the content is
+   * wider than the box, a centred flex row overflows in BOTH directions, and
+   * the overflow off the start edge is unreachable — there is no scroll
+   * position that reveals it, so the first link or two simply cease to exist
+   * on a narrow screen. That is the same class of defect as hiding the
+   * scrollbar, and it is why this is not `justify-center`.
+   *
+   * `safe center` centres while everything fits and silently degrades to
+   * flex-start the moment it does not, which is precisely the rule wanted.
+   */
+  justify-content: safe center;
 }
 
 .portal-nav-scroll::-webkit-scrollbar {
@@ -160,6 +191,47 @@ body {
 .portal-nav-scroll::-webkit-scrollbar-thumb {
   background-color: var(--line);
   border-radius: 999px;
+}
+
+/**
+ * The Pin — the account control at the top right of the bar.
+ *
+ * A Pin is deliberately quiet. It is the one thing on the header that is about
+ * YOU rather than about the organization whose Mark sits on the left, so it has
+ * to be legible without ever pulling the eye off the Mark.
+ *
+ * The house artwork does that with alpha, not with colour: /10xid-pin.png is a
+ * pure WHITE glyph whose own alpha never exceeds 74/255 (29%), with a second
+ * tier around 34/255 for the lighter strokes. Painted over the reference's
+ * near-black header it reads as a dark, desaturated 10XiD glyph in a rounded
+ * square, because most of what you see through it is the bar behind.
+ *
+ * Dropping that file into an <img> here does not work. This bar is WHITE in the
+ * default theme, and a 29%-alpha white glyph on white is nothing at all — the
+ * first attempt rendered a blank 34px square. filter: invert() was tried next
+ * and is worse: it flips a greyscale glyph to black, which is a hard, fully
+ * neutral mark that competes with the Mark instead of deferring to it, and it
+ * has to be undone again for dark mode.
+ *
+ * So the glyph is used as a MASK over a solid fill. The PNG's alpha is what
+ * gets masked through, so the reference's exact 29%/13% two-tier muting is
+ * preserved untouched; only the colour underneath changes. That colour is
+ * --pin-tint, which is the Mark's own blue in the light theme, so the Pin is
+ * tinted toward the Mark rather than sitting in a grey of its own.
+ *
+ * The mask goes on this span and not on the button, because a mask clips
+ * everything the element paints — including its focus ring. Keeping them on
+ * separate elements lets the button keep a visible focus outline and a hover
+ * plate while the glyph inside stays masked.
+ *
+ * -webkit-mask is not optional. Safari still needs the prefixed property, and
+ * this is exactly the control a keyboard-and-Safari user reaches for to sign
+ * out; unprefixed alone leaves them an unmasked blue rectangle.
+ */
+.portal-pin {
+  background-color: var(--pin-tint);
+  -webkit-mask: url("/10xid-pin.png") center / contain no-repeat;
+  mask: url("/10xid-pin.png") center / contain no-repeat;
 }
 
 /**

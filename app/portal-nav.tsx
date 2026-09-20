@@ -90,62 +90,109 @@ export function PortalHeader({
                   backdrop-blur transition-transform duration-200
                   ${visible ? "translate-y-0" : "-translate-y-full"}`}
     >
-      <div className="mx-auto flex h-14 max-w-5xl items-center gap-3 px-4">
+      {/*
+        Three zones, and the measurements are the house iD's, not invented here.
+
+        The reference iD (preview.10xid.com/id/10xid/) sizes its header off two
+        tokens: --markbox-client 80px for the Mark and --markbox 68px for the
+        Pin, dropping to 66/56 under 360px. Both tiers hold the same 0.85 ratio,
+        and 40/34 is that same ratio at a third tier. It is smaller than either
+        of theirs on purpose: their header is a card's masthead that stacks its
+        nav onto a SECOND row, while this one is a sticky bar that has to carry
+        Mark, nav and Pin across a single line on a 390px phone. Everything else
+        here — radii, padding, pill geometry, type scale — is the reference's
+        own value rather than a scaled one.
+
+        40px of content plus the reference's --pad of 12px top and bottom is the
+        h-16 bar.
+      */}
+      <div className="mx-auto flex h-16 max-w-5xl items-center gap-2 px-4">
         {/*
-          The organization, on the left, because the single most consequential
-          thing a person can misread on this screen is WHOSE data they are
-          looking at. Staff move between clients; the brand is the answer.
+          LEFT — the Mark. Full colour, never muted, because the Mark IS the
+          organization: on any given screen the most consequential thing a
+          person can misread is whose data they are looking at, and staff move
+          between clients all day.
+
+          What was here before was a two-letter tile drawn in CSS on bg-brand.
+          That is not a Mark; it is a placeholder wearing the platform's colour,
+          which told a client their own brand was ours. The Mark slot now always
+          holds real artwork.
+
+          The fallback is the 10XiD Mark itself rather than initials. When an
+          organization has no logo, the honest answer is the one PortalShell
+          already gives for the NAME — you are in 10XiD — so the graphic says
+          the same thing the words do instead of inventing a brand that has
+          never existed.
+
+          A plain <img>, deliberately, and for the same reason it was one
+          before: a client's logo is an arbitrary remote URL and next/image
+          refuses any host not listed in next.config, so every new client would
+          need a deploy before their own logo appeared. Keeping the local
+          fallback on the same element keeps that one code path rather than
+          branching into an <Image> that only ever serves one file.
+
+          object-contain, not object-cover: a logo cropped to a square is a
+          logo with its edges cut off. object-left keeps it anchored the way
+          the reference's .mark--img does (object-position: left center).
         */}
-        <Link href="/dashboard" className="flex min-w-0 flex-none items-center gap-2.5">
-          {organizationLogoUrl ? (
-            /*
-             * A plain <img>, deliberately. A client's logo is an arbitrary
-             * remote URL, and next/image refuses any host not listed in
-             * next.config — so every new client would need a deploy before
-             * their own logo would appear. A 28px avatar is not worth that.
-             */
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={organizationLogoUrl}
-              alt=""
-              className="h-7 w-7 flex-none rounded-md object-cover"
-            />
-          ) : (
-            <span
-              aria-hidden
-              className="grid h-7 w-7 flex-none place-items-center rounded-md
-                         bg-brand text-[11px] font-bold text-white"
-            >
-              {organizationName.slice(0, 2).toUpperCase()}
-            </span>
-          )}
-          <span className="truncate text-sm font-semibold text-ink">
+        <Link
+          href="/dashboard"
+          className="flex min-w-0 flex-none items-center gap-2
+                     transition active:brightness-110"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={organizationLogoUrl ?? "/10xid-mark.png"}
+            alt={organizationName}
+            className="h-10 w-10 flex-none rounded-[14px] object-contain object-left"
+          />
+          {/*
+            The name is the Mark's caption, and it steps aside under 640px. On a
+            phone the three fixed items already eat 122px of a 390px bar, and
+            leaving the name in shrinks the nav to a link and a half. The Mark
+            is by definition the identity of whoever owns the iD, so it carries
+            that on its own at phone width, and the account menu spells the
+            organization out in words for anyone who wants it confirmed.
+
+            17px / 650 / -0.01em is the reference's .ident h1 exactly.
+          */}
+          <span
+            className="hidden truncate text-[17px] font-[650] tracking-[-0.01em]
+                       text-ink sm:block"
+          >
             {organizationName}
           </span>
         </Link>
 
         {/*
+          CENTRE — moving around inside the organization. Same links as before;
+          what changed is that they are now the reference's .hnav pills rather
+          than bare text: 7px/13px padding, a 999px radius, 13px at weight 520,
+          on a plate a step off the bar with a hairline border.
+
           The nav scrolls sideways on a narrow screen, because six links do not
           fit on a phone and wrapping them would change the header's height as
           you move between pages.
 
-          What it does NOT do any more is hide the scrollbar. The previous
-          version set overflow-x-auto with no affordance, so on a phone the
-          scrollbar drew straight through the middle of the link text, and on a
-          desktop there was nothing at all to say more links existed. Now the
-          track sits in its own space below the text (pb-2 -mb-2), and it is
-          thin and tinted rather than the browser's default slab.
+          What it does NOT do is hide the scrollbar. An earlier version set
+          overflow-x-auto with no affordance, so on a phone the scrollbar drew
+          straight through the middle of the link text, and on a desktop there
+          was nothing at all to say more links existed. The track sits in its
+          own space below the pills (pb-2 -mb-2), and it is thin and tinted
+          rather than the browser's default slab — see .portal-nav-scroll.
         */}
         <nav
           aria-label="Sections"
-          className="portal-nav-scroll -mb-2 flex min-w-0 flex-1 items-center gap-4
-                     overflow-x-auto whitespace-nowrap pb-2 text-sm"
+          className="portal-nav-scroll -mb-2 flex min-w-0 flex-1 items-center gap-2
+                     overflow-x-auto whitespace-nowrap pb-2"
         >
           {links.map((l) => (
             <Link
               key={l.href}
               href={l.href}
-              className="flex-none text-ink-soft transition-colors hover:text-ink"
+              className="flex-none rounded-full border border-line-soft bg-sunk
+                         px-[13px] py-[7px] text-[13px] font-[520] text-ink
+                         transition-colors hover:border-line hover:bg-brand-soft"
             >
               {l.label}
             </Link>
@@ -153,10 +200,27 @@ export function PortalHeader({
         </nav>
 
         {/*
-          The 10XiD mark is the account button, not decoration — it is where you
-          sign out, change organization, and find your own details. Muted,
-          because it is the one control on this bar that is about YOU rather
-          than about the work.
+          RIGHT — the Pin. It opens the account menu: personal details, switch
+          organization, sign out.
+
+          A Pin is the quiet one. It is muted and tinted toward the Mark's
+          colours so it never competes with the Mark for the eye, which is the
+          whole reason it can sit on the same bar as a full-colour logo without
+          the bar looking like it has two owners.
+
+          The text "10XiD" in a bordered box that used to be here was the wrong
+          object twice over: it was louder than the Mark, and spelling the
+          product name out at the account control said the bar belonged to the
+          platform rather than to the client.
+
+          The button is bare — no border, matching the reference's .ubtn, which
+          is background:transparent/border:0 at a 10px radius. The glyph already
+          carries a rounded-square outline of its own; a second box around it is
+          a box around a box. The hover plate is the same move the reference
+          makes on its own muted icon buttons (.sheetnav:active, a faint wash).
+
+          The mask lives on the inner span, not the button: a mask clips
+          everything an element paints, focus ring included. See .portal-pin.
         */}
         <div ref={wrap} className="relative flex-none">
           <button
@@ -165,19 +229,18 @@ export function PortalHeader({
             aria-expanded={open}
             aria-haspopup="menu"
             aria-label="Account and organization"
-            className="grid h-9 w-9 place-items-center rounded-lg border border-line
-                       text-[10px] font-bold tracking-tight text-ink-faint
-                       transition-colors hover:border-ink-faint hover:text-ink-soft
+            className="grid h-10 w-10 place-items-center rounded-[10px]
+                       transition-colors hover:bg-sunk
                        focus-visible:outline-2 focus-visible:outline-offset-2
                        focus-visible:outline-brand"
           >
-            10<span className="text-ink-soft">X</span>iD
+            <span aria-hidden className="portal-pin block h-[34px] w-[34px]" />
           </button>
 
           {open ? (
             <div
               role="menu"
-              className="absolute right-0 top-11 w-60 overflow-hidden rounded-xl
+              className="absolute right-0 top-12 w-60 overflow-hidden rounded-[14px]
                          border border-line bg-surface shadow-card-lg"
             >
               <div className="border-b border-line-soft px-3 py-2.5">
@@ -193,7 +256,13 @@ export function PortalHeader({
   );
 }
 
-/** One row in the account menu. Shared so every item lines up. */
+/**
+ * One row in the account menu. Shared so every item lines up.
+ *
+ * 14.5px at weight 530 is the reference's own list-row type (.sheet .links),
+ * which is a touch larger and a touch lighter than text-sm/font-medium would
+ * give — these are rows you read once and tap, not dense table text.
+ */
 export const menuItemClass =
-  "block w-full px-3 py-2 text-left text-sm text-ink-soft transition-colors " +
-  "hover:bg-sunk hover:text-ink";
+  "block w-full px-3 py-2 text-[14.5px] font-[530] text-left text-ink-soft " +
+  "transition-colors hover:bg-sunk hover:text-ink";

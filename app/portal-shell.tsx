@@ -6,16 +6,23 @@ import { PortalHeader, menuItemClass } from "./portal-nav";
 /**
  * The frame every signed-in screen sits in.
  *
- * The header is a light bar carrying the ORGANIZATION on the left and the
- * 10XiD mark on the right, rather than a brand-coloured slab with the product
- * name in the corner. That is the right way round: on any given screen the
- * thing a person most needs to be sure of is whose data they are looking at —
- * staff move between clients all day — and 10XiD is the platform underneath,
- * not the subject of the page.
+ * The header is built the way an iD is built, and the two parts have names that
+ * are worth getting right, because an earlier version of this file had them the
+ * wrong way round and the markup followed it.
  *
- * The mark on the right is the account control: sign out, switch organization,
- * personal details. Muted, because it is the one thing on the bar that is
- * about you rather than about the work.
+ * The MARK is the full-colour icon on the LEFT, and it is the identity of
+ * whoever owns the iD — here, the organization whose rows are on screen. It is
+ * never muted. That is the right way round for this product: on any given
+ * screen the thing a person most needs to be sure of is whose data they are
+ * looking at, since staff move between clients all day, and 10XiD is the
+ * platform underneath rather than the subject of the page.
+ *
+ * The PIN is the thing at the TOP RIGHT, and it is the account control: sign
+ * out, switch organization, personal details. A Pin is deliberately quiet —
+ * muted and tinted toward the Mark's colours rather than competing with them —
+ * because it is the one thing on the bar that is about you rather than about
+ * the work. What it is NOT is a second mark, and it is not the product name set
+ * in a box; both of those shout over the Mark that is supposed to own the bar.
  */
 export function PortalShell({
   children,
