@@ -211,19 +211,30 @@ body {
  *      scroll. At rest the strip looked like it ended at the right edge.
  *   3. The native bar hidden and one drawn by hand under the pills — always
  *      visible, tracking position, draggable. This worked.
- *   4. Where it is now: the same hiding, but an arrow at each end of the strip
- *      instead of a bar beneath it, dimmed when there is nothing that way.
- *      A 24px button is something you can tap; a 3px bar is not.
+ *   4. The same hiding, but an arrow at each end of the strip INSTEAD of the
+ *      bar, dimmed when there is nothing that way. A 24px button is something
+ *      you can tap; a 3px bar is not. This worked too.
+ *   5. Where it is now: both at once, because 3 and 4 were never answering the
+ *      same half of the question. The bar is what you READ — it is the only
+ *      part that says how much of the strip you are seeing and where in it you
+ *      are, and no arrow can report that two pills remain. The arrows are what
+ *      you PRESS — a bar that reads well at 3px is still not a target. They
+ *      cost different things, which is why keeping both is affordable: the
+ *      arrows cost 56px of horizontal room out of a 262px zone at 390px, the
+ *      bar costs vertical room in a column whose height is set by the 48px
+ *      Mark and not by the nav, so the header stays 64px either way.
  *
- * The rule that survived all four: a scrolling region with no affordance is
+ * The rule that survived all five: a scrolling region with no affordance is
  * menu items nobody knows exist, which is the same defect as not rendering
  * them. Hiding the native bar is only allowed BECAUSE something replaces it —
- * so if the arrows are ever removed, something else has to take their place.
+ * so if the bar and the arrows both ever go, something else has to take their
+ * place.
  */
 .portal-nav-scroll {
   /*
    * The browser's own scrollbar is hidden here, and the bar you see under the
-   * pills is drawn by the component instead. That is not decoration.
+   * nav — plus the arrows at its ends — is drawn by the component instead.
+   * That is not decoration.
    *
    * On iOS, and on macOS with the default "when scrolling" setting, the
    * scrollbar is an OVERLAY: it fades in during a scroll and fades out again
@@ -235,7 +246,8 @@ body {
    * `scrollbar-width: thin` was the previous attempt and cannot fix this. It
    * restyles a bar that is still only painted while a scroll is happening.
    * Nor is this the old defect of hiding the scrollbar and offering nothing:
-   * what replaces it is always visible, tracks position, and can be dragged.
+   * what replaces it is always visible, tracks position, and can be dragged,
+   * and an arrow at each end of the strip can be tapped.
    */
   scrollbar-width: none;
 

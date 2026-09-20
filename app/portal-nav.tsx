@@ -50,7 +50,8 @@ function useHideOnScrollDown() {
 }
 
 /**
- * Watch a scrolling strip and report whether it can go further either way.
+ * Watch a scrolling strip: say whether it can go further either way, say how
+ * much of it you are looking at and where, and offer both ways of moving it.
  *
  * Needed because the browser will not tell anyone. On iOS, and on macOS at its
  * default setting, the scrollbar is an OVERLAY: it fades in during a scroll and
@@ -59,32 +60,52 @@ function useHideOnScrollDown() {
  * may as well not be rendered. `scrollbar-width: thin` cannot fix that; it
  * restyles a bar that is still only painted while a scroll is happening.
  *
- * The previous answer drew a scrollbar by hand under the pills. This one puts
- * an arrow at each end of the strip instead. Both solve the affordance; the
- * arrow gives you something to TAP, which a 3px bar never really did.
+ * Two answers to that have been tried one after the other, and the header now
+ * carries BOTH, so this hook feeds both. A bar drawn by hand under the pills
+ * says where you are and how much more there is. An arrow at each end gives you
+ * something to tap, which a 3px bar never really did. Neither says the other's
+ * thing: an arrow cannot report that two pills remain, and a bar cannot be
+ * pressed.
  *
- * `atStart` and `atEnd` exist so an arrow that cannot do anything can say so.
- * An arrow you press with nothing happening is worse than no arrow at all.
+ * What comes back:
+ *   overflowing     is there anything past an edge at all — when not, neither
+ *                   affordance is rendered, because a control that does nothing
+ *                   is worse than no control
+ *   size, start     the thumb's width and offset, as FRACTIONS of the track
+ *   atStart, atEnd  whether the arrow at that end can still do anything; an
+ *                   arrow you press with nothing happening is worse than none
+ *   page            move one screenful, less a margin
+ *   onPointerDown   drag the thumb, or tap the track to jump there
+ *
+ * size and start are fractions rather than pixels so the caller can lay the
+ * thumb out in percentages and never re-measure on a resize. That is also what
+ * lets the track run the full width of the nav zone, arrows included, while
+ * still reporting the strip's own proportions.
  *
  * The ref comes back as its own value rather than a key on the returned object:
  * react-hooks/refs treats any object holding a `ref` property as a ref itself,
  * and then reads every other field off it as an access to `.current` during
- * render. A tuple keeps the flags plainly flags.
+ * render. A tuple keeps the flags plainly flags and the numbers plainly numbers.
  */
-function useScrollEnds(
+function useScrollStrip(
   deps: unknown,
 ): [
   React.RefObject<HTMLElement | null>,
   {
     overflowing: boolean;
+    size: number;
+    start: number;
     atStart: boolean;
     atEnd: boolean;
     page: (direction: 1 | -1) => void;
+    onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => void;
   },
 ] {
   const ref = useRef<HTMLElement>(null);
-  const [ends, setEnds] = useState({
+  const [strip, setStrip] = useState({
     overflowing: false,
+    size: 1,
+    start: 0,
     atStart: true,
     atEnd: false,
   });
@@ -99,15 +120,38 @@ function useScrollEnds(
 
       // A fraction of a pixel of overflow is a rounding artefact, not content.
       if (hidden <= 1) {
-        setEnds({ overflowing: false, atStart: true, atEnd: false });
+        setStrip({
+          overflowing: false,
+          size: 1,
+          start: 0,
+          atStart: true,
+          atEnd: false,
+        });
         return;
       }
 
-      // Both comparisons carry a 1px tolerance, because scrollLeft is
-      // fractional on a scaled display and an exact test leaves the last
-      // arrow enabled at the end of the strip, doing nothing.
-      setEnds({
+      /*
+       * The thumb is as wide a share of the track as the visible strip is of
+       * the whole strip — but never narrower than an eighth, or with enough
+       * links it becomes a speck nobody can see or grab.
+       *
+       * Once that floor is in play the thumb no longer travels the full track,
+       * so its position is the scroll PROGRESS (0 to 1) across whatever travel
+       * is left. Using scrollLeft/scrollWidth instead would run the thumb off
+       * the end of the track at the last link.
+       */
+      const size = Math.max(clientWidth / scrollWidth, 0.125);
+      const progress = scrollLeft / hidden;
+
+      /*
+       * Both end comparisons carry a 1px tolerance, because scrollLeft is
+       * fractional on a scaled display and an exact test leaves the last
+       * arrow enabled at the end of the strip, doing nothing.
+       */
+      setStrip({
         overflowing: true,
+        size,
+        start: progress * (1 - size),
         atStart: scrollLeft <= 1,
         atEnd: scrollLeft >= hidden - 1,
       });
@@ -144,7 +188,45 @@ function useScrollEnds(
     });
   };
 
-  return [ref, { ...ends, page }];
+  /**
+   * Drag the thumb, or tap anywhere on the track to jump there.
+   *
+   * Pointer events rather than mouse events, so a finger and a trackpad take
+   * the same path, and pointer capture so the drag survives the pointer
+   * leaving a 3px-tall target — which it will, immediately.
+   *
+   * The track is measured from the element the pointer landed on rather than
+   * from the strip, which matters now that the two are different widths: the
+   * track spans the arrows as well, so a tap is a fraction of the TRACK mapped
+   * onto the strip's own scrollWidth.
+   */
+  const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    const el = ref.current;
+    if (!el) return;
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const hidden = el.scrollWidth - el.clientWidth;
+
+    const scrollTo = (clientX: number) => {
+      // Centre the visible strip on the pointer, which is what makes a tap on
+      // the track land where the eye expects rather than one strip-width off.
+      const fraction = (clientX - rect.left) / rect.width;
+      el.scrollLeft = Math.min(hidden, Math.max(0, fraction * el.scrollWidth - el.clientWidth / 2));
+    };
+
+    event.currentTarget.setPointerCapture(event.pointerId);
+    scrollTo(event.clientX);
+
+    const onMove = (e: PointerEvent) => scrollTo(e.clientX);
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+
+  return [ref, { ...strip, page, onPointerDown }];
 }
 
 /**
@@ -211,7 +293,7 @@ export function PortalHeader({
   menu: ReactNode;
 }) {
   const visible = useHideOnScrollDown();
-  const [stripRef, strip] = useScrollEnds(links.length);
+  const [stripRef, strip] = useScrollStrip(links.length);
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
 
@@ -347,53 +429,108 @@ export function PortalHeader({
           fit on a phone and wrapping them would change the header's height as
           you move between pages.
 
-          An arrow sits at each end of the strip, and it appears only when
-          there is something past the edge to reach. That is the fourth answer
-          to the same question — how does anybody KNOW this scrolls? — after
-          the browser's own bar drawing through the link text, a thin restyled
-          bar that iOS only paints mid-scroll, and a scrollbar drawn by hand
-          under the pills. The hand-drawn bar worked; the arrows are being
-          tried because a 24px button is something you can tap and a 3px bar
-          is not.
+          TWO affordances, and that is the point of this version. An arrow sits
+          at each end of the strip and a drawn scrollbar runs underneath it;
+          both appear only when the pills overrun the space between Mark and
+          Pin, and both vanish when everything fits. They were tried one after
+          the other — the bar first, then the arrows in its place — and each
+          does a job the other cannot. The bar says WHERE YOU ARE and how much
+          more there is; no arrow can report that two pills remain. The arrows
+          give you something to TAP; a 3px bar is not a target, however well it
+          reads.
 
-          They cost room: two arrows and their gaps take about 56px out of a
-          262px strip on a 390px phone, so roughly one pill's worth of what
-          they are helping you get to. That is the trade being looked at.
+          The track spans the full width of this zone, under the arrows as
+          well as the pills, because it is the nav's scrollbar and one that
+          stopped short of the arrows would read as a misalignment against the
+          Mark and Pin either side. It still reports the STRIP's proportions,
+          because the thumb is sized and placed in percentages of whatever the
+          track happens to be: measured at 390px, 206px of the strip's 378px is
+          visible, so the thumb is 54.5% of the 262px track — 142.8px — and at
+          full scroll its right edge lands on 325.98 against a track ending at
+          326.
+
+          What each costs, measured at 390px. The arrows cost horizontal room:
+          they and their gaps take 56px out of the zone, so the pills get 206px
+          rather than 262px, about one pill's worth of the thing they help you
+          reach. The bar costs none of the header's height. The 64px bar is set
+          by the 48px Mark, and this column measures 44.5px — a 35.5px pill row,
+          a 6px gap and the 3px bar — while the bar's 14px hit area reaches
+          59.75px, still inside the 64. Measured against the arrows-only
+          version at the same width: header 64px then and 64px now, strip 206px
+          then and 206px now. Adding the bar back moved neither.
         */}
-        <div className="flex min-w-0 flex-1 items-center gap-1">
-          {strip.overflowing ? (
-            <NavArrow
-              direction="left"
-              disabled={strip.atStart}
-              onClick={() => strip.page(-1)}
-            />
-          ) : null}
+        <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+          <div className="flex items-center gap-1">
+            {strip.overflowing ? (
+              <NavArrow
+                direction="left"
+                disabled={strip.atStart}
+                onClick={() => strip.page(-1)}
+              />
+            ) : null}
 
-          <nav
-            ref={stripRef}
-            aria-label="Sections"
-            className="portal-nav-scroll flex items-center gap-2
-                       overflow-x-auto whitespace-nowrap"
-          >
-            {links.map((l) => (
-              <Link
-                key={l.href}
-                href={l.href}
-                className="flex-none rounded-full border border-line-soft bg-sunk
-                           px-[13px] py-[7px] text-[13px] font-[520] text-ink
-                           transition-colors hover:border-line hover:bg-brand-soft"
-              >
-                {l.label}
-              </Link>
-            ))}
-          </nav>
+            <nav
+              ref={stripRef}
+              aria-label="Sections"
+              className="portal-nav-scroll flex items-center gap-2
+                         overflow-x-auto whitespace-nowrap"
+            >
+              {links.map((l) => (
+                <Link
+                  key={l.href}
+                  href={l.href}
+                  className="flex-none rounded-full border border-line-soft bg-sunk
+                             px-[13px] py-[7px] text-[13px] font-[520] text-ink
+                             transition-colors hover:border-line hover:bg-brand-soft"
+                >
+                  {l.label}
+                </Link>
+              ))}
+            </nav>
 
+            {strip.overflowing ? (
+              <NavArrow
+                direction="right"
+                disabled={strip.atEnd}
+                onClick={() => strip.page(1)}
+              />
+            ) : null}
+          </div>
+
+          {/*
+            The scrollbar, drawn rather than left to the browser.
+
+            It is hidden when everything fits, because a full-width bar under a
+            strip that does not scroll is a control that does nothing.
+
+            aria-hidden, and that is deliberate rather than an oversight. This
+            is a redundant POINTER affordance, as the arrows above it are: a
+            keyboard user tabs through the pills and the browser scrolls each
+            one into view on focus, which is the accessible path and works
+            whether either of these exists. Announcing two more scroll controls
+            to a screen reader would add things to get past, not things to use.
+
+            The hit area is 14px tall while the bar itself is 3px, because a
+            3px drag target is a target nobody hits. The padding does the work
+            and the negative margin gives the height back to the bar, which is
+            what keeps this column inside the height the Mark already sets.
+          */}
           {strip.overflowing ? (
-            <NavArrow
-              direction="right"
-              disabled={strip.atEnd}
-              onClick={() => strip.page(1)}
-            />
+            <div
+              aria-hidden
+              onPointerDown={strip.onPointerDown}
+              className="-my-[5.5px] cursor-pointer touch-none py-[5.5px]"
+            >
+              <div className="h-[3px] w-full rounded-full bg-line-soft">
+                <div
+                  className="h-full rounded-full bg-ink-faint"
+                  style={{
+                    width: `${strip.size * 100}%`,
+                    marginLeft: `${strip.start * 100}%`,
+                  }}
+                />
+              </div>
+            </div>
           ) : null}
         </div>
 
