@@ -82,6 +82,17 @@ export function PortalShell({
                 Switch organization
               </a>
             ) : null}
+            {/*
+              The index of the service, in the Pin rather than in the nav.
+
+              It belongs to the quiet side of the bar: it is not somewhere you
+              work, it is somewhere you go to find out where to work. Putting it
+              in the nav would also cost a sixth pill on a 390px phone, which
+              the centre strip does not have — see portal-nav.tsx.
+            */}
+            <a href="/pages" className={menuItemClass}>
+              Pages
+            </a>
             <form action={signOutAction}>
               <button type="submit" className={menuItemClass}>
                 Sign out
