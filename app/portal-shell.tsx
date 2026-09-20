@@ -23,30 +23,30 @@ export function PortalShell({
 }) {
   return (
     <div className="min-h-dvh bg-ground">
-      <header className="bg-brand text-white">
+      <header className="bg-brand-surface text-brand-on-surface">
         <div className="mx-auto flex h-14 max-w-5xl items-center justify-between gap-4 px-4">
           <div className="flex min-w-0 items-center gap-6">
             <Link href="/jobs" className="flex-none text-sm font-semibold tracking-wide">
               10XiD Portal
             </Link>
-            <nav className="flex items-center gap-4 overflow-x-auto whitespace-nowrap text-sm text-white/70">
-              <Link href="/dashboard" className="transition-colors hover:text-white">
+            <nav className="flex items-center gap-4 overflow-x-auto whitespace-nowrap text-sm text-brand-on-surface/70">
+              <Link href="/dashboard" className="transition-colors hover:text-brand-on-surface">
                 Dashboard
               </Link>
-              <Link href="/jobs" className="transition-colors hover:text-white">
+              <Link href="/jobs" className="transition-colors hover:text-brand-on-surface">
                 Jobs
               </Link>
-              <Link href="/team" className="transition-colors hover:text-white">
+              <Link href="/team" className="transition-colors hover:text-brand-on-surface">
                 Team
               </Link>
               {isStaff ? (
                 <>
-                  <Link href="/staff" className="transition-colors hover:text-white">
+                  <Link href="/staff" className="transition-colors hover:text-brand-on-surface">
                     Clients
                   </Link>
                   <Link
                     href="/staff/keys"
-                    className="transition-colors hover:text-white"
+                    className="transition-colors hover:text-brand-on-surface"
                   >
                     Keys
                   </Link>
@@ -54,21 +54,21 @@ export function PortalShell({
               ) : null}
               <Link
                 href="/account/sessions"
-                className="transition-colors hover:text-white"
+                className="transition-colors hover:text-brand-on-surface"
               >
                 Sessions
               </Link>
             </nav>
           </div>
           <div className="flex flex-none items-center gap-3">
-            <span className="hidden text-xs text-white/70 sm:inline">{email}</span>
+            <span className="hidden text-xs text-brand-on-surface/70 sm:inline">{email}</span>
             <form action={signOutAction}>
               <button
                 type="submit"
-                className="rounded-md border border-white/25 px-2.5 py-1 text-xs
-                           font-medium transition-colors hover:bg-white/10
+                className="rounded-md border border-brand-on-surface/25 px-2.5 py-1 text-xs
+                           font-medium transition-colors hover:bg-brand-on-surface/10
                            focus-visible:outline-2 focus-visible:outline-offset-2
-                           focus-visible:outline-white"
+                           focus-visible:outline-brand-on-surface"
               >
                 Sign out
               </button>

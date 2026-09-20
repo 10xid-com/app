@@ -62,8 +62,8 @@ export function SubmitButton({ children }: { children: ReactNode }) {
   return (
     <button
       type="submit"
-      className="mt-4 w-full rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold
-                 text-white transition-colors duration-150 hover:bg-brand-dark
+      className="mt-4 w-full rounded-lg bg-brand-surface px-4 py-2.5 text-sm font-semibold
+                 text-brand-on-surface transition-colors duration-150 hover:bg-brand-surface-hover
                  focus-visible:outline-2 focus-visible:outline-offset-2
                  focus-visible:outline-brand"
     >

@@ -23,6 +23,30 @@
   --brand-primary-soft: #e4eaf6;
   --brand-accent: #c9a84c;
 
+  /**
+   * The brand as a SURFACE, and the ink that belongs on it.
+   *
+   * --brand-primary changes role between the two palettes: in light it is a
+   * deep navy you set white on, in dark it is lightened so it can be read *as*
+   * ink against a dark ground. Using it as a background in both meant white on
+   * pale blue — 2.64:1, under even the 3:1 large-text floor. Naming the surface
+   * and its foreground as a pair keeps them from drifting apart again, and
+   * leaves --brand-primary free to stay a foreground colour in dark.
+   *
+   * Dark mixes the brand down into --surface-sunk rather than hard-coding a
+   * navy, so the Phase 2 override above still reaches the bar: whatever hue
+   * organizations.brand_primary_hex supplies, 18% of it over #0d1114 stays dark
+   * enough for --ink. The worst case, a pure white brand, measures 9.4:1.
+   *
+   * --surface-sunk is written FIRST in that color-mix on purpose. Lightning CSS
+   * emits an @supports fallback for browsers without color-mix, and it builds
+   * that fallback from the first colour — leading with the brand handed those
+   * browsers the pale blue bar this token exists to remove.
+   */
+  --brand-surface: var(--brand-primary);
+  --brand-surface-hover: var(--brand-primary-dark);
+  --brand-on-surface: #ffffff;
+
   --ground: #f7f9f8;
   --surface: #ffffff;
   --surface-sunk: #eef1f5;
@@ -45,6 +69,10 @@
     --brand-primary-dark: #a9c0e9;
     --brand-primary-soft: #1b2739;
     --brand-accent: #e0c06a;
+
+    --brand-surface: color-mix(in srgb, var(--surface-sunk) 82%, var(--brand-primary));
+    --brand-surface-hover: color-mix(in srgb, var(--surface-sunk) 70%, var(--brand-primary));
+    --brand-on-surface: var(--ink);
 
     --ground: #12161a;
     --surface: #191f25;
@@ -69,6 +97,10 @@
   --brand-primary-soft: #1b2739;
   --brand-accent: #e0c06a;
 
+  --brand-surface: color-mix(in srgb, var(--surface-sunk) 82%, var(--brand-primary));
+  --brand-surface-hover: color-mix(in srgb, var(--surface-sunk) 70%, var(--brand-primary));
+  --brand-on-surface: var(--ink);
+
   --ground: #12161a;
   --surface: #191f25;
   --surface-sunk: #0d1114;
@@ -92,6 +124,10 @@
   --color-brand-dark: var(--brand-primary-dark);
   --color-brand-soft: var(--brand-primary-soft);
   --color-accent: var(--brand-accent);
+
+  --color-brand-surface: var(--brand-surface);
+  --color-brand-surface-hover: var(--brand-surface-hover);
+  --color-brand-on-surface: var(--brand-on-surface);
 
   --color-ground: var(--ground);
   --color-surface: var(--surface);
