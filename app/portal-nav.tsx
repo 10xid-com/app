@@ -50,41 +50,44 @@ function useHideOnScrollDown() {
 }
 
 /**
- * Watch a scrolling strip and report where it is.
+ * Watch a scrolling strip and report whether it can go further either way.
  *
- * Needed because the browser's own scrollbar cannot do this job here. On iOS
- * and on modern macOS the scrollbar is an OVERLAY: it fades in while a scroll
- * is in progress and disappears again a moment later. At rest — which is how a
- * page looks when you arrive on it — there is nothing on screen to say the
- * strip scrolls at all, so the links past the fold may as well not be rendered.
- * `scrollbar-width: thin` does not change that; it styles a bar that is still
- * only drawn during a scroll.
+ * Needed because the browser will not tell anyone. On iOS, and on macOS at its
+ * default setting, the scrollbar is an OVERLAY: it fades in during a scroll and
+ * fades out again. At rest — which is how a page looks when you arrive on it —
+ * nothing on screen says the strip scrolls, so the links past the right edge
+ * may as well not be rendered. `scrollbar-width: thin` cannot fix that; it
+ * restyles a bar that is still only painted while a scroll is happening.
  *
- * So the bar is drawn by hand from these numbers instead, and it is always
- * there while there is anything to scroll to.
+ * The previous answer drew a scrollbar by hand under the pills. This one puts
+ * an arrow at each end of the strip instead. Both solve the affordance; the
+ * arrow gives you something to TAP, which a 3px bar never really did.
  *
- * Returns fractions rather than pixels, so the caller can lay the thumb out in
- * percentages and never has to re-measure on a resize.
+ * `atStart` and `atEnd` exist so an arrow that cannot do anything can say so.
+ * An arrow you press with nothing happening is worse than no arrow at all.
  *
- * The ref comes back as its own value rather than a key on the returned
- * object, which is not a style choice: react-hooks/refs treats any object
- * holding a `ref` property as a ref itself, and then reads every other field
- * off it as an access to `.current` during render. A tuple keeps the numbers
- * plainly numbers.
+ * The ref comes back as its own value rather than a key on the returned object:
+ * react-hooks/refs treats any object holding a `ref` property as a ref itself,
+ * and then reads every other field off it as an access to `.current` during
+ * render. A tuple keeps the flags plainly flags.
  */
-function useScrollTrack(
+function useScrollEnds(
   deps: unknown,
 ): [
   React.RefObject<HTMLElement | null>,
   {
     overflowing: boolean;
-    size: number;
-    start: number;
-    onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => void;
+    atStart: boolean;
+    atEnd: boolean;
+    page: (direction: 1 | -1) => void;
   },
 ] {
   const ref = useRef<HTMLElement>(null);
-  const [track, setTrack] = useState({ overflowing: false, size: 1, start: 0 });
+  const [ends, setEnds] = useState({
+    overflowing: false,
+    atStart: true,
+    atEnd: false,
+  });
 
   useEffect(() => {
     const el = ref.current;
@@ -96,23 +99,18 @@ function useScrollTrack(
 
       // A fraction of a pixel of overflow is a rounding artefact, not content.
       if (hidden <= 1) {
-        setTrack({ overflowing: false, size: 1, start: 0 });
+        setEnds({ overflowing: false, atStart: true, atEnd: false });
         return;
       }
 
-      /*
-       * The thumb is as wide a share of the track as the visible strip is of
-       * the whole strip — but never narrower than an eighth, or with enough
-       * links it becomes a speck nobody can see or grab.
-       *
-       * Once that floor is in play the thumb no longer travels the full track,
-       * so its position is the scroll PROGRESS (0 to 1) across whatever travel
-       * is left. Using scrollLeft/scrollWidth instead would run the thumb off
-       * the end of the track at the last link.
-       */
-      const size = Math.max(clientWidth / scrollWidth, 0.125);
-      const progress = scrollLeft / hidden;
-      setTrack({ overflowing: true, size, start: progress * (1 - size) });
+      // Both comparisons carry a 1px tolerance, because scrollLeft is
+      // fractional on a scaled display and an exact test leaves the last
+      // arrow enabled at the end of the strip, doing nothing.
+      setEnds({
+        overflowing: true,
+        atStart: scrollLeft <= 1,
+        atEnd: scrollLeft >= hidden - 1,
+      });
     };
 
     measure();
@@ -130,39 +128,72 @@ function useScrollTrack(
   }, [deps]);
 
   /**
-   * Drag the thumb, or tap anywhere on the track to jump there.
+   * Move one screenful, less a margin.
    *
-   * Pointer events rather than mouse events, so a finger and a trackpad take
-   * the same path, and pointer capture so the drag survives the pointer
-   * leaving a 3px-tall target — which it will, immediately.
+   * 80% rather than 100% on purpose: a full-width jump lands with every pill
+   * on screen unfamiliar, and you lose your place. Leaving a fifth behind
+   * keeps one pill you have already read in view as an anchor.
    */
-  const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+  const page = (direction: 1 | -1) => {
     const el = ref.current;
     if (!el) return;
-
-    const rect = event.currentTarget.getBoundingClientRect();
-    const hidden = el.scrollWidth - el.clientWidth;
-
-    const scrollTo = (clientX: number) => {
-      // Centre the visible strip on the pointer, which is what makes a tap on
-      // the track land where the eye expects rather than one strip-width off.
-      const fraction = (clientX - rect.left) / rect.width;
-      el.scrollLeft = Math.min(hidden, Math.max(0, fraction * el.scrollWidth - el.clientWidth / 2));
-    };
-
-    event.currentTarget.setPointerCapture(event.pointerId);
-    scrollTo(event.clientX);
-
-    const onMove = (e: PointerEvent) => scrollTo(e.clientX);
-    const onUp = () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
+    const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    el.scrollBy({
+      left: direction * el.clientWidth * 0.8,
+      behavior: still ? "auto" : "smooth",
+    });
   };
 
-  return [ref, { ...track, onPointerDown }];
+  return [ref, { ...ends, page }];
+}
+
+/**
+ * One of the two arrows.
+ *
+ * aria-hidden and out of the tab order, deliberately. This is a POINTER
+ * affordance: a keyboard user tabs through the pills and the browser scrolls
+ * each one into view on focus, which works whether these exist or not. Putting
+ * them in the tab order would add two stops in front of the navigation on
+ * every page, to reach something keyboard users do not need.
+ *
+ * Dimmed rather than removed at the ends of the strip. Removing it would take
+ * its width out of the row and shift every pill sideways mid-scroll, which
+ * reads as the bar twitching.
+ */
+function NavArrow({
+  direction,
+  disabled,
+  onClick,
+}: {
+  direction: "left" | "right";
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-hidden
+      tabIndex={-1}
+      disabled={disabled}
+      onClick={onClick}
+      className="grid h-7 w-6 flex-none place-items-center rounded-md
+                 text-ink-faint transition-colors hover:bg-sunk hover:text-ink
+                 disabled:pointer-events-none disabled:opacity-25"
+    >
+      <svg
+        viewBox="0 0 16 16"
+        aria-hidden
+        className="h-4 w-4"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d={direction === "left" ? "M10 3 5 8l5 5" : "M6 3l5 5-5 5"} />
+      </svg>
+    </button>
+  );
 }
 
 export function PortalHeader({
@@ -180,7 +211,7 @@ export function PortalHeader({
   menu: ReactNode;
 }) {
   const visible = useHideOnScrollDown();
-  const [stripRef, strip] = useScrollTrack(links.length);
+  const [stripRef, strip] = useScrollEnds(links.length);
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
 
@@ -316,14 +347,28 @@ export function PortalHeader({
           fit on a phone and wrapping them would change the header's height as
           you move between pages.
 
-          What it does NOT do is hide the scrollbar. An earlier version set
-          overflow-x-auto with no affordance, so on a phone the scrollbar drew
-          straight through the middle of the link text, and on a desktop there
-          was nothing at all to say more links existed. The track sits in its
-          own space below the pills (pb-2 -mb-2), and it is thin and tinted
-          rather than the browser's default slab — see .portal-nav-scroll.
+          An arrow sits at each end of the strip, and it appears only when
+          there is something past the edge to reach. That is the fourth answer
+          to the same question — how does anybody KNOW this scrolls? — after
+          the browser's own bar drawing through the link text, a thin restyled
+          bar that iOS only paints mid-scroll, and a scrollbar drawn by hand
+          under the pills. The hand-drawn bar worked; the arrows are being
+          tried because a 24px button is something you can tap and a 3px bar
+          is not.
+
+          They cost room: two arrows and their gaps take about 56px out of a
+          262px strip on a 390px phone, so roughly one pill's worth of what
+          they are helping you get to. That is the trade being looked at.
         */}
-        <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+        <div className="flex min-w-0 flex-1 items-center gap-1">
+          {strip.overflowing ? (
+            <NavArrow
+              direction="left"
+              disabled={strip.atStart}
+              onClick={() => strip.page(-1)}
+            />
+          ) : null}
+
           <nav
             ref={stripRef}
             aria-label="Sections"
@@ -343,39 +388,12 @@ export function PortalHeader({
             ))}
           </nav>
 
-          {/*
-            The scrollbar, drawn rather than left to the browser.
-
-            It is hidden when everything fits, because a full-width bar under a
-            strip that does not scroll is a control that does nothing.
-
-            aria-hidden, and that is deliberate rather than an oversight. This
-            is a redundant POINTER affordance: a keyboard user tabs through the
-            pills and the browser scrolls each one into view on focus, which is
-            the accessible path and works whether this bar exists or not.
-            Announcing a second scroll control to a screen reader would add a
-            thing to get past, not a thing to use.
-
-            The hit area is 14px tall while the bar itself is 3px, because a
-            3px drag target is a target nobody hits. The padding does the work
-            and the negative margin gives the height back to the bar.
-          */}
           {strip.overflowing ? (
-            <div
-              aria-hidden
-              onPointerDown={strip.onPointerDown}
-              className="-my-[5.5px] cursor-pointer touch-none py-[5.5px]"
-            >
-              <div className="h-[3px] w-full rounded-full bg-line-soft">
-                <div
-                  className="h-full rounded-full bg-ink-faint"
-                  style={{
-                    width: `${strip.size * 100}%`,
-                    marginLeft: `${strip.start * 100}%`,
-                  }}
-                />
-              </div>
-            </div>
+            <NavArrow
+              direction="right"
+              disabled={strip.atEnd}
+              onClick={() => strip.page(1)}
+            />
           ) : null}
         </div>
 

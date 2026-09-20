@@ -209,13 +209,16 @@ body {
  *      pills. Fixed the overlap, fixed nothing else — because on iOS and on
  *      default macOS the scrollbar is an overlay that only exists during a
  *      scroll. At rest the strip looked like it ended at the right edge.
- *   3. Where it is now: the native bar is hidden and the component draws its
- *      own, which is always visible while there is anything to scroll to,
- *      tracks the position, and can be dragged.
+ *   3. The native bar hidden and one drawn by hand under the pills — always
+ *      visible, tracking position, draggable. This worked.
+ *   4. Where it is now: the same hiding, but an arrow at each end of the strip
+ *      instead of a bar beneath it, dimmed when there is nothing that way.
+ *      A 24px button is something you can tap; a 3px bar is not.
  *
- * The rule that survived all three: a scrolling region with no affordance is
+ * The rule that survived all four: a scrolling region with no affordance is
  * menu items nobody knows exist, which is the same defect as not rendering
- * them. Hiding the native bar is only allowed BECAUSE something replaces it.
+ * them. Hiding the native bar is only allowed BECAUSE something replaces it —
+ * so if the arrows are ever removed, something else has to take their place.
  */
 .portal-nav-scroll {
   /*
