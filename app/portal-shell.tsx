@@ -18,11 +18,14 @@ import { PortalHeader, menuItemClass } from "./portal-nav";
  * platform underneath rather than the subject of the page.
  *
  * The PIN is the thing at the TOP RIGHT, and it is the account control: sign
- * out, switch organization, personal details. A Pin is deliberately quiet —
- * muted and tinted toward the Mark's colours rather than competing with them —
- * because it is the one thing on the bar that is about you rather than about
- * the work. What it is NOT is a second mark, and it is not the product name set
- * in a box; both of those shout over the Mark that is supposed to own the bar.
+ * out, switch organization, personal details. A Pin is deliberately quiet, and
+ * it is GRAYSCALE — "the mark is in colour, the Pin is grayscale", the house
+ * rule of 2026-09-19. The mark belongs to whoever the iD is for and arrives in
+ * their colours; the Pin is our badge on someone else's card and stays out of
+ * the way. A first pass tinted it with the Mark's own blue, which inverts the
+ * point: a coloured Pin reads as part of the client's brand, and a grey one
+ * cannot be mistaken for it. What it is also NOT is a second mark, nor the
+ * product name set in a box; both shout over the mark that should own the bar.
  */
 export function PortalShell({
   children,

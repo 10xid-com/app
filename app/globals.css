@@ -38,10 +38,18 @@
   --warn: #b06a12;
   --bad: #b03a28;
 
-  /* The Pin's fill. #17599b is lifted straight out of the Mark artwork — it is
-     the blue field the red stroke crosses — so the Pin is tinted with the
-     Mark's own colour rather than a second blue that competes with it. */
-  --pin-tint: #17599b;
+  /* The Pin's fill, and it is GREY on purpose — "the mark is in colour, the Pin
+     is grayscale", Paolo's rule of 2026-09-19. An earlier version painted it
+     #17599b, the blue lifted out of the Mark artwork, on the reasoning that the
+     Pin should blend with the Mark's colours. That is the wrong reading: the
+     Pin is OURS on somebody else's card, and the reason it stays quiet is that
+     it must not read as part of their brand at all. A neutral grey cannot be
+     mistaken for a client's colour; a blue one can.
+
+     Neutral, not the ink scale — --ink-soft and --ink-faint both carry a slight
+     blue cast, which is right for body text sitting under a blue brand and
+     wrong for the one element whose whole job is having no hue. */
+  --pin-ink: #404040;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -66,10 +74,11 @@
     --warn: #d7a254;
     --bad: #df8878;
 
-    /* The Mark's blue is mixed for a white bar and vanishes into a dark one, so
-       on a dark surface the Pin takes the theme's own lifted brand blue. Same
-       role, same muting — only the side of the contrast it sits on changes. */
-    --pin-tint: #7fa0dc;
+    /* Grey on a dark bar too, mirrored rather than recoloured: the light theme
+       paints dark grey at the artwork's own low alpha over a white bar, so the
+       dark theme paints light grey over a dark one. Same rule, same muting,
+       opposite side of the contrast. */
+    --pin-ink: #d9d9d9;
   }
 }
 
@@ -94,10 +103,11 @@
   --warn: #d7a254;
   --bad: #df8878;
 
-  /* The Mark's blue is mixed for a white bar and vanishes into a dark one, so
-     on a dark surface the Pin takes the theme's own lifted brand blue. Same
-     role, same muting — only the side of the contrast it sits on changes. */
-  --pin-tint: #7fa0dc;
+  /* Grey on a dark bar too, mirrored rather than recoloured: the light theme
+     paints dark grey at the artwork's own low alpha over a white bar, so the
+     dark theme paints light grey over a dark one. Same rule, same muting,
+     opposite side of the contrast. */
+  --pin-ink: #d9d9d9;
 }
 
 /* `inline` makes the generated utilities reference the variables, so a
@@ -215,9 +225,14 @@ body {
  *
  * So the glyph is used as a MASK over a solid fill. The PNG's alpha is what
  * gets masked through, so the reference's exact 29%/13% two-tier muting is
- * preserved untouched; only the colour underneath changes. That colour is
- * --pin-tint, which is the Mark's own blue in the light theme, so the Pin is
- * tinted toward the Mark rather than sitting in a grey of its own.
+ * preserved untouched; only the colour underneath changes.
+ *
+ * That colour is --pin-ink, and it is a NEUTRAL GREY. "The mark is in colour,
+ * the Pin is grayscale" is the house rule, dated 2026-09-19, and the reason
+ * behind it is not aesthetic: the Mark belongs to whoever the iD is for and
+ * arrives in their colours, while the Pin is our badge on someone else's card.
+ * A blue Pin — which is what shipped first, using the Mark's own #17599b —
+ * reads as part of the client's brand. A grey one cannot.
  *
  * The mask goes on this span and not on the button, because a mask clips
  * everything the element paints — including its focus ring. Keeping them on
@@ -229,7 +244,7 @@ body {
  * out; unprefixed alone leaves them an unmasked blue rectangle.
  */
 .portal-pin {
-  background-color: var(--pin-tint);
+  background-color: var(--pin-ink);
   -webkit-mask: url("/10xid-pin.png") center / contain no-repeat;
   mask: url("/10xid-pin.png") center / contain no-repeat;
 }
