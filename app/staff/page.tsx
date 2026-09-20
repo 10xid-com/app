@@ -97,8 +97,8 @@ export default async function StaffPage({
               />
               <button
                 type="submit"
-                className="flex-none rounded-lg bg-brand px-4 py-2 text-sm font-semibold
-                           text-white transition-colors duration-150 hover:bg-brand-dark
+                className="flex-none rounded-lg bg-brand-surface px-4 py-2 text-sm font-semibold
+                           text-brand-on-surface transition-colors duration-150 hover:bg-brand-surface-hover
                            focus-visible:outline-2 focus-visible:outline-offset-2
                            focus-visible:outline-brand"
               >

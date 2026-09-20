@@ -21,9 +21,9 @@ export default function SsoFailedPage() {
     >
       <Link
         href="/"
-        className="block w-full rounded-lg bg-brand px-4 py-2.5 text-center
-                   text-sm font-semibold text-white transition-colors duration-150
-                   hover:bg-brand-dark focus-visible:outline-2
+        className="block w-full rounded-lg bg-brand-surface px-4 py-2.5 text-center
+                   text-sm font-semibold text-brand-on-surface transition-colors duration-150
+                   hover:bg-brand-surface-hover focus-visible:outline-2
                    focus-visible:outline-offset-2 focus-visible:outline-brand"
       >
         Try again
