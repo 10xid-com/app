@@ -96,17 +96,26 @@ export function PortalHeader({
         The reference iD (preview.10xid.com/id/10xid/) sizes its header off two
         tokens: --markbox-client 80px for the Mark and --markbox 68px for the
         Pin, dropping to 66/56 under 360px. Both tiers hold the same 0.85 ratio,
-        and 40/34 is that same ratio at a third tier. It is smaller than either
+        and 48/41 is that same ratio at a third tier. It is smaller than either
         of theirs on purpose: their header is a card's masthead that stacks its
         nav onto a SECOND row, while this one is a sticky bar that has to carry
         Mark, nav and Pin across a single line on a 390px phone. Everything else
-        here — radii, padding, pill geometry, type scale — is the reference's
-        own value rather than a scaled one.
+        here — radii, pill geometry, type scale — is the reference's own value
+        rather than a scaled one.
 
-        40px of content plus the reference's --pad of 12px top and bottom is the
-        h-16 bar.
+        The first version put 40px icons in this 64px bar and took the
+        reference's --pad of 12px above and below. That is the right proportion
+        for a masthead with room to breathe and the wrong one for a phone: 12px
+        of nothing at the top, 12px at the bottom and 16px at the screen edge
+        added up to more empty bar than Mark. Reported from a phone as "too
+        much top, bottom and outside margin".
+
+        48px leaves 8px above and below, and the side padding drops to 8px
+        below the sm breakpoint. Neither artwork carries any padding of its own
+        — both PNGs are 256x256 edge to edge, measured — so every pixel of
+        space around them is set here and nowhere else.
       */}
-      <div className="mx-auto flex h-16 max-w-5xl items-center gap-2 px-4">
+      <div className="mx-auto flex h-16 max-w-5xl items-center gap-2 px-2 sm:px-4">
         {/*
           LEFT — the Mark. Full colour, never muted, because the Mark IS the
           organization: on any given screen the most consequential thing a
@@ -134,6 +143,22 @@ export function PortalHeader({
           object-contain, not object-cover: a logo cropped to a square is a
           logo with its edges cut off. object-left keeps it anchored the way
           the reference's .mark--img does (object-position: left center).
+
+          The corner radius is 5px and that number is measured, not chosen.
+          /10xid-mark.png is 256x256 with NO transparent padding at all, and
+          its own rounded-square plate starts 27px in along the top edge — a
+          radius of about 10.5% of the box. An earlier version clipped this
+          element at rounded-[14px] on a 40px box, which is 35%, over three
+          times the artwork's own. The container was therefore cutting a
+          rounder shape than the plate it contained, slicing the corners off
+          the blue square and leaving something that read as a circle rather
+          than a mark. Reported from a phone: "you seem to have them in
+          circles or something, the Mark does not show clearly."
+
+          10.5% of a 48px box is 5.06px, so 5px is just under the artwork's
+          own and clips none of it, while still softening a client logo that
+          arrives as a bare rectangle. The rule to keep: this radius must stay
+          at or below the radius of the artwork inside it.
         */}
         <Link
           href="/dashboard"
@@ -144,7 +169,7 @@ export function PortalHeader({
           <img
             src={organizationLogoUrl ?? "/10xid-mark.png"}
             alt={organizationName}
-            className="h-10 w-10 flex-none rounded-[14px] object-contain object-left"
+            className="h-12 w-12 flex-none rounded-[5px] object-contain object-left"
           />
           {/*
             The name is the Mark's caption, and it steps aside under 640px. On a
@@ -229,12 +254,12 @@ export function PortalHeader({
             aria-expanded={open}
             aria-haspopup="menu"
             aria-label="Account and organization"
-            className="grid h-10 w-10 place-items-center rounded-[10px]
+            className="grid h-12 w-12 place-items-center rounded-[10px]
                        transition-colors hover:bg-sunk
                        focus-visible:outline-2 focus-visible:outline-offset-2
                        focus-visible:outline-brand"
           >
-            <span aria-hidden className="portal-pin block h-[34px] w-[34px]" />
+            <span aria-hidden className="portal-pin block h-[41px] w-[41px]" />
           </button>
 
           {open ? (
