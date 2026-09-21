@@ -326,3 +326,173 @@ export async function revoke(input: {
   );
   return rows.length;
 }
+
+/* ------------------------------------------------------------------ */
+/* Being qualified                                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The capability a qualification is expressed as.
+ *
+ * A qualification is not a new kind of thing. It is "may do this kind of
+ * work", scoped to a task type, with a LEVEL — which is why it lives on
+ * `permissions` and not in a `qualifications` table beside it. Two tables
+ * answering "may Tom digitise" is two answers that will eventually differ, and
+ * only one of them would have the deny rule applied to it.
+ */
+export const PERFORM = "task.perform";
+
+/**
+ * Training, qualified, trainer — a level per task type, not a flag.
+ *
+ * Somebody may be a trainer at quoting and still in training at digitising,
+ * and enough unsatisfactory marks takes away one task type while leaving the
+ * others. A boolean cannot say any of that.
+ *
+ * The numbers are ordered on purpose: "at least qualified" is `>= 2`, which is
+ * the question an offer asks. They are stored rather than derived, so
+ * renumbering them later is a migration and not a silent reinterpretation of
+ * every existing row.
+ */
+export const QUALIFICATION_LEVELS = {
+  /** Everybody starts here. During training two people do the same job. */
+  training: 1,
+  /** Works unsupervised. */
+  qualified: 2,
+  /** Inspects instead of doubling up — the level that makes the pool cheaper. */
+  trainer: 3,
+} as const;
+
+export type QualificationLevel = keyof typeof QUALIFICATION_LEVELS;
+
+/** The level somebody holds, as a name. Null when they hold none. */
+export function qualificationName(level: number): QualificationLevel | null {
+  const found = (
+    Object.entries(QUALIFICATION_LEVELS) as [QualificationLevel, number][]
+  ).find(([, n]) => n === level);
+  return found ? found[0] : null;
+}
+
+/**
+ * What level is this person at, at this kind of work? 0 means none.
+ *
+ * Deny wins, exactly as it does in `can()` — losing a task type after enough
+ * unsatisfactory marks is a deny row, so that the grant that was given stays
+ * visible rather than being erased.
+ *
+ * Grants with a NULL level are ignored here. They are ordinary capability
+ * grants — "may do this kind of work", with no degrees — and reading one as a
+ * qualification would invent a level nobody awarded.
+ */
+export async function qualificationLevel(
+  organizationId: string,
+  userId: string,
+  taskTypeId: string,
+): Promise<number> {
+  const rows = await inTenantTransaction(organizationId, false, (tx) =>
+    tx
+      .select({ deny: permissions.deny, level: permissions.level })
+      .from(permissions)
+      .where(
+        and(
+          eq(permissions.organizationId, organizationId),
+          eq(permissions.userId, userId),
+          eq(permissions.capability, PERFORM),
+          eq(permissions.scopeType, "task_type"),
+          eq(permissions.scopeId, taskTypeId),
+          isNull(permissions.revokedAt),
+        ),
+      ),
+  );
+
+  if (rows.some((r) => r.deny)) return 0;
+  return rows.reduce((best, r) => Math.max(best, r.level ?? 0), 0);
+}
+
+/** Do they clear the bar this offer sets? */
+export async function isQualified(
+  organizationId: string,
+  userId: string,
+  taskTypeId: string,
+  minLevel: number = QUALIFICATION_LEVELS.qualified,
+): Promise<boolean> {
+  return (await qualificationLevel(organizationId, userId, taskTypeId)) >= minLevel;
+}
+
+/**
+ * Award or change a level.
+ *
+ * A level is CHANGED by retiring the old grant and writing a new one, never by
+ * updating in place: "was qualified, is now a trainer" and "has always been a
+ * trainer" are different facts, and the second is the one an in-place update
+ * leaves behind. It is also what the live-grant unique index requires, since
+ * that index does not include the level.
+ */
+export async function qualify(input: {
+  organizationId: string;
+  userId: string;
+  taskTypeId: string;
+  level: QualificationLevel | number;
+  grantedBy: string;
+}) {
+  const level =
+    typeof input.level === "number"
+      ? input.level
+      : QUALIFICATION_LEVELS[input.level];
+
+  const scope: Scope = { type: "task_type", id: input.taskTypeId };
+
+  await revoke({
+    organizationId: input.organizationId,
+    userId: input.userId,
+    capability: PERFORM,
+    scope,
+  });
+
+  const rows = await inTenantTransaction(input.organizationId, false, (tx) =>
+    tx
+      .insert(permissions)
+      .values({
+        organizationId: input.organizationId,
+        userId: input.userId,
+        capability: PERFORM,
+        scopeType: "task_type",
+        scopeId: input.taskTypeId,
+        level,
+        deny: false,
+        grantedBy: input.grantedBy,
+      })
+      .returning(),
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * Take a task type away, keeping the others.
+ *
+ * Enough unsatisfactory marks costs somebody digitising and leaves their
+ * quoting alone. The grant is retired and a deny is written, so the record
+ * reads "was qualified, then was not" rather than going quiet.
+ */
+export async function disqualify(input: {
+  organizationId: string;
+  userId: string;
+  taskTypeId: string;
+  grantedBy: string;
+}) {
+  const scope: Scope = { type: "task_type", id: input.taskTypeId };
+  await revoke({
+    organizationId: input.organizationId,
+    userId: input.userId,
+    capability: PERFORM,
+    scope,
+  });
+  return grant({
+    organizationId: input.organizationId,
+    userId: input.userId,
+    capability: PERFORM,
+    scope,
+    deny: true,
+    grantedBy: input.grantedBy,
+  });
+}

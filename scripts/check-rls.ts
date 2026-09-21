@@ -26,6 +26,13 @@ const MUST_BE_PROTECTED = [
   "departments",
   "department_members",
   "permissions",
+  // Flow. Every touch, offer, attempt, verdict and audit line is one client's.
+  "task_types",
+  "tasks",
+  "task_offers",
+  "task_claims",
+  "task_grades",
+  "task_events",
 ];
 
 /** Read before a scope exists. Each entry needs a reason that survives review. */

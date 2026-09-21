@@ -13,6 +13,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 /**
  * Secrets are stored as the SHA-256 of the value we handed out, never the value
@@ -437,6 +438,24 @@ export const permissions = pgTable(
      * re-granting it to everybody else one at a time.
      */
     deny: boolean("deny").notNull().default(false),
+    /**
+     * HOW MUCH of the capability, when "may they" is not a yes or no.
+     *
+     * A qualification is the case that forced it: somebody is in training at
+     * digitising, qualified at quoting and a trainer at vectorising, all at
+     * once. A boolean cannot say that, and a second `qualifications` table
+     * would be a parallel permission system — two places answering "may Tom
+     * digitise", which eventually answer it differently, and only one of which
+     * the deny rule applies to.
+     *
+     * So it is a column here: capability `task.perform`, scope `task_type`,
+     * level 1 training / 2 qualified / 3 trainer. NULL on every ordinary grant,
+     * which means exactly what it did before this column existed — the
+     * capability is held, and it has no degrees.
+     *
+     * See lib/db/access.ts: QUALIFICATION_LEVELS, qualify(), qualificationLevel().
+     */
+    level: integer("level"),
     grantedBy: uuid("granted_by")
       .notNull()
       .references(() => users.id),
@@ -774,6 +793,22 @@ export const jobs = pgTable(
       .references(() => users.id),
     assignedTo: uuid("assigned_to").references(() => users.id),
     dueAt: timestamp("due_at", { withTimezone: true }),
+    /**
+     * THE CLIENT'S CLOCK, and the only one they ever see.
+     *
+     * Deliberately generous and deliberately not derived from anything: an
+     * hour's work is promised for tomorrow, three weeks' work is promised in
+     * five. The slack between this and the worker's window
+     * (`tasks.std_minutes` + `tasks.buffer_minutes`) is commercial safety and
+     * belongs to the business, not to the worker.
+     *
+     * It is a separate column rather than a formula over the tasks because
+     * conflating the two clocks is a real bug in both directions: promise the
+     * client the worker's deadline and one slow touch is a broken promise;
+     * give the worker the client's deadline and a fifteen-minute job can wait
+     * until Tuesday. The buffer bands apply ONLY to the worker's window.
+     */
+    promisedAt: timestamp("promised_at", { withTimezone: true }),
 
     // Phase 2 — commercial. Defined now so the shape is agreed.
     poNumber: text("po_number"),
@@ -868,4 +903,437 @@ export const TENANT_SCOPED_TABLES = [
   "job_events",
   "api_keys",
   "invitations",
+  "task_types",
+  "tasks",
+  "task_offers",
+  "task_claims",
+  "task_grades",
+  "task_events",
 ] as const;
+
+/* ------------------------------------------------------------------ */
+/* Flow — the spine                                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * What kind of touch this is: a task's state, not a job's.
+ *
+ * `open` means claimable. `claimed` means one person holds it and a clock is
+ * running against them. A claim that is released or times out puts the row
+ * back to `open` — the task does not remember the attempt, because the attempt
+ * is a row in `task_claims` and remembering it twice is how the two come to
+ * disagree.
+ *
+ * There is no `rejected` state that a row recovers from. A task graded
+ * unsatisfactory is finished; the second attempt is a NEW row pointing at it
+ * through `parent_task_id`. That is what makes the rework chain walkable, and
+ * the separation-of-duty trigger depends on being able to walk it.
+ */
+export const taskStatus = pgEnum("task_status", [
+  "draft",
+  "open",
+  "claimed",
+  "submitted",
+  "approved",
+  "rejected",
+  "cancelled",
+]);
+
+/**
+ * Who a task is offered to. One of three shapes, never two at once.
+ *
+ * `qualification` is the interesting one: not "these named people" but
+ * "anybody at level N or above at this kind of work", resolved at claim time
+ * against `permissions`. Offering to a qualification rather than to a list is
+ * what lets the pool grow without anybody editing offers.
+ */
+export const taskOfferee = pgEnum("task_offeree", [
+  "user",
+  "department",
+  "qualification",
+]);
+
+/**
+ * How an attempt ended. NULL while it is still running.
+ *
+ * `released` and `expired` are deliberately different facts, and the
+ * difference is the whole incentive design rather than bookkeeping. A worker
+ * who knows at minute three that they cannot finish should hand the job back
+ * so somebody else still has the standard time to do it. They will only do
+ * that if handing it back is recorded — and costs — differently from sitting
+ * on it silently until the clock runs out. If the two collapse into one
+ * outcome there is no reason to ever release: you may as well hope.
+ */
+export const claimOutcome = pgEnum("claim_outcome", [
+  /** Handed in. The work exists and is waiting to be graded. */
+  "submitted",
+  /** Given back on purpose, before the clock ran out. */
+  "released",
+  /** The clock ran out. The claim was pulled; the work returns to the pool. */
+  "expired",
+]);
+
+/**
+ * Satisfactory or not. Technical work: the file either works or it does not.
+ *
+ * The verdict is binary and the score beside it is optional, because creative
+ * work is coming and grades on a rubric. Carrying the optional score now costs
+ * nothing and means creative work does not need a second grading system bolted
+ * on beside this one.
+ */
+export const gradeVerdict = pgEnum("grade_verdict", [
+  "satisfactory",
+  "unsatisfactory",
+]);
+
+/**
+ * The buffer bands, as DATA.
+ *
+ * A worker's window is the standard time for the kind of work plus a buffer,
+ * so somebody can answer the door without losing the job. 5/10/15 is a first
+ * guess that will be revised once real people have been watched working — and
+ * a guess that lives in a CASE statement inside a function is a guess that
+ * needs a migration and a deploy to revise. So it lives here, one row per
+ * band, and revising it is an UPDATE.
+ *
+ * Revising it also must not move work that is already in flight, which is why
+ * `tasks` copies the answer onto itself at creation and never reads this table
+ * again. See `flow_pin_allowed_time()` in the migration.
+ *
+ * Bounds are half-open: `min_std_minutes` inclusive, `max_std_minutes`
+ * exclusive, NULL meaning unbounded. Live bands may not overlap — enforced by
+ * an exclusion constraint, because two bands covering 25 minutes is not a
+ * preference, it is a question with two answers.
+ *
+ * NOT tenant data: this is the house's policy about its own workers, the same
+ * in every client's jobs, and it carries no organization_id on purpose.
+ */
+export const taskTimeBands = pgTable("task_time_bands", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  /** Inclusive. */
+  minStdMinutes: integer("min_std_minutes").notNull(),
+  /** Exclusive. NULL means "and everything above". */
+  maxStdMinutes: integer("max_std_minutes"),
+  bufferMinutes: integer("buffer_minutes").notNull(),
+  /** Why this band is what it is, for the next person who wants to change it. */
+  note: text("note"),
+  createdAt,
+  updatedAt,
+  /** Retired rather than deleted — a band that was in force is a fact. */
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+});
+
+/**
+ * A kind of work: quote, digitize, approve, print, embroider.
+ *
+ * `stdMinutes` is the standard time — how long this kind of touch is expected
+ * to take, in minutes, the smallest unit this system has. It is the input to
+ * the worker's window and NOT a promise to the client; see `jobs.promisedAt`,
+ * which is a different clock entirely and deliberately generous.
+ *
+ * Per organization, because the same word means different work at different
+ * clients and because a standard time is exactly the kind of number that gets
+ * tuned per client once real jobs have run.
+ */
+export const taskTypes = pgTable(
+  "task_types",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    /** Stable machine name: "digitize". Unique per organization. */
+    slug: text("slug").notNull(),
+    name: text("name").notNull(),
+    description: text("description"),
+    /**
+     * The standard time in minutes. Copied onto every task at creation, so
+     * revising it here never moves work in flight — and revising it is
+     * expected, since an extension granted because "our estimate was wrong" is
+     * precisely the signal that this number is too low.
+     */
+    stdMinutes: integer("std_minutes").notNull(),
+    createdAt,
+    updatedAt,
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("task_types_org_slug_idx").on(t.organizationId, t.slug),
+    index("task_types_org_idx").on(t.organizationId),
+  ],
+);
+
+/**
+ * ONE TOUCH — one paid act by one person.
+ *
+ * The unit of work is not the job. Digitising a cap logo is three touches —
+ * quote, digitize, approve — each with its own holder, its own clock and its
+ * own state. One person may hold several; they simply hold several rows.
+ *
+ * `id` is a UUIDv7 supplied by the caller, the same as `jobs`: time-ordered so
+ * the index does not fragment, random enough not to be walked, and with no
+ * database default because Postgres 16 has no native uuidv7().
+ *
+ * THE TWO CLOCKS. `stdMinutes` and `bufferMinutes` are the worker's, pinned
+ * here at creation from the task type and from `task_time_bands`, and
+ * `allowedMinutes` is their sum. `jobs.promisedAt` is the client's, and it is
+ * deliberately generous — an hour's work promised for tomorrow. The slack
+ * between them is commercial safety that belongs to the business. Conflating
+ * them would either promise the client a deadline a worker is not being paid
+ * to hit, or give a worker until Tuesday for a fifteen-minute job.
+ *
+ * `approvesTaskId` is what makes a touch an approval touch: it names the task
+ * this one reviews. It is not decoration — the separation-of-duty trigger
+ * reads it to work out whether an incoming claim is somebody offering to
+ * inspect work, and whose.
+ *
+ * `parentTaskId` is the rework chain. A task graded unsatisfactory is
+ * finished; the retry is a new row pointing back at it. The chain is walked by
+ * the same trigger, because the second attempt has no memory of who rejected
+ * the first and an approver who could claim the rework would be paid twice for
+ * rejecting it once.
+ */
+export const tasks = pgTable(
+  "tasks",
+  {
+    id: uuid("id").primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    jobId: uuid("job_id")
+      .notNull()
+      .references(() => jobs.id),
+    taskTypeId: uuid("task_type_id")
+      .notNull()
+      .references(() => taskTypes.id),
+    status: taskStatus("status").notNull().default("open"),
+    title: text("title"),
+    /**
+     * The attempt this row replaces. NULL for a first attempt.
+     * Walked upward by the separation-of-duty trigger.
+     */
+    parentTaskId: uuid("parent_task_id"),
+    /**
+     * The task this one exists to inspect. NULL unless this is an approval
+     * touch. Its presence is what puts an incoming claim on the reviewing side
+     * of the separation-of-duty rule.
+     */
+    approvesTaskId: uuid("approves_task_id"),
+    /**
+     * PINNED AT CREATION from `task_types.std_minutes`. Never read back from
+     * the type, so retuning the type cannot move work in flight.
+     */
+    stdMinutes: integer("std_minutes").notNull(),
+    /**
+     * PINNED AT CREATION from `task_time_bands`. Same discipline as price:
+     * change the bands next month and nothing already created moves.
+     */
+    bufferMinutes: integer("buffer_minutes").notNull(),
+    /**
+     * The worker's whole window, in minutes. A stored generated column rather
+     * than a number somebody remembers to keep in step.
+     */
+    allowedMinutes: integer("allowed_minutes")
+      .notNull()
+      .generatedAlwaysAs(sql`std_minutes + buffer_minutes`),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt,
+    updatedAt,
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("tasks_org_status_idx").on(t.organizationId, t.status),
+    index("tasks_job_idx").on(t.jobId),
+    index("tasks_parent_idx").on(t.parentTaskId),
+    index("tasks_approves_idx").on(t.approvesTaskId),
+  ],
+);
+
+/**
+ * Who a task is available to.
+ *
+ * Three shapes in one table, because "offered to Tom", "offered to the
+ * digitising department" and "offered to anybody qualified at digitising" are
+ * the same event with different audiences, and splitting them into three
+ * tables would mean three code paths for "what may I claim".
+ *
+ * Exactly one of the three targets is set, enforced by a check constraint in
+ * the migration rather than by whoever writes the next insert.
+ *
+ * Withdrawn rather than deleted: an offer that was live and was pulled back
+ * explains why somebody saw a task yesterday and cannot see it today.
+ */
+export const taskOffers = pgTable(
+  "task_offers",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    taskId: uuid("task_id")
+      .notNull()
+      .references(() => tasks.id),
+    offereeType: taskOfferee("offeree_type").notNull(),
+    /** Set when offeree_type = 'user'. */
+    userId: uuid("user_id").references(() => users.id),
+    /** Set when offeree_type = 'department'. */
+    departmentId: uuid("department_id").references(() => departments.id),
+    /**
+     * Set when offeree_type = 'qualification': the kind of work somebody must
+     * be qualified at, and the level they must hold. The level is resolved
+     * against `permissions` at claim time — see lib/db/access.ts. It is not a
+     * second qualifications table, because two places that answer "is Tom
+     * qualified" eventually answer it differently.
+     */
+    qualificationTaskTypeId: uuid("qualification_task_type_id").references(
+      () => taskTypes.id,
+    ),
+    /** 1 training, 2 qualified, 3 trainer. See QUALIFICATION_LEVELS. */
+    minQualificationLevel: integer("min_qualification_level"),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt,
+    /** Pulled back. The offer having existed stays a fact. */
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("task_offers_task_idx").on(t.taskId),
+    index("task_offers_user_idx").on(t.userId),
+    index("task_offers_department_idx").on(t.departmentId),
+    index("task_offers_qualification_idx").on(t.qualificationTaskTypeId),
+  ],
+);
+
+/**
+ * ONE ROW PER ATTEMPT. Not a status on the task.
+ *
+ * A task claimed, released, then reclaimed by somebody else must leave three
+ * distinguishable facts behind, and a `claimed_by` column on `tasks` leaves
+ * one — the last one — overwriting the evidence of everything before it. That
+ * evidence is the entire input to "is this person reliable", which is the
+ * question the extension policy and the qualification levels both turn on.
+ *
+ * `expiresAt` is this attempt's deadline, stamped from the task's PINNED
+ * allowed minutes at the moment of claiming. It is on the claim rather than on
+ * the task because a second attempt gets its own full window, not the remains
+ * of somebody else's.
+ *
+ * `outcome` NULL means the attempt is still running. At most one such row per
+ * task exists at a time, enforced by a partial unique index — which is also
+ * the thing that makes the claim race safe to lose.
+ */
+export const taskClaims = pgTable(
+  "task_claims",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    taskId: uuid("task_id")
+      .notNull()
+      .references(() => tasks.id),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    claimedAt: timestamp("claimed_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    /** Stamped from the task's pinned allowed minutes when the claim is made. */
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    /** NULL while it is still running. */
+    outcome: claimOutcome("outcome"),
+    outcomeAt: timestamp("outcome_at", { withTimezone: true }),
+    /** What they said when they handed it back. */
+    note: text("note"),
+    createdAt,
+  },
+  (t) => [
+    index("task_claims_task_idx").on(t.taskId),
+    index("task_claims_user_idx").on(t.userId),
+  ],
+);
+
+/**
+ * Satisfactory or not, with an optional score and a note.
+ *
+ * A verdict is attached to the ATTEMPT as well as the task, because two
+ * attempts at the same task get two grades and a grade that could not say
+ * which attempt it was about would be unable to answer the only question it
+ * exists to answer.
+ *
+ * Several grades per attempt is normal rather than exceptional: everybody
+ * starts in training, and during training two people do the same work
+ * independently so that agreement — rather than a conscientious 25-cent
+ * approver — is what measures them.
+ *
+ * INSERTING A ROW HERE IS AN ACT OF APPROVAL, and the separation-of-duty
+ * trigger treats it as one: the grader may not be the person who did the work
+ * and may not be at their company.
+ */
+export const taskGrades = pgTable(
+  "task_grades",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    taskId: uuid("task_id")
+      .notNull()
+      .references(() => tasks.id),
+    /** The attempt being graded. */
+    claimId: uuid("claim_id").references(() => taskClaims.id),
+    graderUserId: uuid("grader_user_id")
+      .notNull()
+      .references(() => users.id),
+    verdict: gradeVerdict("verdict").notNull(),
+    /**
+     * Optional, 0–100. Binary is right for technical work and wrong for
+     * creative work, which is coming and grades on a rubric. Carrying the
+     * column now is free; retrofitting a second grading system is not.
+     */
+    score: integer("score"),
+    note: text("note"),
+    createdAt,
+  },
+  (t) => [
+    index("task_grades_task_idx").on(t.taskId),
+    index("task_grades_grader_idx").on(t.graderUserId),
+  ],
+);
+
+/**
+ * Every state change, append-only.
+ *
+ * Same shape and same discipline as `job_events`: the application role holds
+ * SELECT and INSERT and nothing else, so this is enforced by the database
+ * rather than by everybody remembering.
+ *
+ * `actorId` is NULL for system actions — the sweep that expires a claim is
+ * nobody's decision, and attributing it to whoever happened to trigger it
+ * would be a lie in the one table that exists to be believed.
+ */
+export const taskEvents = pgTable(
+  "task_events",
+  {
+    id: bigserial("id", { mode: "bigint" }).primaryKey(),
+    taskId: uuid("task_id")
+      .notNull()
+      .references(() => tasks.id),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    /** NULL for system actions, such as a claim timing out. */
+    actorId: uuid("actor_id").references(() => users.id),
+    /** An address can change; the record of who acted must not. */
+    actorEmailAtTime: text("actor_email_at_time"),
+    action: text("action").notNull(),
+    /** Field-level diff, not a whole-row dump. */
+    before: jsonb("before"),
+    after: jsonb("after"),
+    createdAt,
+  },
+  (t) => [index("task_events_task_idx").on(t.taskId)],
+);
