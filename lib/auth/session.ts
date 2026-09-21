@@ -4,7 +4,9 @@ import { cookies, headers } from "next/headers";
 import {
   activeSessionsForUser,
   consumeTicketsForSession,
+  endActAsGrantsForSession,
   insertSession,
+  liveActAsGrantForSession,
   liveGrantForSession,
   membershipsForUser,
   revokeAllSessionsForUser,
@@ -46,8 +48,33 @@ export function hashToken(token: string): Buffer {
   return createHash("sha256").update(token, "utf8").digest();
 }
 
+/**
+ * Who a request is FROM, and who it is BY.
+ *
+ * Almost always the same person, and then this reads exactly as it used to.
+ * While a live act-as grant is held they differ, and the difference is the
+ * whole security boundary of that feature:
+ *
+ *   userId / email / fullName / role / memberships / scope
+ *       the EFFECTIVE identity — the person being appeared as. Every screen
+ *       and every query reads these, which is what makes "see what they see"
+ *       true rather than approximately true: there is no second rendering
+ *       path, and therefore no second set of bugs.
+ *
+ *   realUserId / realEmail / realIsStaff
+ *       the human at the keyboard. Every PERMISSION is decided from these.
+ *       Reading staff-ness off the effective identity would mean a staff
+ *       session that had become a client had genuinely stopped being staff —
+ *       convenient for exactly one thing, which is escaping its own rules.
+ *
+ *   actingAs
+ *       null or the live grant. Null is what the banner, the guards and the
+ *       audit all key off, so "is this real work?" has one answer in one
+ *       place.
+ */
 export type SessionContext = {
   sessionId: string;
+  /** The EFFECTIVE person: the target while acting as, otherwise the real one. */
   userId: string;
   email: string;
   fullName: string | null;
@@ -60,6 +87,21 @@ export type SessionContext = {
   secondFactorAt: Date | null;
   /** True for a staff session that has passed the email code and nothing else. */
   needsSecondFactor: boolean;
+  /** The human this session belongs to. Equal to userId unless acting as. */
+  realUserId: string;
+  realEmail: string;
+  /** Staff-ness of the REAL person. Never taken from the effective identity. */
+  realIsStaff: boolean;
+  /** The live act-as grant, or null. Null means this is the person's own work. */
+  actingAs: {
+    grantId: string;
+    userId: string;
+    email: string;
+    fullName: string | null;
+    reason: string;
+    startedAt: Date;
+    expiresAt: Date;
+  } | null;
 };
 
 /** Which host this request arrived on. Used for cookies and branding only. */
@@ -193,8 +235,7 @@ export async function getSessionContext(): Promise<SessionContext | null> {
 
   await touchSession(session.id);
 
-  const mships = await membershipsForUser(session.userId);
-  const role = session.roleAtCreation as SessionRole;
+  const roleAtCreation = session.roleAtCreation as SessionRole;
 
   /**
    * A staff session that has not cleared its second factor carries no
@@ -205,34 +246,122 @@ export async function getSessionContext(): Promise<SessionContext | null> {
    * is not staff and is bound to no client, so it can read nothing — the check
    * is in what the session grants, not only in where it is sent.
    */
-  const needsSecondFactor = role === "staff" && session.secondFactorAt === null;
+  const needsSecondFactor =
+    roleAtCreation === "staff" && session.secondFactorAt === null;
+  const realIsStaff = roleAtCreation === "staff" && !needsSecondFactor;
+
+  /**
+   * Is this session currently somebody else?
+   *
+   * Looked up on every request rather than stamped on the session row, which
+   * is what makes the hour real: the grant stops being live on its own, and
+   * the very next page is the person themselves again with nothing to clean
+   * up. Only a session that is really staff is asked the question at all.
+   */
+  const actGrant = realIsStaff ? await liveActAsGrantForSession(session.id) : null;
+  const target = actGrant ? await userById(actGrant.targetUserId) : null;
+
+  // A live grant on an account that has since been deleted. End it rather than
+  // silently continuing as somebody — a banner that is not shown while an
+  // identity is still in force is the exact failure this feature must not have.
+  if (actGrant && !target) {
+    await endActAsGrantsForSession(session.id);
+  }
+
+  const acting = actGrant && target ? { grant: actGrant, target } : null;
+  const effective = acting ? acting.target : user;
+
+  const mships = await membershipsForUser(effective.id);
+
+  /**
+   * The effective role is derived from the EFFECTIVE person's memberships, by
+   * the same rule startSession() uses — membership of an internal company is
+   * what makes a session staff. Acting as a client therefore really is a
+   * client session, with a client's reach, which is the point.
+   */
+  const role: SessionRole = acting
+    ? mships.some((m) => m.organizationType === "internal")
+      ? "staff"
+      : "client"
+    : roleAtCreation;
+
   const isStaff = role === "staff" && !needsSecondFactor;
 
-  // For staff the scope comes from a live grant, so it lapses on its own
-  // rather than lasting as long as the session does.
-  let organizationId = needsSecondFactor ? null : session.activeOrganizationId;
-  if (isStaff) {
-    const grant = await liveGrantForSession(session.id);
-    organizationId = grant?.organizationId ?? null;
+  /**
+   * Which company's rows are on screen.
+   *
+   * Not acting: unchanged — a client is scoped to the company stamped on their
+   * session, and staff to whatever client their live staff grant covers, so
+   * that access lapses on its own.
+   *
+   * Acting as a CLIENT: their own company, resolved the way startSession()
+   * resolves it for them — one company, or none if they hold none or several,
+   * which is precisely what they would see on signing in.
+   *
+   * Acting as STAFF: null, the cross-client survey. The staff grant held by
+   * the real session deliberately does NOT carry over. A staff grant is an
+   * audit row naming one person who opened one client, and it has one identity
+   * column; borrowing somebody else's while wearing their name would put the
+   * wrong name in that record. So opening a client is one of the things that
+   * waits until you are yourself again.
+   */
+  let organizationId: string | null = null;
+  if (acting) {
+    const clientOrgs = mships.filter((m) => m.organizationType === "client");
+    organizationId =
+      role === "client" && clientOrgs.length === 1
+        ? clientOrgs[0].organizationId
+        : null;
+  } else {
+    organizationId = needsSecondFactor ? null : session.activeOrganizationId;
+    if (isStaff) {
+      const grant = await liveGrantForSession(session.id);
+      organizationId = grant?.organizationId ?? null;
+    }
   }
 
   return {
     sessionId: session.id,
-    userId: user.id,
-    email: user.email,
-    fullName: user.fullName,
+    userId: effective.id,
+    email: effective.email,
+    fullName: effective.fullName,
     role,
     scope: {
-      userId: user.id,
-      email: user.email,
+      userId: effective.id,
+      email: effective.email,
       isStaff,
       organizationId,
+      /**
+       * Carried into every write so the audit can name both people. Null on an
+       * ordinary session, which is what makes null mean "this was real work".
+       */
+      actingAs: acting
+        ? {
+            grantId: acting.grant.id,
+            realUserId: user.id,
+            realEmail: user.email,
+          }
+        : null,
     },
     memberships: mships,
     absoluteExpiresAt: session.absoluteExpiresAt,
     idleSeconds: session.idleSeconds,
     secondFactorAt: session.secondFactorAt,
     needsSecondFactor,
+    realUserId: user.id,
+    realEmail: user.email,
+    realIsStaff,
+    actingAs: acting
+      ? {
+          grantId: acting.grant.id,
+          userId: acting.target.id,
+          email: acting.target.email,
+          fullName: acting.target.fullName,
+          reason: acting.grant.reason,
+          startedAt: acting.grant.startedAt,
+          expiresAt: acting.grant.expiresAt,
+        }
+      : null,
   };
 }
 

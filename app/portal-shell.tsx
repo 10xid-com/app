@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
+import { getSessionContext } from "@/lib/auth/session";
 import { signOutAction } from "./auth/actions";
 import { exitClientAction } from "./staff/actions";
+import { stopActingAsAction } from "./act-as/actions";
 import { PortalHeader, menuItemClass } from "./portal-nav";
 
 /**
@@ -27,17 +29,17 @@ import { PortalHeader, menuItemClass } from "./portal-nav";
  * cannot be mistaken for it. What it is also NOT is a second mark, nor the
  * product name set in a box; both shout over the mark that should own the bar.
  */
-export function PortalShell({
+export async function PortalShell({
   children,
   email,
   isStaff,
-  actingOn,
+  actingOn = null,
   organization,
 }: {
   children: ReactNode;
   email: string;
   isStaff: boolean;
-  actingOn: { name: string; reason: string } | null;
+  actingOn?: { name: string; reason: string } | null;
   /**
    * Whose screen this is. Optional for now: every caller passing it means
    * every page fetching it, and the pages are being reworked for Flow anyway.
@@ -53,6 +55,23 @@ export function PortalShell({
     ? { name: actingOn.name, logoUrl: organization?.logoUrl ?? null }
     : (organization ?? { name: "10XiD Portal", logoUrl: null });
 
+  /**
+   * The act-as banner is resolved HERE rather than passed in as a prop.
+   *
+   * Every other thing in this header is handed down by the page, and the
+   * acting-on-a-client banner above is one of them — six pages each fetch
+   * their own grant. That is survivable for a banner that says which client's
+   * rows you are reading. It is not survivable for one that says you are
+   * somebody else: a page added next month that forgot the prop would render a
+   * whole screen of another person's work with nothing on it saying so, and
+   * the whole safety of the feature is that the screen always says so.
+   *
+   * So the shell asks. It costs one already-cached session read per render and
+   * it cannot be forgotten, because there is no argument to leave out.
+   */
+  const ctx = await getSessionContext();
+  const actingAs = ctx?.actingAs ?? null;
+
   const links = [
     { href: "/dashboard", label: "Dashboard" },
     { href: "/jobs", label: "Jobs" },
@@ -63,6 +82,9 @@ export function PortalShell({
           { href: "/staff/keys", label: "Keys" },
         ]
       : []),
+    // Reachable while acting as a client too, where `isStaff` is false — it is
+    // the way back, so it cannot be behind the thing the grant takes away.
+    ...(ctx?.realIsStaff ? [{ href: "/act-as", label: "Act as" }] : []),
   ];
 
   return (
@@ -74,9 +96,11 @@ export function PortalShell({
         links={links}
         menu={
           <>
-            <a href="/account/sessions" className={menuItemClass}>
-              Your details and devices
-            </a>
+            {actingAs ? null : (
+              <a href="/account/sessions" className={menuItemClass}>
+                Your details and devices
+              </a>
+            )}
             {isStaff ? (
               <a href="/staff" className={menuItemClass}>
                 Switch organization
@@ -101,6 +125,52 @@ export function PortalShell({
           </>
         }
       />
+
+      {/*
+        WHO YOU ARE RIGHT NOW.
+
+        Loud on purpose, and louder than the client banner below it. Paolo runs
+        two browser profiles side by side as two different people; the failure
+        this is sized against is not "which client is this" but "which WINDOW is
+        this", and typing a reply to a client into the client's own account is
+        not a mistake that announces itself afterwards. So: full-width, the
+        strongest colour in the palette rather than a tint of it, the person's
+        name at the top of the type scale, and an exit that is a real button
+        sitting next to it.
+
+        role="status" rather than role="alert": it is a standing condition, and
+        an assertive live region would interrupt a screen reader on every
+        single navigation for an hour.
+      */}
+      {actingAs ? (
+        <div className="border-b-2 border-bad bg-bad text-white" role="status">
+          <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3 px-4 py-3">
+            <p className="min-w-0 text-base font-semibold leading-tight">
+              <span className="uppercase tracking-wide opacity-90">
+                You are acting as{" "}
+              </span>
+              <span className="text-lg font-bold">
+                {actingAs.fullName ?? actingAs.email}
+              </span>
+              <span className="block truncate text-xs font-normal opacity-90">
+                {actingAs.email} — {actingAs.reason} — until{" "}
+                {actingAs.expiresAt.toISOString().slice(11, 16)} UTC
+              </span>
+            </p>
+            <form action={stopActingAsAction} className="flex-none">
+              <button
+                type="submit"
+                className="rounded-md bg-white px-3 py-1.5 text-sm font-semibold
+                           text-bad transition-opacity hover:opacity-90
+                           focus-visible:outline-2 focus-visible:outline-offset-2
+                           focus-visible:outline-white"
+              >
+                Stop acting as {actingAs.fullName ?? actingAs.email}
+              </button>
+            </form>
+          </div>
+        </div>
+      ) : null}
 
       {/*
         The acting-as banner is not decoration. Staff reach every client's data,

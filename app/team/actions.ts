@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { getSessionContext } from "@/lib/auth/session";
+import { refuseWhileActingAs } from "@/lib/auth/require";
 import { sendInvitation } from "@/lib/auth/mailer";
 import { originFor } from "@/lib/auth/sso";
 import {
@@ -35,6 +36,10 @@ async function requireInviter() {
   const ctx = await getSessionContext();
   if (!ctx) redirect("/auth/login");
   if (ctx.needsSecondFactor) redirect("/auth/2fa");
+  // `invitations.invited_by` is a single column too, and an invitation creates
+  // ACCESS that outlives the hour. Same reasoning as staff grants: refused
+  // rather than filed under the wrong name.
+  refuseWhileActingAs(ctx);
 
   const organizationId = ctx.scope.organizationId;
   if (!organizationId) {

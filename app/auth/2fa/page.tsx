@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { getSessionContext } from "@/lib/auth/session";
+import { refuseWhileActingAs } from "@/lib/auth/require";
 import { userById } from "@/lib/db/identity";
 import { decryptSecret, otpauthUri, secondFactorConfigured } from "@/lib/auth/totp";
 import {
@@ -35,6 +36,7 @@ export default async function SecondFactorPage({
 }) {
   const ctx = await getSessionContext();
   if (!ctx) redirect("/auth/login");
+  refuseWhileActingAs(ctx);
   if (ctx.role !== "staff") redirect("/jobs");
   if (!ctx.needsSecondFactor) redirect("/jobs");
 

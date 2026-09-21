@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { requireSession } from "@/lib/auth/require";
+import { requireOwnAccount } from "@/lib/auth/require";
 import { activeSessionsForUser, liveGrantForSession, organizationById } from "@/lib/db/identity";
 import { PortalShell } from "../../portal-shell";
 import { revokeOthersAction, revokeSessionAction } from "./actions";
@@ -50,7 +50,7 @@ export default async function SessionsPage({
 }: {
   searchParams: Promise<{ done?: string }>;
 }) {
-  const ctx = await requireSession("/account/sessions");
+  const ctx = await requireOwnAccount("/account/sessions");
   const params = await searchParams;
 
   const sessions = await activeSessionsForUser(ctx.userId);

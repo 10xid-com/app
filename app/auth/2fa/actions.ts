@@ -14,6 +14,7 @@ import {
   userById,
 } from "@/lib/db/identity";
 import { getSessionContext } from "@/lib/auth/session";
+import { refuseWhileActingAs } from "@/lib/auth/require";
 import { safePath } from "@/lib/auth/sso";
 import {
   decryptSecret,
@@ -31,6 +32,11 @@ const codeSchema = z.string().trim().regex(/^\d{6}$/);
 export async function verifySecondFactorAction(formData: FormData) {
   const ctx = await getSessionContext();
   if (!ctx) redirect("/auth/login");
+
+  // An authenticator enrolled while acting as somebody would still be enrolled
+  // an hour later, on their account, under our phone. That is the takeover this
+  // must not be a route to — see requireOwnAccount in lib/auth/require.ts.
+  refuseWhileActingAs(ctx);
 
   // Only staff carry a second factor. A client reaching this form has nothing
   // to do here.
@@ -102,6 +108,9 @@ async function stashCodesForOneViewing(codes: string[]) {
 export async function regenerateRecoveryCodesAction(formData: FormData) {
   const ctx = await getSessionContext();
   if (!ctx) redirect("/auth/login");
+  // Recovery codes are the way PAST the second factor. Reading somebody else's
+  // set is walking away with their account in your pocket.
+  refuseWhileActingAs(ctx);
   if (ctx.needsSecondFactor) redirect("/auth/2fa");
 
   const user = await userById(ctx.userId);
@@ -139,6 +148,7 @@ export async function beginEnrolmentAction(formData: FormData) {
   const next = safePath(formData.get("next"));
   const ctx = await getSessionContext();
   if (!ctx) redirect("/auth/login");
+  refuseWhileActingAs(ctx);
   if (ctx.role !== "staff") redirect("/jobs");
 
   const user = await userById(ctx.userId);

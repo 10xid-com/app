@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { getSessionContext } from "@/lib/auth/session";
+import { refuseWhileActingAs } from "@/lib/auth/require";
 import { recoveryCodesRemaining, userById } from "@/lib/db/identity";
 import {
   RECOVERY_CODE_COUNT,
@@ -33,6 +34,9 @@ export default async function RecoveryCodesPage({
 }) {
   const ctx = await getSessionContext();
   if (!ctx) redirect("/auth/login");
+  // The screen that shows recovery codes, shown to somebody who is not the
+  // account holder, is the account handed over. Refused for the duration.
+  refuseWhileActingAs(ctx);
 
   const user = await userById(ctx.userId);
   if (!user?.totpConfirmedAt) redirect("/auth/2fa");

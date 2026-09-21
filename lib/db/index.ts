@@ -34,6 +34,28 @@ export type Scope = {
    * are on the cross-client overview, which is read-only by construction.
    */
   organizationId: string | null;
+  /**
+   * Set only while somebody is acting as somebody else.
+   *
+   * `userId` and `email` above stay the person being appeared AS, because that
+   * is who the work is being done as and whose history it belongs in. This is
+   * the other half: the human who was actually at the keyboard, and the grant
+   * that let them be there — whose row carries the reason they typed.
+   *
+   * It is part of the SCOPE rather than an argument to the write functions on
+   * purpose. Every write already takes a scope and cannot be called without
+   * one, so carrying it here means a new write cannot forget it; an extra
+   * parameter is a thing the next function to be written will not have.
+   *
+   * Optional in the type so the dozens of existing constructions of a Scope —
+   * tests, the API-key path, scripts — keep compiling and keep meaning what
+   * they say, which is "not acting as anybody".
+   */
+  actingAs?: {
+    grantId: string;
+    realUserId: string;
+    realEmail: string;
+  } | null;
 };
 
 /**
@@ -238,6 +260,22 @@ async function recordEvent(
     organizationId: job.organizationId,
     actorId: scope.userId,
     actorEmailAtTime: scope.email,
+    /**
+     * Both identities, or neither.
+     *
+     * `actor_id` stays whoever the work was done AS — a client's own history
+     * should read as their own work. These three say that a different human
+     * was at the keyboard, and which grant, and therefore which typed reason,
+     * put them there. They are null on every ordinary write, so null is an
+     * assertion and not merely an absence: this was real work.
+     *
+     * Written here rather than at each call site because this is the single
+     * funnel every job write already passes through. A write added next month
+     * gets it without anybody remembering to.
+     */
+    realActorId: scope.actingAs?.realUserId ?? null,
+    realActorEmailAtTime: scope.actingAs?.realEmail ?? null,
+    actAsGrantId: scope.actingAs?.grantId ?? null,
     action,
     before: before ?? null,
     after: after ?? null,

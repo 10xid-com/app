@@ -125,8 +125,16 @@ export async function verifyCodeAction(formData: FormData) {
 export async function signOutAction() {
   const ctx = await getSessionContext();
   if (ctx) {
-    // Ends every session this person holds, on every domain, at once.
-    await signOutEverywhere(ctx.userId, ctx.sessionId);
+    /**
+     * realUserId, not userId.
+     *
+     * Signing out ends every session the person at the keyboard holds. While
+     * acting as somebody else, `userId` is THEIR account — so the unchanged
+     * line would have signed the target out of every device they own, on every
+     * domain, because somebody else pressed a button in a window wearing their
+     * name. The act-as grant lives on this session and dies with it either way.
+     */
+    await signOutEverywhere(ctx.realUserId, ctx.sessionId);
   }
   redirect("/auth/login");
 }

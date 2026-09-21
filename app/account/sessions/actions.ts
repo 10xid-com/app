@@ -7,7 +7,7 @@ import {
   revokeOtherSessionsForUser,
   revokeOwnSession,
 } from "@/lib/db/identity";
-import { requireSession } from "@/lib/auth/require";
+import { requireOwnAccount } from "@/lib/auth/require";
 
 /**
  * Revoking is scoped to the signed-in person by the query itself — the session
@@ -15,7 +15,9 @@ import { requireSession } from "@/lib/auth/require";
  * Someone submitting a stranger's session id revokes nothing.
  */
 export async function revokeSessionAction(formData: FormData) {
-  const ctx = await requireSession("/account/sessions");
+  // requireOwnAccount, not requireSession: ending somebody's other sessions
+  // is their account's own business, and it outlives the hour.
+  const ctx = await requireOwnAccount("/account/sessions");
 
   const parsed = z.uuid().safeParse(formData.get("sessionId"));
   if (!parsed.success) redirect("/account/sessions");
@@ -30,7 +32,7 @@ export async function revokeSessionAction(formData: FormData) {
 }
 
 export async function revokeOthersAction() {
-  const ctx = await requireSession("/account/sessions");
+  const ctx = await requireOwnAccount("/account/sessions");
   await revokeOtherSessionsForUser(ctx.userId, ctx.sessionId);
 
   revalidatePath("/account/sessions");

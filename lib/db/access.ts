@@ -242,6 +242,32 @@ export async function can(
   return true;
 }
 
+/**
+ * May this person do this thing in ANY of these organizations?
+ *
+ * Some capabilities are held in a place rather than over a thing. "May act as
+ * a staff account" is one: it belongs to the house, so the question is whether
+ * the person holds it in any INTERNAL organization they are a member of, and
+ * the caller supplies that list rather than this deciding what "the house"
+ * means.
+ *
+ * It is a loop over `can()` rather than a wider query on purpose. One
+ * resolution path, with the deny rule and the tenant transaction applied
+ * exactly once each, is worth more than one fewer round trip — a second way to
+ * answer "may they" is a second way to answer it differently.
+ */
+export async function canInAny(
+  organizationIds: readonly string[],
+  userId: string,
+  capability: string,
+  scope: Scope = { type: "organization" },
+): Promise<boolean> {
+  for (const organizationId of organizationIds) {
+    if (await can(organizationId, userId, capability, scope)) return true;
+  }
+  return false;
+}
+
 /** Give somebody a capability. Idempotent on the live grant. */
 export async function grant(input: {
   organizationId: string;

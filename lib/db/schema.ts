@@ -635,6 +635,71 @@ export const staffGrants = pgTable(
 );
 
 /**
+ * Acting as somebody else.
+ *
+ * The same shape as `staff_grants` above, and deliberately so: staff already
+ * trade their identity for a time-boxed, reasoned, logged grant to one CLIENT,
+ * and this is the same trade for one PERSON. Modelling it any other way would
+ * have produced a second kind of elevated access with its own rules, which is
+ * how one of them ends up with weaker ones.
+ *
+ * What it is FOR: Flow looks different from each side, and the only way to see
+ * a client's side is to be them. Signing in as them is impossible by design —
+ * the code goes to their real inbox — and asking them for it would be asking
+ * for their credential.
+ *
+ * What separates it from a back door is written into the columns:
+ *
+ *   * `session_id` — a grant belongs to ONE browser session. It cannot be
+ *     picked up by another login, and ending that session ends it.
+ *   * `actor_user_id` — the real person. Never overwritten by the target, and
+ *     the identity every check is made against.
+ *   * `target_user_id` — who they appear as.
+ *   * `reason` — typed at the moment of starting, minimum eight characters,
+ *     the same floor `staff_grants` uses. This table IS the audit, so a row
+ *     without a reason would be a row that cannot answer why.
+ *   * `expires_at` — sixty minutes, renewed by starting another one rather
+ *     than by extending this row, so each stretch keeps its own reason.
+ *   * `ended_at` — set when it is given up. Distinct from `expires_at` on
+ *     purpose: "given up at 14:12" and "lapsed at 15:00" are different facts,
+ *     and `staff_grants` cannot tell them apart because it stamps expires_at
+ *     to end early. A live grant is one with no ended_at whose expires_at is
+ *     still in the future.
+ *
+ * Nothing is deleted. The application role holds no DELETE on this table.
+ */
+export const actAsGrants = pgTable(
+  "act_as_grants",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** The one browser session this grant is attached to. */
+    sessionId: uuid("session_id")
+      .notNull()
+      .references(() => sessions.id),
+    /** The real person. Every permission check is made against this account. */
+    actorUserId: uuid("actor_user_id")
+      .notNull()
+      .references(() => users.id),
+    /** Who they are appearing as. */
+    targetUserId: uuid("target_user_id")
+      .notNull()
+      .references(() => users.id),
+    reason: text("reason").notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    /** Set when given up. Null while it is still running or has merely lapsed. */
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("act_as_grants_session_idx").on(t.sessionId),
+    index("act_as_grants_actor_idx").on(t.actorUserId),
+    index("act_as_grants_target_idx").on(t.targetUserId),
+  ],
+);
+
+/**
  * Keys for machines.
  *
  * A client's own website has work to hand over — Northstar's estimate requests —
@@ -759,6 +824,30 @@ export const jobEvents = pgTable(
     actorId: uuid("actor_id").references(() => users.id),
     /** Email can change later; the record of who acted must not. */
     actorEmailAtTime: text("actor_email_at_time").notNull(),
+    /**
+     * The three columns below are the other half of `actor_id`, and they are
+     * null on every ordinary row.
+     *
+     * While somebody is acting as somebody else, `actor_id` stays the person
+     * the work was done AS — that is the point of the feature, and a client's
+     * own history should read as their own work rather than as a stranger
+     * rummaging in it. What that alone cannot say is that a human other than
+     * the named one was at the keyboard. These say it.
+     *
+     * Null therefore means something exact: this was real work, done by the
+     * person named in `actor_id`. Non-null means it was done while acting as
+     * them, by `real_actor_id`, under the grant in `act_as_grant_id` — whose
+     * row carries the reason that was typed. Six months from now that is the
+     * difference between test data and a client's real history, and it cannot
+     * be reconstructed later if it is not written now.
+     *
+     * `real_actor_email_at_time` is kept for the same reason
+     * `actor_email_at_time` is: an address can change, and the record of who
+     * acted must not.
+     */
+    realActorId: uuid("real_actor_id").references(() => users.id),
+    realActorEmailAtTime: text("real_actor_email_at_time"),
+    actAsGrantId: uuid("act_as_grant_id").references(() => actAsGrants.id),
     action: text("action").notNull(),
     /** Field-level diff, not a whole-row dump. */
     before: jsonb("before"),
