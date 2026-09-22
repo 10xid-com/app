@@ -4,6 +4,7 @@ import {
   ACT_AS_STAFF_CAPABILITY,
   GRANT_REASON_MAX,
   GRANT_REASON_MIN,
+  isStaffMembership,
 } from "./policy";
 import { canInAny } from "@/lib/db/access";
 import {
@@ -143,15 +144,21 @@ export async function startActingAs(
 
   // 5. Staff targets need the capability as well as the staff session.
   //
-  //    is_staff on the row is the stored copy; membership of an internal
-  //    organization is what the session actually derives from. Either one
-  //    being true is treated as staff here, because this is the check that
-  //    must not be the one that disagrees — a drifted flag should cost an
-  //    extra permission, never skip one.
+  //    Two sources, OR'd, and the OR is the point. isStaffMembership() is what
+  //    the SESSION derives from — a `staff`-role membership of the house — so
+  //    asking it here means this check and the session agree about who is
+  //    staff. `target.isStaff` is the stored copy of the same fact; it is kept
+  //    in the test because a copy can drift, and a drifted flag must cost an
+  //    extra permission rather than skip one. Erring towards "staff" is the
+  //    safe direction: the worst it does is ask for a capability that was not
+  //    strictly needed.
+  //
+  //    The membership half used to be `organizationType === "internal"` alone,
+  //    which treated everyone in the house as a staff target — the same defect
+  //    the session had, in the same words.
   const targetMemberships = await membershipsForUser(target.id);
   const targetIsStaff =
-    target.isStaff ||
-    targetMemberships.some((m) => m.organizationType === "internal");
+    target.isStaff || targetMemberships.some(isStaffMembership);
 
   if (targetIsStaff && !(await mayActAsStaff(input.realUserId))) {
     return { ok: false, refusal: "needs_capability" };

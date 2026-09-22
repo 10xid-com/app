@@ -145,3 +145,62 @@ export const API_KEY_RATE = {
   maxJobsPerWindow: 60,
   windowSeconds: 60 * 60,
 };
+
+/**
+ * WHAT MAKES A SESSION STAFF.
+ *
+ * Membership of the internal company used to be the whole of it:
+ *
+ *   const role = mships.some((m) => m.organizationType === "internal")
+ *     ? "staff" : "client";
+ *
+ * which meant anybody added to the house — a bookkeeper, a summer student, an
+ * account created to test something — silently held authority over every
+ * client's data. The `staff` value in the membership_role enum existed and
+ * meant nothing, so the field that looks like it answers this question did not.
+ * 0013 found the live proof: an administrator who does the books held a staff
+ * session, because he is in the house, though his membership says `member`.
+ *
+ * The rule now takes BOTH halves, and both are load-bearing:
+ *
+ *   organizationType === "internal"   the company is the house, not a client.
+ *                                     A client company must never be able to
+ *                                     mint authority over other clients by
+ *                                     handing out a role inside its own walls.
+ *   role === "staff"                   this person is here to work on clients'
+ *                                     behalf, rather than merely being here.
+ *
+ * Neither alone is enough, which is why this is one function rather than two
+ * predicates spelled out at each call site. It is pure, takes the memberships
+ * as data, and lives in this file rather than beside the session so that the
+ * four cases it decides can be pinned by tests without a cookie, a database or
+ * a request: internal+staff is staff; internal+member is not; client+staff is
+ * not; no membership is not.
+ *
+ * Widening it is deliberately awkward. Somebody who should be staff is given a
+ * staff-role membership of the house — one row, in the table that already says
+ * who is who — and never by being added to a company.
+ */
+export type RoleDerivationMembership = {
+  organizationType: "client" | "internal";
+  role: "owner" | "member" | "staff";
+};
+
+/** True for the one membership shape that confers staff: the house, as staff. */
+export function isStaffMembership(m: RoleDerivationMembership): boolean {
+  return m.organizationType === "internal" && m.role === "staff";
+}
+
+/**
+ * The session role somebody's memberships add up to.
+ *
+ * Used by startSession() when a session is created and by getSessionContext()
+ * when an act-as grant makes the effective person somebody else. The same
+ * function in both places on purpose: two copies of an authentication rule is
+ * one copy that eventually gets fixed alone.
+ */
+export function sessionRoleFor(
+  memberships: readonly RoleDerivationMembership[],
+): SessionRole {
+  return memberships.some(isStaffMembership) ? "staff" : "client";
+}

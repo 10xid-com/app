@@ -581,13 +581,51 @@ export async function teamFor(organizationId: string) {
     .orderBy(users.fullName);
 }
 
-/** The internal organization — the staff side of the exchange. */
+/**
+ * The internal organization — the staff side of the exchange. There is meant to
+ * be exactly one.
+ *
+ * This used to take the first row it found, which is a sentence that hides the
+ * problem: with more than one candidate, POSTGRES decides which company is the
+ * house — by whatever order a seq scan happens to return today — and it can
+ * decide differently tomorrow after a VACUUM without one line of code changing.
+ * Production really did hold two for a while (0013 found them; 0016 settled
+ * it), and during that time app/team/page.tsx showed staff "their" team from
+ * whichever row came back first.
+ *
+ * So it refuses instead. Two rows is a state somebody has to look at — one of
+ * them is a client brand that was never retyped, or a second house nobody meant
+ * to create — and the honest failure is louder than a page that renders the
+ * wrong company's people and says nothing. It reads THREE so the message can
+ * say whether there are exactly two or more, and name them; a limit of two
+ * would only ever be able to say "at least two".
+ *
+ * Zero is NOT an error and still returns null. A deployment with no internal
+ * company is a portal that has not been set up yet, or one where the house has
+ * been retyped deliberately; the callers already handle null, and turning a
+ * not-yet-configured install into an exception helps nobody.
+ */
 export async function internalOrganization() {
   const rows = await db
     .select()
     .from(organizations)
     .where(and(eq(organizations.type, "internal"), isNull(organizations.deletedAt)))
-    .limit(1);
+    .orderBy(organizations.slug)
+    .limit(3);
+
+  if (rows.length > 1) {
+    throw new Error(
+      `There are ${rows.length === 3 ? "at least 3" : String(rows.length)} ` +
+        "organizations of type 'internal' (" +
+        rows.map((o) => o.slug).join(", ") +
+        "), and this asks for THE internal one. Which company is the house is " +
+        "a decision, not a row order: retype the ones that are client brands, " +
+        "or delete the duplicate. Refusing rather than picking, because " +
+        "picking silently means Postgres chooses and can choose differently " +
+        "after a VACUUM.",
+    );
+  }
+
   return rows[0] ?? null;
 }
 

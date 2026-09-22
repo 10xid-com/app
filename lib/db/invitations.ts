@@ -5,6 +5,7 @@ import {
   inTenantTransaction,
 } from "./connection";
 import { invitations, memberships, organizations, users } from "./schema";
+import { isStaffMembership } from "@/lib/auth/policy";
 
 /**
  * Invitations — how an account comes to exist.
@@ -140,15 +141,35 @@ export async function acceptInvitation(input: {
 
     if (claimed.length !== 1) return null;
 
-    // Staff-ness is not a field on the invitation form: it follows from the
-    // company being the internal one, so an invitation into a client company
-    // cannot quietly produce a staff account.
+    /**
+     * Staff-ness is not a field on the invitation form. It follows from the
+     * SAME rule the session derives it by — isStaffMembership(), the one
+     * function — so the flag stored on the account and the role the session
+     * resolves to cannot be written from two different ideas of what staff is.
+     *
+     * It used to follow from the company alone: `org?.type === "internal"`.
+     * That is the defect in lib/auth/session.ts seen from the other end, and
+     * it minted the same wrong answer at the moment an account was created —
+     * invite a bookkeeper into the house as a `member` and they arrived
+     * flagged staff. Now it takes the invited ROLE as well, so an invitation
+     * into a client company still cannot produce a staff account, and an
+     * invitation into the house produces one only when it says `staff`.
+     *
+     * `type` is NOT NULL, so a missing company is the only way `org` is
+     * undefined here; the optional chain then yields undefined, which is not
+     * "internal", and a person invited to a company that has vanished mid
+     * transaction is not staff. (The insert below would fail on the foreign
+     * key anyway.)
+     */
     const [org] = await tx
       .select({ type: organizations.type })
       .from(organizations)
       .where(eq(organizations.id, input.organizationId))
       .limit(1);
-    const isStaff = org?.type === "internal";
+    const isStaff = isStaffMembership({
+      organizationType: org?.type ?? "client",
+      role: input.role,
+    });
 
     const [user] = await tx
       .insert(users)

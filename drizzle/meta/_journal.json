@@ -120,6 +120,13 @@
       "when": 1790000000000,
       "tag": "0016_branding_centres_is_a_brand",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1790000100000,
+      "tag": "0017_staff_is_a_role_not_a_company",
+      "breakpoints": true
     }
   ]
 }

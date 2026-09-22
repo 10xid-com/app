@@ -20,6 +20,7 @@ import { secretToken } from "@/lib/ids";
 import {
   MAX_COOKIE_SECONDS,
   SESSION_POLICY,
+  sessionRoleFor,
   type SessionRole,
 } from "./policy";
 
@@ -133,9 +134,14 @@ export async function startSession(input: {
   secondFactorPassed?: boolean;
 }): Promise<{ token: string; sessionId: string; role: SessionRole }> {
   const mships = await membershipsForUser(input.userId);
-  const role: SessionRole = mships.some((m) => m.organizationType === "internal")
-    ? "staff"
-    : "client";
+  /**
+   * Staff-ness comes from sessionRoleFor(), which wants BOTH halves: the
+   * company is the house, AND the membership role is `staff`. Being added to
+   * the internal company is no longer enough, because it never should have
+   * been — it made a bookkeeper an authority over every client's data, and the
+   * `staff` value in the enum that looks like it answers this meant nothing.
+   */
+  const role: SessionRole = sessionRoleFor(mships);
 
   const policy = SESSION_POLICY[role];
   const token = secretToken(32);
@@ -275,15 +281,17 @@ export async function getSessionContext(): Promise<SessionContext | null> {
 
   /**
    * The effective role is derived from the EFFECTIVE person's memberships, by
-   * the same rule startSession() uses — membership of an internal company is
-   * what makes a session staff. Acting as a client therefore really is a
-   * client session, with a client's reach, which is the point.
+   * the same rule startSession() uses — the one function, so that the two
+   * cannot drift apart. Acting as a client therefore really is a client
+   * session, with a client's reach, which is the point.
+   *
+   * Not acting, the role is the one stamped on the session row at creation.
+   * That is unchanged and deliberate: a session carries the policy it was
+   * created under. It also means this change reaches a live session only when
+   * it is next created — someone who is signed in now keeps the role they
+   * signed in with until they sign in again.
    */
-  const role: SessionRole = acting
-    ? mships.some((m) => m.organizationType === "internal")
-      ? "staff"
-      : "client"
-    : roleAtCreation;
+  const role: SessionRole = acting ? sessionRoleFor(mships) : roleAtCreation;
 
   const isStaff = role === "staff" && !needsSecondFactor;
 
