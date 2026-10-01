@@ -1,0 +1,292 @@
+import { afterEach, describe, expect, test, vi } from "vitest";
+import { z } from "zod";
+import { AnthropicEngine } from "@/lib/ai/engine/anthropic";
+import { OpenAIEngine } from "@/lib/ai/engine/openai";
+import { defaultMode, engineFor, modeOptions } from "@/lib/ai/engine/registry";
+import type { AgentEvent, AgentTool } from "@/lib/ai/engine/types";
+
+/**
+ * Both engines, driven through their REAL SDKs.
+ *
+ * The network is replaced, not the SDK: each test hands the SDK a fetch that
+ * answers with the provider's own streaming format, so the request the SDK
+ * builds and the events it parses are the ones production sees. What is
+ * asserted is the contract the workspace relies on — text arrives in order,
+ * tool inputs are validated before anything runs, every tool call produces a
+ * start and an end, refusals and failures are said in words.
+ */
+
+type Captured = { url: string; headers: Headers; body: Record<string, unknown> };
+
+function sse(events: { event?: string; data: unknown }[]): Response {
+  const text = events
+    .map((e) => `${e.event ? `event: ${e.event}\n` : ""}data: ${JSON.stringify(e.data)}\n\n`)
+    .join("");
+  return new Response(text, { status: 200, headers: { "content-type": "text/event-stream" } });
+}
+
+function fakeFetch(responses: Array<() => Response>, captured: Captured[]): typeof fetch {
+  let i = 0;
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    captured.push({
+      url,
+      headers: new Headers(init?.headers),
+      body: init?.body ? JSON.parse(String(init.body)) : {},
+    });
+    const next = responses[i++];
+    if (!next) throw new Error("no more fake responses");
+    return next();
+  }) as typeof fetch;
+}
+
+async function collect(stream: AsyncIterable<AgentEvent>) {
+  const events: AgentEvent[] = [];
+  for await (const e of stream) events.push(e);
+  return events;
+}
+
+const lookup: AgentTool & { calls: unknown[] } = {
+  calls: [],
+  name: "read_job",
+  description: "Read one job",
+  inputSchema: z.toJSONSchema(z.object({ ref: z.string() })) as Record<string, unknown>,
+  parse(input) {
+    const r = z.object({ ref: z.string().regex(/^[A-Z]{3}-\d{4}$/) }).safeParse(input);
+    return r.success ? { ok: true, value: r.data } : { ok: false, error: "ref must look like ROT-0001" };
+  },
+  async run(input) {
+    lookup.calls.push(input);
+    return { content: "ROT-0001: Banner reprint, in progress" };
+  },
+};
+
+/* --------------------------- Anthropic --------------------------- */
+
+type SseEvent = { event?: string; data: unknown };
+
+const claudeMessage = (content: unknown[], stop: string, model = "claude-opus-5-5"): SseEvent[] => [
+  {
+    event: "message_start",
+    data: {
+      type: "message_start",
+      message: {
+        id: "msg_1", type: "message", role: "assistant", model, content: [],
+        stop_reason: null, stop_sequence: null, usage: { input_tokens: 10, output_tokens: 0 },
+      },
+    },
+  },
+  ...content.flatMap((block, index): SseEvent[] => {
+    const b = block as { type: string; text?: string; id?: string; name?: string; input?: unknown };
+    if (b.type === "text") {
+      return [
+        { event: "content_block_start", data: { type: "content_block_start", index, content_block: { type: "text", text: "" } } },
+        { event: "content_block_delta", data: { type: "content_block_delta", index, delta: { type: "text_delta", text: b.text } } },
+        { event: "content_block_stop", data: { type: "content_block_stop", index } },
+      ];
+    }
+    return [
+      { event: "content_block_start", data: { type: "content_block_start", index, content_block: { type: "tool_use", id: b.id, name: b.name, input: {} } } },
+      { event: "content_block_delta", data: { type: "content_block_delta", index, delta: { type: "input_json_delta", partial_json: JSON.stringify(b.input) } } },
+      { event: "content_block_stop", data: { type: "content_block_stop", index } },
+    ];
+  }),
+  { event: "message_delta", data: { type: "message_delta", delta: { stop_reason: stop, stop_sequence: null }, usage: { output_tokens: 5 } } },
+  { event: "message_stop", data: { type: "message_stop" } },
+];
+
+describe("the Claude engine", () => {
+  test("streams text, opts into the refusal fallback, and sets effort", async () => {
+    const captured: Captured[] = [];
+    const engine = new AnthropicEngine("claude-opus-5-5", {
+      apiKey: "test",
+      effort: "medium",
+      capabilities: ["text", "tool_calling"],
+      fetch: fakeFetch([() => sse(claudeMessage([{ type: "text", text: "Hello there" }], "end_turn"))], captured),
+    });
+
+    const events = await collect(engine.stream({ system: "Be brief.", history: [{ role: "user", content: "hi" }], tools: [] }));
+
+    expect(events.filter((e) => e.type === "text").map((e) => (e as { text: string }).text).join("")).toBe("Hello there");
+    expect(captured[0]!.headers.get("anthropic-beta")).toContain("server-side-fallback-2026-07-01");
+    expect(captured[0]!.body).toMatchObject({
+      model: "claude-opus-5-5",
+      fallbacks: "default",
+      system: "Be brief.",
+      output_config: { effort: "medium" },
+    });
+  });
+
+  test("runs a valid tool call, feeds the result back, then answers", async () => {
+    lookup.calls = [];
+    const captured: Captured[] = [];
+    const engine = new AnthropicEngine("claude-opus-5-5", {
+      apiKey: "test",
+      capabilities: ["text", "tool_calling"],
+      fetch: fakeFetch(
+        [
+          () => sse(claudeMessage([{ type: "tool_use", id: "tu_1", name: "read_job", input: { ref: "ROT-0001" } }], "tool_use")),
+          () => sse(claudeMessage([{ type: "text", text: "It is in progress." }], "end_turn")),
+        ],
+        captured,
+      ),
+    });
+
+    const events = await collect(engine.stream({ system: "s", history: [{ role: "user", content: "status?" }], tools: [lookup] }));
+
+    expect(lookup.calls).toEqual([{ ref: "ROT-0001" }]);
+    expect(events.map((e) => e.type)).toEqual(["tool_start", "tool_end", "text", "usage"]);
+    // The second request carries the tool result back, unchanged history first.
+    const second = captured[1]!.body.messages as { role: string; content: unknown }[];
+    expect(second.at(-1)).toMatchObject({
+      role: "user",
+      content: [{ type: "tool_result", tool_use_id: "tu_1", content: "ROT-0001: Banner reprint, in progress" }],
+    });
+  });
+
+  test("an invalid tool input never reaches the tool", async () => {
+    lookup.calls = [];
+    const engine = new AnthropicEngine("claude-opus-5-5", {
+      apiKey: "test",
+      capabilities: ["text", "tool_calling"],
+      fetch: fakeFetch(
+        [
+          () => sse(claudeMessage([{ type: "tool_use", id: "tu_1", name: "read_job", input: { ref: "../../etc/passwd" } }], "tool_use")),
+          () => sse(claudeMessage([{ type: "text", text: "Sorry." }], "end_turn")),
+        ],
+        [],
+      ),
+    });
+    const events = await collect(engine.stream({ system: "s", history: [{ role: "user", content: "x" }], tools: [lookup] }));
+    expect(lookup.calls).toEqual([]);
+    expect(events.find((e) => e.type === "tool_end")).toMatchObject({ ok: false });
+  });
+
+  test("a refusal that survives the fallback is said, and a fallback model is named", async () => {
+    const engine = new AnthropicEngine("claude-opus-5-5", {
+      apiKey: "test",
+      capabilities: ["text"],
+      fetch: fakeFetch([() => sse(claudeMessage([], "refusal", "claude-opus-4-8"))], []),
+    });
+    const events = await collect(engine.stream({ system: "s", history: [{ role: "user", content: "x" }], tools: [] }));
+    expect(events.find((e) => e.type === "model")).toEqual({ type: "model", model: "claude-opus-4-8" });
+    expect(events.find((e) => e.type === "notice")).toMatchObject({ level: "warning" });
+  });
+
+  test("a refused key is reported in words, not as a status code", async () => {
+    const engine = new AnthropicEngine("claude-opus-5-5", {
+      apiKey: "bad",
+      capabilities: ["text"],
+      fetch: fakeFetch(
+        [() => Response.json({ type: "error", error: { type: "authentication_error", message: "invalid x-api-key" } }, { status: 401 })],
+        [],
+      ),
+    });
+    await expect(collect(engine.stream({ system: "s", history: [{ role: "user", content: "x" }], tools: [] }))).rejects.toThrow(
+      /ANTHROPIC_API_KEY/,
+    );
+  });
+});
+
+/* ----------------------------- OpenAI ----------------------------- */
+
+const openaiResponse = (output: unknown[], status = "completed") => ({
+  id: "resp_1",
+  object: "response",
+  created_at: 0,
+  model: "test-model",
+  status,
+  output,
+  usage: { input_tokens: 12, output_tokens: 3, total_tokens: 15 },
+});
+
+describe("the OpenAI engine", () => {
+  test("streams text and does not store the response by default", async () => {
+    const captured: Captured[] = [];
+    const engine = new OpenAIEngine("test-model", {
+      apiKey: "test",
+      store: false,
+      capabilities: ["text", "tool_calling"],
+      fetch: fakeFetch(
+        [
+          () =>
+            sse([
+              { data: { type: "response.output_text.delta", delta: "Hi ", item_id: "m", output_index: 0, content_index: 0, sequence_number: 1 } },
+              { data: { type: "response.output_text.delta", delta: "there", item_id: "m", output_index: 0, content_index: 0, sequence_number: 2 } },
+              { data: { type: "response.completed", response: openaiResponse([{ type: "message", id: "m", role: "assistant", status: "completed", content: [] }]), sequence_number: 3 } },
+            ]),
+        ],
+        captured,
+      ),
+    });
+    const events = await collect(engine.stream({ system: "Be brief.", history: [{ role: "user", content: "hi" }], tools: [] }));
+    expect(events.filter((e) => e.type === "text").map((e) => (e as { text: string }).text).join("")).toBe("Hi there");
+    expect(captured[0]!.body).toMatchObject({ model: "test-model", instructions: "Be brief.", store: false, stream: true });
+    expect(events.at(-1)).toEqual({ type: "usage", inputTokens: 12, outputTokens: 3 });
+  });
+
+  test("runs a function call and sends its output back by call id", async () => {
+    lookup.calls = [];
+    const captured: Captured[] = [];
+    const call = { type: "function_call", id: "fc_1", call_id: "call_1", name: "read_job", arguments: '{"ref":"ROT-0001"}', status: "completed" };
+    const engine = new OpenAIEngine("test-model", {
+      apiKey: "test",
+      store: false,
+      capabilities: ["text", "tool_calling"],
+      fetch: fakeFetch(
+        [
+          () => sse([{ data: { type: "response.completed", response: openaiResponse([call]), sequence_number: 1 } }]),
+          () =>
+            sse([
+              { data: { type: "response.output_text.delta", delta: "In progress.", item_id: "m", output_index: 0, content_index: 0, sequence_number: 1 } },
+              { data: { type: "response.completed", response: openaiResponse([]), sequence_number: 2 } },
+            ]),
+        ],
+        captured,
+      ),
+    });
+    const events = await collect(engine.stream({ system: "s", history: [{ role: "user", content: "status?" }], tools: [lookup] }));
+    expect(lookup.calls).toEqual([{ ref: "ROT-0001" }]);
+    expect(events.map((e) => e.type)).toEqual(["tool_start", "tool_end", "text", "usage"]);
+    const input = captured[1]!.body.input as Record<string, unknown>[];
+    expect(input.at(-1)).toEqual({ type: "function_call_output", call_id: "call_1", output: "ROT-0001: Banner reprint, in progress" });
+  });
+});
+
+/* ----------------------------- Routing ----------------------------- */
+
+describe("the routing policy", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  test("Claude — Coding is the default when Claude is set up", () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", "k");
+    vi.stubEnv("OPENAI_API_KEY", "k");
+    vi.stubEnv("OPENAI_MODEL_REVIEW", "some-model");
+    expect(defaultMode(modeOptions(new Set()))).toBe("claude-coding");
+  });
+
+  test("an OpenAI mode without a configured model is unavailable, and says why", () => {
+    vi.stubEnv("OPENAI_API_KEY", "k");
+    vi.stubEnv("OPENAI_MODEL_MULTIMODAL", "");
+    const opt = modeOptions(new Set()).find((o) => o.id === "openai-multimodal")!;
+    expect(opt.available).toBe(false);
+    expect(opt.reason).toMatch(/OPENAI_MODEL_MULTIMODAL/);
+  });
+
+  test("a client's policy withholds a mode", () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", "k");
+    const withheld = new Set(["claude-deep"]);
+    expect(modeOptions(withheld).find((o) => o.id === "claude-deep")!.available).toBe(false);
+    expect(engineFor("claude-deep", withheld)).toMatchObject({ error: expect.stringMatching(/Not permitted/) });
+  });
+
+  test("the prototype is off unless switched on, and refused once there is context", () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "k");
+    expect(modeOptions(new Set()).some((o) => o.id === "prototype-free")).toBe(false);
+    vi.stubEnv("ENABLE_PROTOTYPE_ENGINE", "true");
+    expect("engine" in engineFor("prototype-free", new Set(), { hasContext: false })).toBe(true);
+    expect(engineFor("prototype-free", new Set(), { hasContext: true })).toMatchObject({
+      error: expect.stringMatching(/cannot be used/),
+    });
+  });
+});

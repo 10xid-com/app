@@ -1,131 +1,136 @@
-import { expect, test } from "@playwright/test";
+import type { Server } from "node:http";
+import { expect, test, type Page } from "@playwright/test";
 import { resetSignInState, settle, signIn } from "./helpers";
+import { MOCK_ANTHROPIC_URL, startMockAnthropic } from "./mock-anthropic";
 
 /**
- * The staff chat.
+ * The workspace, in a browser.
  *
- * What is checked here is the part a unit test cannot see: who lands on it,
- * who is kept out, and that an answer from the server appears on screen under
- * the name of the model that gave it. The model itself is never called — the
- * browser's request to /api/chat is answered by the test — so the suite needs
- * neither a working key nor OpenRouter's free allowance. Reading OpenRouter's
- * stream and falling over between models is test/chat.test.ts.
+ * Who gets in and who does not runs always. The grounded-answer tests need the
+ * dev server pointed at the Anthropic stand-in (test/e2e/mock-anthropic.ts):
+ *
+ *   ANTHROPIC_API_KEY=test ANTHROPIC_BASE_URL=http://127.0.0.1:4010 npm run test:e2e
+ *
+ * Under that, everything except the model is real — the SDK, the job tools,
+ * the database rows the receipts panel reads back after a refresh.
  */
 
 const CLIENT = "jane@rotary.test";
 const STAFF = "paolo@brandingcentres.test";
+const mocked = process.env.ANTHROPIC_BASE_URL === MOCK_ANTHROPIC_URL;
 
-test.describe("chat", () => {
+/**
+ * Start a conversation and wait for ITS address. /chat already opens the most
+ * recent conversation, so "the URL has ?c=" is true before the new one exists;
+ * typing then would go into the old conversation and be cut off when the new
+ * page arrives.
+ */
+async function newConversation(page: Page) {
+  const before = page.url();
+  await page.getByRole("button", { name: "New", exact: true }).click();
+  await page.waitForURL((u) => u.href !== before && u.searchParams.has("c"));
+  // The address changes a moment before the new conversation's page replaces
+  // the old one. Wait until the controls on screen belong to the new one, or a
+  // click lands on the previous conversation's buttons.
+  const id = new URL(page.url()).searchParams.get("c")!;
+  await expect(page.locator('input[name="conversationId"]').first()).toHaveValue(id);
+}
+
+let mock: Server | null = null;
+test.beforeAll(async () => {
+  if (mocked) mock = await startMockAnthropic();
+});
+test.afterAll(async () => {
+  await new Promise((r) => (mock ? mock.close(r) : r(null)));
+});
+
+test.describe("who gets into the workspace", () => {
   test.beforeEach(resetSignInState);
 
-  test("staff land on the chat after signing in", async ({ page }) => {
+  test("staff land on it after signing in", async ({ page }) => {
     await signIn(page, STAFF, "/");
-    await expect(page).toHaveURL(/\/chat$/);
+    await expect(page).toHaveURL(/\/chat/);
     await expect(page.getByRole("link", { name: "Chat" })).toBeVisible();
   });
 
-  test("a client is sent to their dashboard and refused by the endpoint", async ({
-    page,
-  }) => {
+  test("a client is sent to their dashboard, and the endpoint refuses them", async ({ page }) => {
     await signIn(page, CLIENT, "/");
     await expect(page).toHaveURL(/\/dashboard/);
-    await expect(page.getByRole("link", { name: "Chat" })).toHaveCount(0);
-
     await page.goto("/chat");
     await expect(page).toHaveURL(/\/dashboard/);
-
-    // The endpoint, asked directly with the client's own cookie.
-    const res = await page.request.post("/api/chat", {
-      data: {
-        model: "qwen/qwen3.8-27b:free",
-        messages: [{ role: "user", content: "hello" }],
-      },
+    const res = await page.request.post("/api/workspace/conversations/00000000-0000-7000-8000-000000000000/messages", {
+      data: { content: "hello" },
     });
     expect(res.status()).toBe(403);
   });
 
-  test("signed out, the endpoint answers 401 rather than a sign-in page", async ({
-    request,
-  }) => {
-    const res = await request.post("/api/chat", {
-      data: { model: "qwen/qwen3.8-27b:free", messages: [{ role: "user", content: "hi" }] },
+  test("signed out, the endpoint refuses too", async ({ request }) => {
+    const res = await request.post("/api/workspace/conversations/00000000-0000-7000-8000-000000000000/messages", {
+      data: { content: "hello" },
     });
-    expect(res.status()).toBe(401);
+    expect(res.status()).toBe(403);
   });
+});
 
-  test("an answer appears and names the model that gave it", async ({ page }) => {
-    test.skip(
-      !process.env.OPENROUTER_API_KEY,
-      "The box is drawn only once OPENROUTER_API_KEY is set; any value will do, it is never used.",
-    );
+test.describe("a grounded conversation", () => {
+  test.beforeEach(resetSignInState);
+  test.skip(!mocked, "Needs ANTHROPIC_BASE_URL pointed at the Anthropic stand-in; see the note at the top.");
 
+  test("open a client, ask about a job, and see exactly what the answer used — after a refresh too", async ({ page }) => {
     await signIn(page, STAFF, "/chat");
     await settle(page);
 
-    let sent: { messages: { role: string; content: string }[] } | null = null;
-    await page.route("**/api/chat", async (route) => {
-      sent = route.request().postDataJSON();
-      await route.fulfill({
-        status: 200,
-        headers: {
-          "Content-Type": "text/plain; charset=utf-8",
-          // As if Qwen was throttled and the server fell over to Gemma.
-          "X-Chat-Model": "google/gemma-4-31b-it:free",
-        },
-        body: "Here is a draft.",
-      });
-    });
+    // Open Rotary with a reason, from inside the workspace.
+    await page.getByRole("combobox", { name: "Client" }).selectOption({ label: "Rotary" });
+    await page.getByLabel(/Reason/).fill("Checking a banner job for the e2e test");
+    await page.getByRole("button", { name: "Open for 30 minutes" }).click();
+    await expect(page.getByText("You are acting on", { exact: false }).or(page.getByText("Acting on"))).toBeVisible();
 
-    await page.getByLabel("Message").fill("Draft a reply to Rotary");
+    await newConversation(page);
+    await settle(page);
+
+    // Ask mode by default; Build is visibly unavailable.
+    await expect(page.getByRole("button", { name: "Ask", pressed: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Build" })).toBeDisabled();
+
+    await page.getByLabel("Message").fill("What is happening with ROT-0001?");
     await page.keyboard.press("Enter");
 
-    await expect(page.getByText("Here is a draft.")).toBeVisible();
-    // The screen names the model that answered, not the one that was picked.
-    await expect(page.getByText("Gemma 4 31B", { exact: true })).toBeVisible();
-    expect(sent!.messages).toEqual([{ role: "user", content: "Draft a reply to Rotary" }]);
+    // The answer, with its citation, and the summary line naming engine and client.
+    await expect(page.getByText("[JOB", { exact: false }).or(page.getByText("JOB ROT-0001"))).toBeVisible();
+    await expect(page.getByText(/Claude — Coding · claude-opus-5-5 · Rotary/)).toBeVisible();
+
+    // Survives a refresh: it was saved, not just drawn.
+    const url = page.url();
+    await page.reload();
+    await settle(page);
+    expect(page.url()).toBe(url);
+    await expect(page.getByText("JOB ROT-0001")).toBeVisible();
+
+    // The receipts are rows: the job it read, and the tool that read it.
+    await page.getByRole("button", { name: /see what it used/ }).click();
+    await page.getByRole("tab", { name: "Sources" }).click();
+    await expect(page.getByRole("tabpanel").getByText(/ROT-0001/)).toBeVisible();
+    await page.getByRole("tab", { name: "Receipts" }).click();
+    await expect(page.getByRole("tabpanel").getByText("Rotary")).toBeVisible();
+    await expect(page.getByRole("tabpanel").getByText("claude-opus-5-5")).toBeVisible();
   });
 
-  test("a failure says why and puts the question back", async ({ page }) => {
-    test.skip(!process.env.OPENROUTER_API_KEY, "As above.");
-
+  test("switching to Plan is kept, and /plan is an explicit command", async ({ page }) => {
     await signIn(page, STAFF, "/chat");
     await settle(page);
-    await page.route("**/api/chat", (route) =>
-      route.fulfill({
-        status: 502,
-        json: { error: "This free model is busy or today's free allowance is used up." },
-      }),
-    );
-
-    await page.getByLabel("Message").fill("Summarise the brief");
-    await page.keyboard.press("Enter");
-
-    await expect(page.getByText("free allowance is used up")).toBeVisible();
-    await expect(page.getByLabel("Message")).toHaveValue("Summarise the brief");
-  });
-
-  test("a model picked by hand that was busy is named as busy", async ({ page }) => {
-    test.skip(!process.env.OPENROUTER_API_KEY, "As above.");
-
-    await signIn(page, STAFF, "/chat");
+    await newConversation(page);
     await settle(page);
-    // Auto is the default; pick Qwen by hand, and have Gemma answer instead.
-    await expect(page.getByLabel("Model")).toHaveValue("auto");
-    await page.getByLabel("Model").selectOption("qwen/qwen3.8-27b:free");
-    await page.route("**/api/chat", (route) =>
-      route.fulfill({
-        status: 200,
-        headers: {
-          "Content-Type": "text/plain; charset=utf-8",
-          "X-Chat-Model": "google/gemma-4-31b-it:free",
-        },
-        body: "An answer.",
-      }),
-    );
 
-    await page.getByLabel("Message").fill("hello");
-    await page.keyboard.press("Enter");
+    await page.getByRole("button", { name: "Plan" }).click();
+    await expect(page.getByRole("button", { name: "Plan", pressed: true })).toBeVisible();
+    await page.reload();
+    await settle(page);
+    await expect(page.getByRole("button", { name: "Plan", pressed: true })).toBeVisible();
 
-    await expect(page.getByText("Gemma 4 31B · Qwen 3.8 27B was busy")).toBeVisible();
+    await page.getByLabel("Message").fill("/");
+    await expect(page.getByRole("list", { name: "Commands" })).toBeVisible();
+    await page.getByRole("button", { name: /\/review/ }).click();
+    await expect(page.getByText(/Reviews the selected context/)).toBeVisible();
   });
 });

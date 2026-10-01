@@ -94,7 +94,37 @@ Each is **inert without configuration** rather than half-working. See `.env.exam
 |---|---|
 | Email (Resend) | `RESEND_API_KEY`. Without it, development writes codes to a file and production refuses to start the flow. |
 | Google Drive | A service account with the `drive.file` scope, and one folder shared with it. The scope reaches only files the portal itself created. |
-| Staff chat (OpenRouter) | `OPENROUTER_API_KEY`. Staff land on `/chat` after signing in; it uses two free models (`lib/ai/models.ts`) and falls over to the other when one is throttled. Nothing typed is stored. Without the key the page says it is not set up. |
+| Workspace (Claude, OpenAI) | `ANTHROPIC_API_KEY` for the Claude modes; `OPENAI_API_KEY` plus `OPENAI_MODEL_MULTIMODAL` / `OPENAI_MODEL_REVIEW` for the OpenAI modes. Each mode is offered only once configured. See "The workspace" below. |
+| Free models (prototype) | `ENABLE_PROTOTYPE_ENGINE=true` and `OPENROUTER_API_KEY`. Text only, no tools, house workspace only. |
+
+## The workspace
+
+`/chat` is where staff land: one client's workspace, with conversations kept per client **and per
+person** — two staff on the same client do not read each other's conversations. Postgres enforces
+both (0018: `app.org_id` and `app.user_id`), and child rows reference their parent by
+(id, client, owner) so nothing can be attached to someone else's conversation.
+
+- **The client** is the session's live staff grant, opened from the workspace with a reason exactly
+  as on the Clients page. With no grant, the workspace belongs to the house and holds no client data.
+- **Ask** answers from the client's records and cites them as `[JOB ROT-0042]`; **Plan** writes a
+  step-by-step plan. Neither changes anything. **Build** is shown, disabled, and refused by a database
+  constraint until approval, audit and rollback exist.
+- **Engines** are modes (`Claude — Coding`, `Claude — Deep analysis`, `OpenAI — Multimodal`,
+  `OpenAI — Review`) mapped to model names in the environment, so an upgrade is a variable change.
+  One run goes to one provider; a client can be kept off a mode with an `engine_mode_policies` row.
+- **Receipts.** Every record the model was given, every tool it ran and every warning is a row,
+  written as it happens, and shown in the right-hand panel — "what did the model see?" is answered
+  from the database, not from the answer's text.
+- `/review`, `/explain`, `/plan` and `/test` are recorded choices with fixed, visible wording
+  (`lib/workspace/commands.ts`), never hidden prompts.
+
+Repositories (read-only GitHub) and attachments (private Backblaze B2 storage) come next.
+
+The browser tests for grounded answers run against a local stand-in for the Anthropic API:
+
+```bash
+ANTHROPIC_API_KEY=test ANTHROPIC_BASE_URL=http://127.0.0.1:4010 npm run test:e2e
+```
 
 ## Proving it
 

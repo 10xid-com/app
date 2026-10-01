@@ -133,6 +133,35 @@ export async function inTenantTransaction<T>(
  * It admits every key row, which sounds worse than it is: the rows hold hashes,
  * so what it can see is not a credential. Nothing may write inside it.
  */
+/**
+ * A transaction scoped to one client AND one person.
+ *
+ * The workspace tables (0018) filter by both: a conversation belongs to the
+ * staff member who had it, not to everyone working on that client. This sets
+ * app.user_id beside app.org_id. The cross-client staff flag is always off —
+ * no workspace table has a survey policy, and passing it here would be a
+ * promise the policies do not keep.
+ *
+ * A separate function rather than a fourth argument to inTenantTransaction, so
+ * the dozens of existing callers are untouched and none of them can pass a
+ * user id by accident.
+ */
+export async function inOwnerTransaction<T>(
+  organizationId: string,
+  userId: string,
+  fn: (tx: Transaction) => Promise<T>,
+): Promise<T> {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`
+      select
+        set_config('app.org_id', ${organizationId}, true),
+        set_config('app.is_staff', 'off', true),
+        set_config('app.user_id', ${userId}, true)
+    `);
+    return fn(tx);
+  });
+}
+
 export async function inAuthenticationTransaction<T>(
   fn: (tx: Transaction) => Promise<T>,
 ): Promise<T> {

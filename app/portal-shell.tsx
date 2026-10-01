@@ -35,8 +35,14 @@ export async function PortalShell({
   isStaff,
   actingOn = null,
   organization,
+  wide = false,
 }: {
   children: ReactNode;
+  /**
+   * Full width, for the workspace's three panels. Every other screen keeps the
+   * reading-width column.
+   */
+  wide?: boolean;
   email: string;
   isStaff: boolean;
   actingOn?: { name: string; reason: string } | null;
@@ -90,7 +96,10 @@ export async function PortalShell({
   ];
 
   return (
-    <div className="min-h-dvh bg-ground">
+    // Wide (the workspace) is exactly one screen tall, so its panels scroll
+    // inside themselves and the composer is never pushed below the fold by
+    // whatever banners happen to be showing above it.
+    <div className={wide ? "flex h-dvh flex-col bg-ground" : "min-h-dvh bg-ground"}>
       <PortalHeader
         organizationName={shown.name}
         organizationLogoUrl={shown.logoUrl}
@@ -202,7 +211,7 @@ export async function PortalShell({
         </div>
       ) : null}
 
-      <main className="mx-auto max-w-5xl px-4 py-8">{children}</main>
+      <main className={wide ? "min-h-0 flex-1" : "mx-auto max-w-5xl px-4 py-8"}>{children}</main>
     </div>
   );
 }

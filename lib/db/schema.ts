@@ -1337,3 +1337,155 @@ export const taskEvents = pgTable(
   },
   (t) => [index("task_events_task_idx").on(t.taskId)],
 );
+
+/* ------------------------------------------------------------------ */
+/* The workspace: conversations with a model, scoped and receipted     */
+/* ------------------------------------------------------------------ */
+/*
+ * See drizzle/0018_workspace_conversations.sql for the reasoning. In short:
+ * every table below that holds conversation content is filtered by client AND
+ * owner, children reference parents by (id, organization, owner) so a row
+ * cannot attach itself to someone else's conversation, messages and receipts
+ * are append-only, and `build` mode is refused by a constraint.
+ */
+
+export const conversationMode = pgEnum("conversation_mode", ["ask", "plan", "build"]);
+export const messageRole = pgEnum("message_role", ["user", "assistant"]);
+export const agentRunStatus = pgEnum("agent_run_status", [
+  "running",
+  "completed",
+  "failed",
+  "cancelled",
+]);
+export const receiptKind = pgEnum("receipt_kind", [
+  "file",
+  "folder",
+  "job",
+  "attachment",
+  "tool_call",
+  "warning",
+]);
+export const contextKind = pgEnum("context_kind", ["file", "folder", "job"]);
+
+export const workspaces = pgTable("workspaces", {
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id")
+    .notNull()
+    .references(() => organizations.id),
+  createdBy: uuid("created_by")
+    .notNull()
+    .references(() => users.id),
+  createdAt,
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
+});
+
+export const conversations = pgTable("conversations", {
+  id: uuid("id").primaryKey(),
+  workspaceId: uuid("workspace_id")
+    .notNull()
+    .references(() => workspaces.id),
+  organizationId: uuid("organization_id")
+    .notNull()
+    .references(() => organizations.id),
+  createdBy: uuid("created_by")
+    .notNull()
+    .references(() => users.id),
+  title: text("title").notNull(),
+  mode: conversationMode("mode").notNull().default("ask"),
+  engineMode: text("engine_mode").notNull(),
+  createdAt,
+  updatedAt,
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
+});
+
+export const conversationMessages = pgTable("conversation_messages", {
+  id: uuid("id").primaryKey(),
+  conversationId: uuid("conversation_id")
+    .notNull()
+    .references(() => conversations.id),
+  organizationId: uuid("organization_id")
+    .notNull()
+    .references(() => organizations.id),
+  createdBy: uuid("created_by")
+    .notNull()
+    .references(() => users.id),
+  role: messageRole("role").notNull(),
+  content: text("content").notNull(),
+  command: text("command"),
+  runId: uuid("run_id"),
+  status: text("status").notNull().default("complete"),
+  createdAt,
+});
+
+export const agentRuns = pgTable("agent_runs", {
+  id: uuid("id").primaryKey(),
+  conversationId: uuid("conversation_id")
+    .notNull()
+    .references(() => conversations.id),
+  organizationId: uuid("organization_id")
+    .notNull()
+    .references(() => organizations.id),
+  createdBy: uuid("created_by")
+    .notNull()
+    .references(() => users.id),
+  userMessageId: uuid("user_message_id").notNull(),
+  mode: conversationMode("mode").notNull(),
+  engineMode: text("engine_mode").notNull(),
+  provider: text("provider").notNull(),
+  model: text("model").notNull(),
+  status: agentRunStatus("status").notNull().default("running"),
+  error: text("error"),
+  inputTokens: integer("input_tokens"),
+  outputTokens: integer("output_tokens"),
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+});
+
+export const agentRunReceipts = pgTable("agent_run_receipts", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  runId: uuid("run_id")
+    .notNull()
+    .references(() => agentRuns.id),
+  organizationId: uuid("organization_id")
+    .notNull()
+    .references(() => organizations.id),
+  createdBy: uuid("created_by")
+    .notNull()
+    .references(() => users.id),
+  kind: receiptKind("kind").notNull(),
+  label: text("label").notNull(),
+  ref: text("ref"),
+  detail: jsonb("detail").$type<Record<string, unknown>>().notNull().default({}),
+  sentToProvider: boolean("sent_to_provider").notNull(),
+  createdAt,
+});
+
+export const conversationContextItems = pgTable("conversation_context_items", {
+  id: uuid("id").primaryKey(),
+  conversationId: uuid("conversation_id")
+    .notNull()
+    .references(() => conversations.id),
+  organizationId: uuid("organization_id")
+    .notNull()
+    .references(() => organizations.id),
+  createdBy: uuid("created_by")
+    .notNull()
+    .references(() => users.id),
+  kind: contextKind("kind").notNull(),
+  ref: text("ref").notNull(),
+  addedAt: timestamp("added_at", { withTimezone: true }).notNull().defaultNow(),
+  removedAt: timestamp("removed_at", { withTimezone: true }),
+});
+
+export const engineModePolicies = pgTable("engine_mode_policies", {
+  organizationId: uuid("organization_id")
+    .notNull()
+    .references(() => organizations.id),
+  engineMode: text("engine_mode").notNull(),
+  allowed: boolean("allowed").notNull(),
+  setBy: uuid("set_by")
+    .notNull()
+    .references(() => users.id),
+  reason: text("reason"),
+  createdAt,
+});

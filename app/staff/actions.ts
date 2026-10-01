@@ -27,6 +27,12 @@ import { STAFF_GRANT_SECONDS } from "@/lib/auth/policy";
  * merely that an admin was active.
  */
 
+/**
+ * Where to go once a client is opened. An allowlist, never a URL from the
+ * form: the workspace opens clients too, and wants to land back on itself.
+ */
+const RETURN_TO = { jobs: "/jobs", chat: "/chat" } as const;
+
 const chooseSchema = z.object({
   organizationId: z.uuid(),
   reason: z.string().trim().min(8).max(200),
@@ -58,12 +64,15 @@ export async function chooseClientAction(formData: FormData) {
     reason: formData.get("reason"),
   });
 
+  const returnTo = RETURN_TO[formData.get("returnTo") === "chat" ? "chat" : "jobs"];
+  const back = returnTo === "/chat" ? "/chat" : "/staff";
+
   if (!parsed.success) {
-    redirect("/staff?error=reason");
+    redirect(`${back}?error=reason`);
   }
 
   const org = await organizationById(parsed.data.organizationId);
-  if (!org || org.type !== "client") redirect("/staff?error=unknown");
+  if (!org || org.type !== "client") redirect(`${back}?error=unknown`);
 
   await createStaffGrant({
     staffUserId: ctx.userId,
@@ -76,10 +85,10 @@ export async function chooseClientAction(formData: FormData) {
   await setSessionActiveOrganization(ctx.sessionId, org.id);
 
   revalidatePath("/", "layout");
-  redirect("/jobs");
+  redirect(returnTo);
 }
 
-export async function exitClientAction() {
+export async function exitClientAction(formData?: FormData) {
   const ctx = await getSessionContext();
   if (!ctx) redirect("/auth/login");
   // Nor may somebody else give up a grant that is not theirs.
@@ -92,5 +101,5 @@ export async function exitClientAction() {
   await setSessionActiveOrganization(ctx.sessionId, null);
 
   revalidatePath("/", "layout");
-  redirect("/staff");
+  redirect(formData?.get("returnTo") === "chat" ? "/chat" : "/staff");
 }
