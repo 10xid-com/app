@@ -3,10 +3,19 @@
 One sign-in across several domains, and a job exchange between Branding Centres and its
 clients — replacing the email thread that carries that work today.
 
-**Status: deployed.** The login host and one client domain both run on Railway from this
-branch. No real DNS record has been created — the two live hosts are `up.railway.app`
-subdomains, which is enough for a genuine cross-domain test because that suffix is on the
-Public Suffix List.
+**Status: deployed.** Two Railway services build from `main`, each with a custom domain and
+a Railway address:
+
+| Service | Custom domain | Railway address | Port |
+|---|---|---|---|
+| `portal` — the login host | `login.10xid.com` | `portal-production-56c9.up.railway.app` | 8080 |
+| `portal-northstar` — a client domain | `northstar.10xconnections.com` | `portal-northstar-production.up.railway.app` | 3000 |
+
+The two custom domains are genuinely different registrable domains, which is what makes
+the cross-domain handoff a real test. As of 2026-10-01 `northstar.10xconnections.com`
+still has no certificate: its CNAME is in place, but the `_railway-verify.northstar` TXT
+record Railway asks for has not been added in Cloudflare, so browsers refuse the address
+until it is. The Railway address serves Northstar meanwhile.
 
 ## What it does
 

@@ -77,6 +77,28 @@ export async function expectSignedIn(page: Page) {
 }
 
 /**
+ * The page's own alert, not Next's.
+ *
+ * Once a page hydrates, Next adds `#__next-route-announcer__` — a visually
+ * hidden role="alert" that reads each new page's title to screen readers — so
+ * a bare getByRole("alert") finds two and fails strict mode. Every alert a
+ * test means is one the page drew.
+ */
+export function pageAlert(page: Page) {
+  return page.locator('[role="alert"]:not(#__next-route-announcer__)');
+}
+
+/**
+ * Open the account menu (the Pin), where Sign out and the signed-in address
+ * live. A no-op when it is already open, so callers need not track it.
+ */
+export async function openAccountMenu(page: Page) {
+  const pin = page.getByRole("button", { name: "Account and organization" });
+  if ((await pin.getAttribute("aria-expanded")) !== "true") await pin.click();
+  await page.getByRole("menu").waitFor();
+}
+
+/**
  * The session row the server actually stored.
  *
  * Better than reading the caps off a page: it asserts the policy that will be
@@ -193,6 +215,7 @@ export function totpCode(secretBase32: string, at = Date.now()): string {
  * exactly as a person would, then produces a code from it.
  */
 export async function passSecondFactor(page: Page): Promise<string | null> {
+  await settle(page);
   if (!page.url().includes("/auth/2fa")) return null;
 
   const start = page.getByRole("button", { name: "Start setup" });
@@ -268,6 +291,7 @@ export async function enrolAuthenticator(
 
 /** End the session without clearing the enrolment, unlike resetSignInState. */
 export async function signOut(page: Page) {
+  await openAccountMenu(page);
   await page.getByRole("button", { name: "Sign out" }).click();
   await page.waitForURL(/\/auth\/login/);
 }
@@ -286,5 +310,18 @@ export async function signIn(page: Page, email: string, next = "/") {
   await page.waitForURL(
     (url) => !url.pathname.startsWith("/auth/") || url.pathname === "/auth/2fa",
   );
+  await settle(page);
   await passSecondFactor(page);
+}
+
+/**
+ * Let a chain of redirects finish before reading where it ended.
+ *
+ * On a hydrated page a server action's redirect is followed by the client
+ * router, and the address bar can show an intermediate stop — `/chat`, say, on
+ * its way to `/auth/2fa?next=/chat` — for a moment. A test that reads
+ * page.url() in that moment decides on the wrong page.
+ */
+export async function settle(page: Page) {
+  await page.waitForLoadState("networkidle");
 }

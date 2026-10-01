@@ -5,6 +5,7 @@ import {
   resetSignInState,
   signIn,
   totpCode,
+  pageAlert,
 } from "./helpers";
 
 /**
@@ -41,7 +42,11 @@ test.describe("the staff second factor", () => {
     await page.getByRole("button", { name: "Sign in" }).click();
 
     await page.waitForURL(/\/auth\/2fa/);
-    await expect(page.getByText("Set up your authenticator")).toBeVisible();
+    // The heading, not any text: once hydrated, Next's route announcer reads
+    // the same words out from a second, hidden element.
+    await expect(
+      page.getByRole("heading", { name: "Set up your authenticator" }),
+    ).toBeVisible();
   });
 
   test("a half-signed-in staff session can reach nothing", async ({ page }) => {
@@ -80,7 +85,7 @@ test.describe("the staff second factor", () => {
     await page.getByLabel("Six-digit code").fill("000000");
     await page.getByRole("button", { name: /Confirm and continue/ }).click();
 
-    await expect(page.getByRole("alert")).toContainText("did not work");
+    await expect(pageAlert(page)).toContainText("did not work");
     expect(page.url()).toContain("/auth/2fa");
   });
 
