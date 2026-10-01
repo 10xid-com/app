@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getSessionContext } from "@/lib/auth/session";
-import { CHAT_MODEL_IDS } from "@/lib/ai/models";
+import { CHAT_CHOICES } from "@/lib/ai/models";
 import { ChatError, chatIsConfigured, startChat } from "@/lib/ai/openrouter";
 
 /**
@@ -31,7 +31,7 @@ const MAX_MESSAGE_CHARS = 20_000;
 const MAX_TOTAL_CHARS = 80_000;
 
 const bodySchema = z.object({
-  model: z.enum(CHAT_MODEL_IDS),
+  model: z.enum(CHAT_CHOICES),
   messages: z
     .array(
       z.object({
