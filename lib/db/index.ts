@@ -582,4 +582,52 @@ export async function listJobEvents(scope: Scope, jobId: string) {
   );
 }
 
+/**
+ * Find jobs by words in the title or by reference, for the workspace's
+ * read-only job tools. Scoped exactly like listJobs: the database decides
+ * which client's rows exist. `text` is matched with ILIKE and its wildcards
+ * escaped, so a model cannot widen the search by sending `%`.
+ */
+export async function searchJobs(
+  scope: Scope,
+  opts: { text?: string; status?: JobRow["status"]; limit?: number },
+) {
+  const limit = Math.min(Math.max(opts.limit ?? 10, 1), 25);
+  const text = opts.text?.trim();
+  const pattern = text ? `%${text.replace(/[\\%_]/g, (c) => `\\${c}`)}%` : null;
+  return inTenantTransaction(scope.organizationId, isSurveying(scope), (tx) =>
+    tx
+      .select({
+        id: jobs.id,
+        ref: jobs.ref,
+        title: jobs.title,
+        status: jobs.status,
+        direction: jobs.direction,
+        promisedAt: jobs.promisedAt,
+        createdAt: jobs.createdAt,
+        updatedAt: jobs.updatedAt,
+      })
+      .from(jobs)
+      .where(
+        and(
+          isNull(jobs.archivedAt),
+          opts.status ? eq(jobs.status, opts.status) : undefined,
+          pattern
+            ? sql`(${jobs.title} ILIKE ${pattern} ESCAPE '\\' OR ${jobs.ref} ILIKE ${pattern} ESCAPE '\\')`
+            : undefined,
+        ),
+      )
+      .orderBy(desc(jobs.updatedAt))
+      .limit(limit),
+  );
+}
+
+/** One job by its human reference (ROT-0042), scoped like getJob. */
+export async function getJobByRef(scope: Scope, ref: string): Promise<JobRow | null> {
+  const rows = await inTenantTransaction(scope.organizationId, isSurveying(scope), (tx) =>
+    tx.select().from(jobs).where(eq(jobs.ref, ref.toUpperCase())).limit(1),
+  );
+  return rows[0] ?? null;
+}
+
 export { and, eq };

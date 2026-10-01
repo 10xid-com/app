@@ -33,6 +33,15 @@ const MUST_BE_PROTECTED = [
   "task_claims",
   "task_grades",
   "task_events",
+  // The workspace. Conversations, runs and receipts are filtered by client
+  // AND owner; workspaces and engine policies by client.
+  "workspaces",
+  "conversations",
+  "conversation_messages",
+  "agent_runs",
+  "agent_run_receipts",
+  "conversation_context_items",
+  "engine_mode_policies",
 ];
 
 /** Read before a scope exists. Each entry needs a reason that survives review. */

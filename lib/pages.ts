@@ -241,9 +241,9 @@ export const PAGES: PageRecord[] = [
   {
     id: "chat",
     path: "/chat",
-    name: "Chat",
+    name: "Workspace",
     purpose:
-      "An AI chat box on free models through OpenRouter, and where staff land after signing in. Nothing typed into it is saved.",
+      "One client's workspace: conversations with Claude or OpenAI in Ask or Plan mode, grounded in that client's records, with a receipt for what every answer saw. Where staff land after signing in.",
     audience: "staff",
     kind: "page",
     file: "app/chat/page.tsx",
@@ -322,14 +322,14 @@ export const PAGES: PageRecord[] = [
     group: "Machinery",
   },
   {
-    id: "api.chat",
-    path: "/api/chat",
-    name: "Chat answers",
+    id: "api.workspace.messages",
+    path: "/api/workspace/conversations/[id]/messages",
+    name: "Workspace answers",
     purpose:
-      "What the chat box calls. Takes the conversation, streams the answer back as text, and refuses any session that is not staff.",
+      "Sends a message in a workspace conversation and streams the answer, its tool activity and its receipts back. Staff only; the conversation must belong to this client and this person.",
     audience: "staff",
     kind: "machinery",
-    file: "app/api/chat/route.ts",
+    file: "app/api/workspace/conversations/[id]/messages/route.ts",
     methods: ["POST"],
     group: "Machinery",
   },
