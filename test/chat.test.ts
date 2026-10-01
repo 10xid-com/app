@@ -105,7 +105,9 @@ describe("choosing a model", () => {
       vi.fn(async (_url: string, init: RequestInit) => {
         const body = JSON.parse(String(init.body)) as { model: string };
         asked.push(body.model);
-        return answers[body.model]!();
+        // A model the test did not mention is busy, so a test about two
+        // models keeps meaning the same thing however many the list holds.
+        return (answers[body.model] ?? busy)();
       }),
     );
     return asked;
@@ -178,21 +180,20 @@ describe("choosing a model", () => {
     expect(asked[0]).toBe(first);
   });
 
-  test("with both busy, the free router answers and is named as what it reached", async () => {
+  test("with every named model busy, the free router answers and is named as what it reached", async () => {
     const asked = stubFetch({
-      [first]: busy,
-      [second]: busy,
       [FREE_ROUTER]: () => answer("from somewhere", "meta-llama/llama-5-8b:free"),
     });
 
     const chat = await startChat({ model: AUTO, messages: [{ role: "user", content: "a" }] });
-    expect(asked).toEqual([first, second, FREE_ROUTER]);
+    // Every named model, in the list's order, and only then the router.
+    expect(asked).toEqual([...CHAT_MODEL_IDS, FREE_ROUTER]);
     expect(chat.model).toBe("meta-llama/llama-5-8b:free");
     expect(await collect(chat.text)).toBe("from somewhere");
   });
 
   test("with everything busy, one plain sentence rather than the last refusal", async () => {
-    stubFetch({ [first]: busy, [second]: busy, [FREE_ROUTER]: busy });
+    stubFetch({});
     await expect(
       startChat({ model: AUTO, messages: [{ role: "user", content: "a" }] }),
     ).rejects.toThrow(/Every free model is busy/);
