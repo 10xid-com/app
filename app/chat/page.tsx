@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { requireSession } from "@/lib/auth/require";
-import { CHAT_MODELS } from "@/lib/ai/models";
+import { AUTO, CHAT_MODELS, modelLabel } from "@/lib/ai/models";
 import { chatIsConfigured } from "@/lib/ai/openrouter";
 import { PortalShell } from "../portal-shell";
 import { ChatBox } from "./chat-box";
@@ -21,7 +21,14 @@ export default async function ChatPage() {
   return (
     <PortalShell email={ctx.email} isStaff>
       {chatIsConfigured() ? (
-        <ChatBox models={CHAT_MODELS.map((m) => ({ id: m.id, label: m.label }))} />
+        <ChatBox
+          models={[
+            // Auto first, so it is the default: whichever free model is
+            // answering. Picking one by hand is still there for comparing.
+            { id: AUTO, label: modelLabel(AUTO) },
+            ...CHAT_MODELS.map((m) => ({ id: m.id, label: m.label })),
+          ]}
+        />
       ) : (
         <div className="rounded-xl border border-warn/30 bg-warn/10 p-4 text-sm text-ink">
           <h1 className="text-base font-semibold">The chat is not set up yet</h1>

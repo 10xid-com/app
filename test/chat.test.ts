@@ -1,6 +1,13 @@
-import { afterEach, describe, expect, test, vi } from "vitest";
-import { CHAT_MODEL_IDS } from "@/lib/ai/models";
-import { ChatError, startChat, textFromEventStream } from "@/lib/ai/openrouter";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { AUTO, CHAT_MODEL_IDS, FREE_ROUTER } from "@/lib/ai/models";
+import {
+  ChatError,
+  attemptOrder,
+  resetModelHealth,
+  restFor,
+  startChat,
+  textFromEventStream,
+} from "@/lib/ai/openrouter";
 
 /**
  * The chat's two jobs that can go wrong without anybody noticing:
@@ -9,6 +16,8 @@ import { ChatError, startChat, textFromEventStream } from "@/lib/ai/openrouter";
  *      across two network chunks, and an error can arrive inside a 200.
  *   2. Falling over to the other free model when the chosen one is throttled,
  *      and NOT falling over when retrying cannot help (a refused key).
+ *   3. Remembering which model is busy, so "auto" starts with the one that
+ *      will answer instead of waiting on one that just said no.
  *
  * No network: fetch is replaced, and every byte the "server" sends is written
  * out below.
@@ -73,10 +82,20 @@ describe("reading the event stream", () => {
 describe("choosing a model", () => {
   const [first, second] = CHAT_MODEL_IDS;
 
+  beforeEach(resetModelHealth);
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
   });
+
+  const busy = () => Response.json({ error: { message: "busy" } }, { status: 429 });
+  const answer = (text: string, model?: string) =>
+    new Response(
+      streamOf(
+        `data: ${JSON.stringify({ model, choices: [{ delta: { content: text } }] })}\n\n`,
+        "data: [DONE]\n",
+      ),
+    );
 
   function stubFetch(answers: Record<string, () => Response>) {
     const asked: string[] = [];
@@ -136,8 +155,74 @@ describe("choosing a model", () => {
     expect(asked).toEqual([first]);
   });
 
+  test("auto remembers a busy model and starts with the one that answered", async () => {
+    const asked = stubFetch({ [first]: busy, [second]: () => answer("ok") });
+
+    const one = await startChat({ model: AUTO, messages: [{ role: "user", content: "a" }] });
+    expect(one.model).toBe(second);
+    expect(asked).toEqual([first, second]);
+
+    // The next message does not wait on the model that just said no.
+    asked.length = 0;
+    const two = await startChat({ model: AUTO, messages: [{ role: "user", content: "b" }] });
+    expect(two.model).toBe(second);
+    expect(asked).toEqual([second]);
+  });
+
+  test("a model picked by hand is still tried first, even while resting", async () => {
+    const asked = stubFetch({ [first]: busy, [second]: () => answer("ok") });
+    await startChat({ model: AUTO, messages: [{ role: "user", content: "a" }] });
+
+    asked.length = 0;
+    await startChat({ model: first, messages: [{ role: "user", content: "b" }] });
+    expect(asked[0]).toBe(first);
+  });
+
+  test("with both busy, the free router answers and is named as what it reached", async () => {
+    const asked = stubFetch({
+      [first]: busy,
+      [second]: busy,
+      [FREE_ROUTER]: () => answer("from somewhere", "meta-llama/llama-5-8b:free"),
+    });
+
+    const chat = await startChat({ model: AUTO, messages: [{ role: "user", content: "a" }] });
+    expect(asked).toEqual([first, second, FREE_ROUTER]);
+    expect(chat.model).toBe("meta-llama/llama-5-8b:free");
+    expect(await collect(chat.text)).toBe("from somewhere");
+  });
+
+  test("with everything busy, one plain sentence rather than the last refusal", async () => {
+    stubFetch({ [first]: busy, [second]: busy, [FREE_ROUTER]: busy });
+    await expect(
+      startChat({ model: AUTO, messages: [{ role: "user", content: "a" }] }),
+    ).rejects.toThrow(/Every free model is busy/);
+  });
+
   test("only free models are ever named", () => {
     // The guarantee .env.example makes: this key cannot spend credit.
-    for (const id of CHAT_MODEL_IDS) expect(id).toMatch(/:free$/);
+    for (const id of attemptOrder(AUTO)) {
+      expect(id === FREE_ROUTER || id.endsWith(":free"), id).toBe(true);
+    }
+  });
+});
+
+describe("how long a busy model rests", () => {
+  const headers = (h: Record<string, string>) => ({ headers: new Headers(h) });
+  const now = 1_000_000_000_000;
+
+  test("Retry-After, in seconds, is honoured", () => {
+    expect(restFor(headers({ "retry-after": "30" }), now)).toBe(30_000);
+  });
+
+  test("X-RateLimit-Reset, an epoch in milliseconds, is honoured", () => {
+    expect(restFor(headers({ "x-ratelimit-reset": String(now + 45_000) }), now)).toBe(45_000);
+  });
+
+  test("no hint means a minute", () => {
+    expect(restFor(null, now)).toBe(60_000);
+  });
+
+  test("a spent daily allowance is still rechecked within ten minutes", () => {
+    expect(restFor(headers({ "retry-after": "86400" }), now)).toBe(600_000);
   });
 });

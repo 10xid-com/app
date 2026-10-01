@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { AUTO, modelLabel } from "@/lib/ai/models";
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 
 /**
@@ -21,6 +22,8 @@ type Turn = {
   content: string;
   /** Assistant turns only: which model actually answered. */
   model?: string;
+  /** Assistant turns only: what the picker said when it was sent. */
+  asked?: string;
   /** Assistant turns only: the answer did not finish. */
   cutOff?: boolean;
 };
@@ -52,7 +55,6 @@ export function ChatBox({ models }: { models: Model[] }) {
   // Stop any answer still streaming if the page is left.
   useEffect(() => () => abort.current?.abort(), []);
 
-  const labelFor = (id: string) => models.find((m) => m.id === id)?.label ?? id;
 
   async function send(event?: FormEvent) {
     event?.preventDefault();
@@ -60,7 +62,7 @@ export function ChatBox({ models }: { models: Model[] }) {
     if (!text || busy) return;
 
     const history: Turn[] = [...turns, { role: "user", content: text }];
-    setTurns([...history, { role: "assistant", content: "", model }]);
+    setTurns([...history, { role: "assistant", content: "", asked: model }]);
     setDraft("");
     setError(null);
     setBusy(true);
@@ -169,7 +171,7 @@ export function ChatBox({ models }: { models: Model[] }) {
           >
             {models.map((m) => (
               <option key={m.id} value={m.id}>
-                {m.label} (free)
+                {m.id === AUTO ? "Auto — any free model" : `${m.label} (free)`}
               </option>
             ))}
           </select>
@@ -212,7 +214,15 @@ export function ChatBox({ models }: { models: Model[] }) {
                   )}
                 </div>
                 <p className="px-1 text-[11px] text-ink-faint">
-                  {labelFor(turn.model ?? "")}
+                  {turn.model ? modelLabel(turn.model) : ""}
+                  {/*
+                    Said only when a model was picked BY HAND and another one
+                    answered. In auto, whichever answered is the one that was
+                    wanted, and saying "busy" would be noise.
+                  */}
+                  {turn.model && turn.asked && turn.asked !== AUTO && turn.asked !== turn.model
+                    ? ` · ${modelLabel(turn.asked)} was busy`
+                    : ""}
                   {turn.cutOff ? " · stopped before the end" : ""}
                 </p>
               </div>

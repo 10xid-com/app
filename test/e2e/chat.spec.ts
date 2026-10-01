@@ -103,4 +103,29 @@ test.describe("chat", () => {
     await expect(page.getByText("free allowance is used up")).toBeVisible();
     await expect(page.getByLabel("Message")).toHaveValue("Summarise the brief");
   });
+
+  test("a model picked by hand that was busy is named as busy", async ({ page }) => {
+    test.skip(!process.env.OPENROUTER_API_KEY, "As above.");
+
+    await signIn(page, STAFF, "/chat");
+    await settle(page);
+    // Auto is the default; pick Qwen by hand, and have Gemma answer instead.
+    await expect(page.getByLabel("Model")).toHaveValue("auto");
+    await page.getByLabel("Model").selectOption("qwen/qwen3.8-27b:free");
+    await page.route("**/api/chat", (route) =>
+      route.fulfill({
+        status: 200,
+        headers: {
+          "Content-Type": "text/plain; charset=utf-8",
+          "X-Chat-Model": "google/gemma-4-31b-it:free",
+        },
+        body: "An answer.",
+      }),
+    );
+
+    await page.getByLabel("Message").fill("hello");
+    await page.keyboard.press("Enter");
+
+    await expect(page.getByText("Gemma 4 31B · Qwen 3.8 27B was busy")).toBeVisible();
+  });
 });
