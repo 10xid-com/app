@@ -12,10 +12,10 @@ a Railway address:
 | `portal-northstar` — a client domain | `northstar.10xconnections.com` | `portal-northstar-production.up.railway.app` | 3000 |
 
 The two custom domains are genuinely different registrable domains, which is what makes
-the cross-domain handoff a real test. As of 2026-10-01 `northstar.10xconnections.com`
-still has no certificate: its CNAME is in place, but the `_railway-verify.northstar` TXT
-record Railway asks for has not been added in Cloudflare, so browsers refuse the address
-until it is. The Railway address serves Northstar meanwhile.
+the cross-domain handoff a real test. Both carry a valid certificate. A custom domain on
+Railway needs two records in Cloudflare, not one: the CNAME that routes traffic, and a
+`_railway-verify.<name>` TXT record proving ownership. With only the CNAME, the
+certificate sits at "issuing" indefinitely and browsers refuse the address.
 
 ## What it does
 
