@@ -73,6 +73,8 @@ export async function PortalShell({
   const actingAs = ctx?.actingAs ?? null;
 
   const links = [
+    // First for staff because it is where sign-in lands them.
+    ...(isStaff ? [{ href: "/chat", label: "Chat" }] : []),
     { href: "/dashboard", label: "Dashboard" },
     { href: "/jobs", label: "Jobs" },
     { href: "/team", label: "Team" },

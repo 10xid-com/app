@@ -3,10 +3,19 @@
 One sign-in across several domains, and a job exchange between Branding Centres and its
 clients — replacing the email thread that carries that work today.
 
-**Status: deployed.** The login host and one client domain both run on Railway from this
-branch. No real DNS record has been created — the two live hosts are `up.railway.app`
-subdomains, which is enough for a genuine cross-domain test because that suffix is on the
-Public Suffix List.
+**Status: deployed.** Two Railway services build from `main`, each with a custom domain and
+a Railway address:
+
+| Service | Custom domain | Railway address | Port |
+|---|---|---|---|
+| `portal` — the login host | `login.10xid.com` | `portal-production-56c9.up.railway.app` | 8080 |
+| `portal-northstar` — a client domain | `northstar.10xconnections.com` | `portal-northstar-production.up.railway.app` | 3000 |
+
+The two custom domains are genuinely different registrable domains, which is what makes
+the cross-domain handoff a real test. Both carry a valid certificate. A custom domain on
+Railway needs two records in Cloudflare, not one: the CNAME that routes traffic, and a
+`_railway-verify.<name>` TXT record proving ownership. With only the CNAME, the
+certificate sits at "issuing" indefinitely and browsers refuse the address.
 
 ## What it does
 
@@ -85,6 +94,7 @@ Each is **inert without configuration** rather than half-working. See `.env.exam
 |---|---|
 | Email (Resend) | `RESEND_API_KEY`. Without it, development writes codes to a file and production refuses to start the flow. |
 | Google Drive | A service account with the `drive.file` scope, and one folder shared with it. The scope reaches only files the portal itself created. |
+| Staff chat (OpenRouter) | `OPENROUTER_API_KEY`. Staff land on `/chat` after signing in; it uses two free models (`lib/ai/models.ts`) and falls over to the other when one is throttled. Nothing typed is stored. Without the key the page says it is not set up. |
 
 ## Proving it
 

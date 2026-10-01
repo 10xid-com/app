@@ -6,6 +6,8 @@ import {
   latestSessionFor,
   resetSignInState,
   signIn,
+  pageAlert,
+  openAccountMenu,
 } from "./helpers";
 
 const CLIENT = "jane@rotary.test";
@@ -19,7 +21,9 @@ test.describe("sign in with an emailed code", () => {
   test("a known person signs in and lands signed in", async ({ page }) => {
     await signIn(page, CLIENT);
     await expectSignedIn(page);
-    await expect(page.getByText(CLIENT)).toBeVisible();
+    // The signed-in address lives in the account menu.
+    await openAccountMenu(page);
+    await expect(page.getByRole("menu").getByText(CLIENT)).toBeVisible();
   });
 
   test("a session lasts until it is signed out", async ({ page }) => {
@@ -104,7 +108,7 @@ test.describe("sign in with an emailed code", () => {
     await page.getByLabel("Six-digit code").fill("000000");
     await page.getByRole("button", { name: "Sign in" }).click();
 
-    await expect(page.getByRole("alert")).toContainText("did not work");
+    await expect(pageAlert(page)).toContainText("did not work");
   });
 
   test("a code works once and only once", async ({ page, context }) => {
@@ -124,7 +128,7 @@ test.describe("sign in with an emailed code", () => {
     await page.getByLabel("Six-digit code").fill(code);
     await page.getByRole("button", { name: "Sign in" }).click();
 
-    await expect(page.getByRole("alert")).toContainText("did not work");
+    await expect(pageAlert(page)).toContainText("did not work");
   });
 
   test("repeated code requests are rate limited", async ({ page }) => {
@@ -137,7 +141,12 @@ test.describe("sign in with an emailed code", () => {
       await page.goto("/auth/login");
       await page.getByLabel("Email").fill(email);
       await page.getByRole("button", { name: "Continue" }).click();
-      await page.waitForURL(/\/auth\/(verify|login)/);
+      // Wait for where the request LANDED. The form already sits on
+      // /auth/login, so a pattern that accepts it matches before the answer
+      // arrives on a hydrated page.
+      await page.waitForURL(
+        (u) => u.pathname === "/auth/verify" || u.searchParams.get("error") === "rate",
+      );
       if (page.url().includes("error=rate")) {
         sawLimit = true;
         break;
@@ -145,12 +154,13 @@ test.describe("sign in with an emailed code", () => {
     }
 
     expect(sawLimit).toBe(true);
-    await expect(page.getByRole("alert")).toContainText("Too many codes");
+    await expect(pageAlert(page)).toContainText("Too many codes");
   });
 
   test("signing out ends the session", async ({ page }) => {
     await signIn(page, CLIENT);
     await expectSignedIn(page);
+    await openAccountMenu(page);
     await page.getByRole("button", { name: "Sign out" }).click();
     await page.waitForURL(/\/auth\/login/);
 

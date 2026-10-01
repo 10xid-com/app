@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { resetSignInState, signIn } from "./helpers";
+import { resetSignInState, signIn, openAccountMenu } from "./helpers";
 
 /**
  * The dashboard and team screens.
@@ -44,6 +44,7 @@ test.describe("dashboard", () => {
       .first()
       .innerText();
 
+    await openAccountMenu(page);
     await page.getByRole("button", { name: "Sign out" }).click();
     await page.waitForURL(/\/auth\/login/);
 

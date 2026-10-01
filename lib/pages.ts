@@ -78,7 +78,7 @@ export const PAGES: PageRecord[] = [
     path: "/",
     name: "Front door",
     purpose:
-      "Decides where you belong and sends you there. Signed in to the desk, signed out to sign-in. There is no public landing page.",
+      "Decides where you belong and sends you there. Staff to the chat, everybody else to the desk, signed out to sign-in. There is no public landing page.",
     audience: "public",
     kind: "machinery",
     file: "app/page.tsx",
@@ -239,6 +239,17 @@ export const PAGES: PageRecord[] = [
     group: "Staff",
   },
   {
+    id: "chat",
+    path: "/chat",
+    name: "Chat",
+    purpose:
+      "An AI chat box on free models through OpenRouter, and where staff land after signing in. Nothing typed into it is saved.",
+    audience: "staff",
+    kind: "page",
+    file: "app/chat/page.tsx",
+    group: "Staff",
+  },
+  {
     id: "keys",
     path: "/staff/keys",
     name: "Keys",
@@ -307,6 +318,18 @@ export const PAGES: PageRecord[] = [
     audience: "public",
     kind: "machinery",
     file: "app/api/v1/jobs/route.ts",
+    methods: ["POST"],
+    group: "Machinery",
+  },
+  {
+    id: "api.chat",
+    path: "/api/chat",
+    name: "Chat answers",
+    purpose:
+      "What the chat box calls. Takes the conversation, streams the answer back as text, and refuses any session that is not staff.",
+    audience: "staff",
+    kind: "machinery",
+    file: "app/api/chat/route.ts",
     methods: ["POST"],
     group: "Machinery",
   },

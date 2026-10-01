@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { expectSignedIn, resetSignInState, signIn } from "./helpers";
+import { expectSignedIn, resetSignInState, signIn, openAccountMenu } from "./helpers";
 
 /**
  * Phase 1's first risky claim: sign in once at the login host, then land
@@ -96,6 +96,7 @@ test.describe("cross-domain sign-in", () => {
     await expectSignedIn(page);
 
     await page.goto(PRIMARY + "/");
+    await openAccountMenu(page);
     await page.getByRole("button", { name: "Sign out" }).click();
     await page.waitForURL(/\/auth\/login/);
     const signedOutAt = Date.now();
