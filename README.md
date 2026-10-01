@@ -85,6 +85,7 @@ Each is **inert without configuration** rather than half-working. See `.env.exam
 |---|---|
 | Email (Resend) | `RESEND_API_KEY`. Without it, development writes codes to a file and production refuses to start the flow. |
 | Google Drive | A service account with the `drive.file` scope, and one folder shared with it. The scope reaches only files the portal itself created. |
+| Staff chat (OpenRouter) | `OPENROUTER_API_KEY`. Staff land on `/chat` after signing in; it uses two free models (`lib/ai/models.ts`) and falls over to the other when one is throttled. Nothing typed is stored. Without the key the page says it is not set up. |
 
 ## Proving it
 
