@@ -4,10 +4,10 @@
 Phase 1 — Platform Hardening
 
 ## Current action
-Phase 1 / Recoverability — Neon ownership model inspected; next step is verify whether Neon can reproduce the restricted `portal_app` role semantics before any schema/data import.
+Phase 1 / Recoverability — Neon restricted-role creation compatibility confirmed; next step is verify transaction-local tenant-context behavior under a restricted role before any schema/data import.
 
 ## Last passed checkpoint
-Phase 1 recoverability checkpoint: Neon owner role inspected. `neondb_owner` is not superuser, but has BYPASSRLS, LOGIN, CREATEDB, and CREATEROLE; database owner is `neondb_owner`; `public` schema owner is `pg_database_owner`.
+Phase 1 recoverability checkpoint: Neon can create a login role with NOSUPERUSER, NOBYPASSRLS, NOCREATEDB, and NOCREATEROLE. Transaction rollback removed the test role cleanly.
 
 ## Confirmed findings
 - Existing `/chat` implementation is the approved Chat Boss foundation.
@@ -36,7 +36,8 @@ Phase 1 recoverability checkpoint: Neon owner role inspected. `neondb_owner` is 
 
 ## Blockers
 - No source database backup exists today.
-- Neon target role/ownership model has been partially inspected. `neondb_owner` is non-superuser but has BYPASSRLS and CREATEROLE; database owner is `neondb_owner`; `public` schema owner is `pg_database_owner`. Restricted app-role compatibility still needs proof.
+- Neon target role/ownership model has been partially inspected. `neondb_owner` is non-superuser but has BYPASSRLS and CREATEROLE; database owner is `neondb_owner`; `public` schema owner is `pg_database_owner`.
+- Neon successfully created a transactional test login role matching the intended app-role attributes: NOSUPERUSER, NOBYPASSRLS, LOGIN, NOCREATEDB, NOCREATEROLE. The transaction rollback removed the role, confirming no persistent change.
 - No migration copy or restore drill has yet been performed.
 - Neon role/ownership/grant/RLS compatibility has not yet been re-certified.
 
@@ -58,4 +59,4 @@ The copied Neon database must pass:
 8. application/database isolation tests.
 
 ## Next action
-Use the Neon SQL Editor to verify whether a non-BYPASSRLS, non-superuser login role can be created without importing schema/data. Do not grant table privileges or import anything yet.
+Verify Neon preserves the app's transaction-local tenant context (`app.org_id`, `app.user_id`, `app.is_staff`) under a restricted test role and that those settings do not leak after rollback. Do not import schema/data yet.
