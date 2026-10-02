@@ -4,10 +4,10 @@
 Phase 1 — Platform Hardening
 
 ## Current action
-Phase 1 / Recoverability — prepare controlled Railway Postgres → Neon migration plan and source-state capture before provisioning or copying data.
+Phase 1 / Recoverability — source baseline captured; next step is provision an isolated Neon migration target without changing Railway or app production configuration.
 
 ## Last passed checkpoint
-Phase 0 complete — PASS WITH ISSUES.
+Phase 1 recoverability checkpoint: Railway source baseline captured and accepted on 2026-10-02.
 
 ## Confirmed findings
 - Existing `/chat` implementation is the approved Chat Boss foundation.
@@ -27,6 +27,9 @@ Phase 0 complete — PASS WITH ISSUES.
 - Existing live Railway app role is not superuser, has no BYPASSRLS, and owns zero public tables.
 - Existing tenant isolation and workspace isolation tests are substantial and must be rerun against Neon before cutover.
 - Current Railway database has no backups/PITR.
+- Railway source baseline captured from PostgreSQL 18.6, database size 10,843,839 bytes, with 35 public tables, 20 Drizzle migration records, current table row counts, role attributes, ownership, grants, RLS flags, and 27 RLS policies.
+- All public tables are currently owned by `postgres`; `portal_app` remains non-superuser and non-BYPASSRLS.
+- Current baseline shows 2 rows in `permissions` (Phase 0 earlier observed 0), so the source dataset changed between checkpoints; the new baseline is authoritative for migration certification.
 - Existing GitHub App credential in staging is malformed and remains a later Phase 1 item.
 - Current staff account has confirmed TOTP but no recovery codes; current UI can provision them later.
 - Current staff base sessions use a 400-day/no-idle policy; review is required later in Phase 1.
@@ -55,4 +58,4 @@ The copied Neon database must pass:
 8. application/database isolation tests.
 
 ## Next action
-Capture an immutable read-only source baseline from Railway Postgres: Postgres version, database/schema sizes, migration journal, table inventory, row counts, role attributes, table ownership, grants, RLS flags, and policies. This baseline will be used to certify the Neon copy.
+Provision a new isolated Neon project/database as the migration target. Do not attach it to the application, do not change Railway, DNS, or app variables, and do not copy source data until target metadata is inspected.
