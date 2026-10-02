@@ -4,10 +4,10 @@
 Phase 1 — Platform Hardening
 
 ## Current action
-Phase 1 / Recoverability — repository migrations were applied to the isolated Neon target; committed data migrations populated the target. Source copy is paused until the migrated target is baselined and the import strategy is adjusted.
+Phase 1 / Recoverability — post-migration Neon baseline captured. Migration replay is now rejected as the copy strategy because the target journal hashes differ from the Railway source journal and committed migrations injected target-only application rows. Next step is prepare a source-authoritative logical dump/restore plan without touching Railway.
 
 ## Last passed checkpoint
-Phase 1 recoverability checkpoint: repository migrations applied successfully to Neon from commit 8bc1fd3f7a3892348c795cf3ccbef84eba651960 with bootstrap/domain/password env vars removed. However, committed migrations themselves inserted and reconciled application data, so the target is not data-empty.
+Phase 1 recoverability checkpoint: Neon post-migration baseline captured. All 35 public tables exist with expected RLS flags/policies, but migration-authored rows are present and the Neon Drizzle journal hashes differ from the Railway source journal for many migration IDs.
 
 ## Confirmed findings
 - Existing `/chat` implementation is the approved Chat Boss foundation.
@@ -36,6 +36,7 @@ Phase 1 recoverability checkpoint: repository migrations applied successfully to
 
 ## Blockers
 - Neon target currently contains migration-authored application rows; source data must not be imported on top of them until a safe reset/import sequence is selected.
+- Current repo migration hashes do not match the Railway source migration journal, so migration replay is not a source-faithful reconstruction method.
 - No source database backup exists today.
 - Neon target role/ownership model has been partially inspected. `neondb_owner` is non-superuser but has BYPASSRLS and CREATEROLE; database owner is `neondb_owner`; `public` schema owner is `pg_database_owner`.
 - Neon successfully created a transactional test login role matching the intended app-role attributes: NOSUPERUSER, NOBYPASSRLS, LOGIN, NOCREATEDB, NOCREATEROLE. The transaction rollback removed the role, confirming no persistent change.
@@ -43,6 +44,8 @@ Phase 1 recoverability checkpoint: repository migrations applied successfully to
 - Neon successfully preserved transaction-local custom settings `app.org_id`, `app.user_id`, and `app.is_staff` while running as a restricted role. After rollback, the settings were empty and the temporary role no longer existed.
 - Neon successfully enforced an RLS policy bound to `app.org_id` under a restricted app-like role: one same-tenant row visible, cross-tenant row count zero; rollback removed all test objects.
 - Applying repository migrations to an empty Neon database is not schema-only. Migration 0012 contains committed application data and creates up to 8 organizations, 8 users, and 8 memberships; later migrations audit/reconcile some of that data. Therefore a naïve source data import onto the migrated target risks uniqueness/PK conflicts and must not proceed until target state is baselined and the copy method is adjusted.
+- Neon post-migration counts include organizations=8, users=8, user_emails=8, memberships=8, permissions=1, task_time_bands=3, while most other tables are empty.
+- The Neon migration journal contains 20 entries, but its hashes differ from the Railway source journal for many IDs (for example IDs 1-3 and 5-20). This proves the repository migration files have changed since the Railway database originally applied them. Replaying current migrations cannot be used to reconstruct the Railway source exactly.
 - No migration copy or restore drill has yet been performed.
 - Neon role/ownership/grant/RLS compatibility has not yet been re-certified.
 
@@ -64,4 +67,4 @@ The copied Neon database must pass:
 8. application/database isolation tests.
 
 ## Next action
-Capture a read-only post-migration baseline of the Neon target: table row counts, migration journal, owners, RLS flags, and policies. Compare it with the Railway source baseline before selecting the data-copy/reset method.
+Prepare and validate a logical dump command against the Railway source that captures schema, data, policies, grants, sequences, functions, triggers, and the Drizzle journal while excluding role passwords/secrets and without changing the source. Do not restore it yet.
