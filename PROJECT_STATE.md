@@ -34,6 +34,11 @@ Phase 1 recoverability checkpoint: Railway source logical dump created successfu
 - Current staff account has confirmed TOTP but no recovery codes; current UI can provision them later.
 - Current staff base sessions use a 400-day/no-idle policy; review is required later in Phase 1.
 
+## Competitor research engine in the Railway database (added 2026-10-02 by the research-engine work)
+- 2026-10-02, about 21:15-21:27 UTC, after the Railway logical dump: a separate Railway service `research-engine` (repo `10xid-com/research-engine`) was added to the project. It created one login, `research_engine` (NOSUPERUSER, NOCREATEDB, NOCREATEROLE), and one schema, `research`, owned by that login, holding 19 tables and 22,562 rows (roughly 50 MB). No `public` object, grant, policy, role or portal variable was changed. `research_engine` can read no table outside `research`. The portal and Postgres services were not redeployed by that work.
+- The source baseline and the existing dump predate this and do not include it. Until it is removed, any new dump or verification of the Railway source must exclude schema `research` (`pg_dump --exclude-schema=research`) or account for it. The role `research_engine` is cluster-level and is not in any dump.
+- The research engine is out of scope for the portal's Neon migration. Paolo's direction (2026-10-02) is to move its data to a separate database of its own on Neon and then remove schema `research` and role `research_engine` from Railway, restoring the source to its baseline. That removal has not happened yet and needs Paolo's approval.
+
 ## Blockers
 - Neon target currently contains migration-authored application rows; source data must not be imported on top of them until a safe reset/import sequence is selected.
 - Current repo migration hashes do not match the Railway source migration journal, so migration replay is not a source-faithful reconstruction method.
