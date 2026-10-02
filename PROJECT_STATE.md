@@ -4,10 +4,10 @@
 Phase 1 — Platform Hardening
 
 ## Current action
-Phase 1 / Recoverability — source-authoritative Railway logical dump created successfully. Next step is create a separate empty Neon restore database so the dump can be restored without touching the existing Neon rehearsal database or Railway.
+Phase 1 / Recoverability — separate Neon restore database `railway_restore_test` created. Next step is verify the persistent `portal_app` role attributes before restoring the Railway dump.
 
 ## Last passed checkpoint
-Phase 1 recoverability checkpoint: Railway source logical dump created successfully on PostgreSQL 18.6. Custom-format archive is 178 KB with 420 TOC entries and includes the Drizzle journal, public tables/data, functions, triggers, ACLs, policies, and RLS metadata.
+Phase 1 recoverability checkpoint: separate empty Neon database `railway_restore_test` created inside the isolated migration project. Railway remains untouched and no app variables or DNS were changed.
 
 ## Confirmed findings
 - Existing `/chat` implementation is the approved Chat Boss foundation.
@@ -75,4 +75,4 @@ The copied Neon database must pass:
 8. application/database isolation tests.
 
 ## Next action
-Create a separate empty Neon database named `railway_restore_test` inside the migration project. Do not restore into the existing `neondb` database and do not change Railway or app variables.
+Verify the actual persistent `portal_app` role in the Neon project is LOGIN, NOSUPERUSER, NOBYPASSRLS, NOCREATEDB, and NOCREATEROLE before restoring ACLs/policies from the Railway dump.
