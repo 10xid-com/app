@@ -4,10 +4,10 @@
 Phase 1 — Platform Hardening
 
 ## Current action
-Phase 1 / Recoverability — post-migration Neon baseline captured. Migration replay is now rejected as the copy strategy because the target journal hashes differ from the Railway source journal and committed migrations injected target-only application rows. Next step is prepare a source-authoritative logical dump/restore plan without touching Railway.
+Phase 1 / Recoverability — source-authoritative Railway logical dump created successfully. Next step is create a separate empty Neon restore database so the dump can be restored without touching the existing Neon rehearsal database or Railway.
 
 ## Last passed checkpoint
-Phase 1 recoverability checkpoint: Neon post-migration baseline captured. All 35 public tables exist with expected RLS flags/policies, but migration-authored rows are present and the Neon Drizzle journal hashes differ from the Railway source journal for many migration IDs.
+Phase 1 recoverability checkpoint: Railway source logical dump created successfully on PostgreSQL 18.6. Custom-format archive is 178 KB with 420 TOC entries and includes the Drizzle journal, public tables/data, functions, triggers, ACLs, policies, and RLS metadata.
 
 ## Confirmed findings
 - Existing `/chat` implementation is the approved Chat Boss foundation.
@@ -37,6 +37,9 @@ Phase 1 recoverability checkpoint: Neon post-migration baseline captured. All 35
 ## Blockers
 - Neon target currently contains migration-authored application rows; source data must not be imported on top of them until a safe reset/import sequence is selected.
 - Current repo migration hashes do not match the Railway source migration journal, so migration replay is not a source-faithful reconstruction method.
+- A source-authoritative custom-format pg_dump was created from Railway on 2026-10-02. The archive reports PostgreSQL 18.6 source/dumper versions, 420 TOC entries, and includes the Drizzle migration journal plus public data and security objects.
+- pg_dump does not include cluster roles themselves; `portal_app` must exist separately on the Neon target before restoring ACLs/policies that reference it.
+- Source object ownership is recorded as `postgres`; on Neon we should restore with ownership suppressed and keep object ownership under the Neon owner while preserving the restricted non-owner `portal_app` separation.
 - No source database backup exists today.
 - Neon target role/ownership model has been partially inspected. `neondb_owner` is non-superuser but has BYPASSRLS and CREATEROLE; database owner is `neondb_owner`; `public` schema owner is `pg_database_owner`.
 - Neon successfully created a transactional test login role matching the intended app-role attributes: NOSUPERUSER, NOBYPASSRLS, LOGIN, NOCREATEDB, NOCREATEROLE. The transaction rollback removed the role, confirming no persistent change.
@@ -67,4 +70,4 @@ The copied Neon database must pass:
 8. application/database isolation tests.
 
 ## Next action
-Prepare and validate a logical dump command against the Railway source that captures schema, data, policies, grants, sequences, functions, triggers, and the Drizzle journal while excluding role passwords/secrets and without changing the source. Do not restore it yet.
+Create a separate empty Neon database named `railway_restore_test` inside the migration project. Do not restore into the existing `neondb` database and do not change Railway or app variables.
