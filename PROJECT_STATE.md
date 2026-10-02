@@ -4,10 +4,10 @@
 Phase 1 — Platform Hardening
 
 ## Current action
-Phase 1 / Recoverability — source baseline captured; next step is provision an isolated Neon migration target without changing Railway or app production configuration.
+Phase 1 / Recoverability — isolated Neon target provisioned; next step is inspect Neon role/ownership capabilities before any data copy.
 
 ## Last passed checkpoint
-Phase 1 recoverability checkpoint: Railway source baseline captured and accepted on 2026-10-02.
+Phase 1 recoverability checkpoint: isolated Neon target provisioned on Free tier with PostgreSQL 18 and a 6-hour restore window.
 
 ## Confirmed findings
 - Existing `/chat` implementation is the approved Chat Boss foundation.
@@ -35,8 +35,8 @@ Phase 1 recoverability checkpoint: Railway source baseline captured and accepted
 - Current staff base sessions use a 400-day/no-idle policy; review is required later in Phase 1.
 
 ## Blockers
-- Neon target is not yet provisioned.
 - No source database backup exists today.
+- Neon target exists but has not yet been inspected for role attributes, ownership semantics, grants, RLS behavior, or transaction-local tenant context.
 - No migration copy or restore drill has yet been performed.
 - Neon role/ownership/grant/RLS compatibility has not yet been re-certified.
 
@@ -58,4 +58,4 @@ The copied Neon database must pass:
 8. application/database isolation tests.
 
 ## Next action
-Provision a new isolated Neon project/database as the migration target. Do not attach it to the application, do not change Railway, DNS, or app variables, and do not copy source data until target metadata is inspected.
+Inspect the empty Neon target's PostgreSQL role/ownership capabilities from the Neon SQL Editor before importing any Railway data.
