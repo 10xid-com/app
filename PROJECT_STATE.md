@@ -4,10 +4,10 @@
 Phase 1 — Platform Hardening
 
 ## Current action
-Phase 1 / Recoverability — Neon restricted-role creation compatibility confirmed; next step is verify transaction-local tenant-context behavior under a restricted role before any schema/data import.
+Phase 1 / Recoverability — direct SET ROLE from `neondb_owner` to a newly created restricted role is not implicitly permitted; next step is test transaction-local tenant context using an explicit temporary membership grant, all inside one rolled-back transaction.
 
 ## Last passed checkpoint
-Phase 1 recoverability checkpoint: Neon can create a login role with NOSUPERUSER, NOBYPASSRLS, NOCREATEDB, and NOCREATEROLE. Transaction rollback removed the test role cleanly.
+Phase 1 recoverability checkpoint: Neon can create a restricted login role, but `neondb_owner` cannot SET ROLE to it unless membership/SET permission is explicitly granted. The failed test rolled back with no persistent role.
 
 ## Confirmed findings
 - Existing `/chat` implementation is the approved Chat Boss foundation.
@@ -38,6 +38,7 @@ Phase 1 recoverability checkpoint: Neon can create a login role with NOSUPERUSER
 - No source database backup exists today.
 - Neon target role/ownership model has been partially inspected. `neondb_owner` is non-superuser but has BYPASSRLS and CREATEROLE; database owner is `neondb_owner`; `public` schema owner is `pg_database_owner`.
 - Neon successfully created a transactional test login role matching the intended app-role attributes: NOSUPERUSER, NOBYPASSRLS, LOGIN, NOCREATEDB, NOCREATEROLE. The transaction rollback removed the role, confirming no persistent change.
+- `neondb_owner` does not automatically have SET ROLE permission to a role it creates. An explicit membership grant is required for SQL-editor impersonation tests; this is a test-harness detail, not an app-runtime requirement because the app will connect directly as the restricted role.
 - No migration copy or restore drill has yet been performed.
 - Neon role/ownership/grant/RLS compatibility has not yet been re-certified.
 
@@ -59,4 +60,4 @@ The copied Neon database must pass:
 8. application/database isolation tests.
 
 ## Next action
-Verify Neon preserves the app's transaction-local tenant context (`app.org_id`, `app.user_id`, `app.is_staff`) under a restricted test role and that those settings do not leak after rollback. Do not import schema/data yet.
+Within a single transaction, create a restricted test role, grant `neondb_owner` SET permission on that role, SET ROLE into it, verify `app.org_id`, `app.user_id`, and `app.is_staff` transaction-local settings, then ROLLBACK and confirm the role is gone.
