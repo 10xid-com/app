@@ -4,10 +4,10 @@
 Phase 1 — Platform Hardening
 
 ## Current action
-Phase 1 / Recoverability — isolated Neon target provisioned; next step is inspect Neon role/ownership capabilities before any data copy.
+Phase 1 / Recoverability — Neon ownership model inspected; next step is verify whether Neon can reproduce the restricted `portal_app` role semantics before any schema/data import.
 
 ## Last passed checkpoint
-Phase 1 recoverability checkpoint: isolated Neon target provisioned on Free tier with PostgreSQL 18 and a 6-hour restore window.
+Phase 1 recoverability checkpoint: Neon owner role inspected. `neondb_owner` is not superuser, but has BYPASSRLS, LOGIN, CREATEDB, and CREATEROLE; database owner is `neondb_owner`; `public` schema owner is `pg_database_owner`.
 
 ## Confirmed findings
 - Existing `/chat` implementation is the approved Chat Boss foundation.
@@ -36,7 +36,7 @@ Phase 1 recoverability checkpoint: isolated Neon target provisioned on Free tier
 
 ## Blockers
 - No source database backup exists today.
-- Neon target exists but has not yet been inspected for role attributes, ownership semantics, grants, RLS behavior, or transaction-local tenant context.
+- Neon target role/ownership model has been partially inspected. `neondb_owner` is non-superuser but has BYPASSRLS and CREATEROLE; database owner is `neondb_owner`; `public` schema owner is `pg_database_owner`. Restricted app-role compatibility still needs proof.
 - No migration copy or restore drill has yet been performed.
 - Neon role/ownership/grant/RLS compatibility has not yet been re-certified.
 
@@ -58,4 +58,4 @@ The copied Neon database must pass:
 8. application/database isolation tests.
 
 ## Next action
-Inspect the empty Neon target's PostgreSQL role/ownership capabilities from the Neon SQL Editor before importing any Railway data.
+Use the Neon SQL Editor to verify whether a non-BYPASSRLS, non-superuser login role can be created without importing schema/data. Do not grant table privileges or import anything yet.
