@@ -4,10 +4,10 @@
 Phase 1 — Platform Hardening
 
 ## Current action
-Phase 1 / Recoverability — Neon restricted-role RLS enforcement is confirmed; next step is inspect the repository's migration/role bootstrap assumptions and choose the safest schema/data import sequence before copying any Railway data.
+Phase 1 / Recoverability — repository migrations were applied to the isolated Neon target; committed data migrations populated the target. Source copy is paused until the migrated target is baselined and the import strategy is adjusted.
 
 ## Last passed checkpoint
-Phase 1 recoverability checkpoint: Neon RLS enforcement passed under a non-owner, non-superuser, non-BYPASSRLS app-like role. Same-tenant row was visible, cross-tenant row was hidden, and the rolled-back test left no table or role behind.
+Phase 1 recoverability checkpoint: repository migrations applied successfully to Neon from commit 8bc1fd3f7a3892348c795cf3ccbef84eba651960 with bootstrap/domain/password env vars removed. However, committed migrations themselves inserted and reconciled application data, so the target is not data-empty.
 
 ## Confirmed findings
 - Existing `/chat` implementation is the approved Chat Boss foundation.
@@ -35,12 +35,14 @@ Phase 1 recoverability checkpoint: Neon RLS enforcement passed under a non-owner
 - Current staff base sessions use a 400-day/no-idle policy; review is required later in Phase 1.
 
 ## Blockers
+- Neon target currently contains migration-authored application rows; source data must not be imported on top of them until a safe reset/import sequence is selected.
 - No source database backup exists today.
 - Neon target role/ownership model has been partially inspected. `neondb_owner` is non-superuser but has BYPASSRLS and CREATEROLE; database owner is `neondb_owner`; `public` schema owner is `pg_database_owner`.
 - Neon successfully created a transactional test login role matching the intended app-role attributes: NOSUPERUSER, NOBYPASSRLS, LOGIN, NOCREATEDB, NOCREATEROLE. The transaction rollback removed the role, confirming no persistent change.
 - `neondb_owner` does not automatically have SET ROLE permission to a role it creates. An explicit membership grant is required for SQL-editor impersonation tests; this is a test-harness detail, not an app-runtime requirement because the app will connect directly as the restricted role.
 - Neon successfully preserved transaction-local custom settings `app.org_id`, `app.user_id`, and `app.is_staff` while running as a restricted role. After rollback, the settings were empty and the temporary role no longer existed.
 - Neon successfully enforced an RLS policy bound to `app.org_id` under a restricted app-like role: one same-tenant row visible, cross-tenant row count zero; rollback removed all test objects.
+- Applying repository migrations to an empty Neon database is not schema-only. Migration 0012 contains committed application data and creates up to 8 organizations, 8 users, and 8 memberships; later migrations audit/reconcile some of that data. Therefore a naïve source data import onto the migrated target risks uniqueness/PK conflicts and must not proceed until target state is baselined and the copy method is adjusted.
 - No migration copy or restore drill has yet been performed.
 - Neon role/ownership/grant/RLS compatibility has not yet been re-certified.
 
@@ -62,4 +64,4 @@ The copied Neon database must pass:
 8. application/database isolation tests.
 
 ## Next action
-Inspect the repo migrations and bootstrap path for role creation, ownership, grants, extensions, and schema journal assumptions, then define the exact Neon import order. Do not copy Railway data until that inspection is complete.
+Capture a read-only post-migration baseline of the Neon target: table row counts, migration journal, owners, RLS flags, and policies. Compare it with the Railway source baseline before selecting the data-copy/reset method.
