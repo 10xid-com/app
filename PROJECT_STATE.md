@@ -4,10 +4,10 @@
 Phase 1 — Platform Hardening
 
 ## Current action
-Phase 1 / Recoverability — Neon transaction-local tenant context is confirmed; next step is prove RLS enforcement under a restricted app-like role on Neon before importing any schema or data.
+Phase 1 / Recoverability — Neon restricted-role RLS enforcement is confirmed; next step is inspect the repository's migration/role bootstrap assumptions and choose the safest schema/data import sequence before copying any Railway data.
 
 ## Last passed checkpoint
-Phase 1 recoverability checkpoint: Neon preserves transaction-local `app.org_id`, `app.user_id`, and `app.is_staff` settings under a restricted app-like role, and those settings clear after rollback. The temporary role was fully removed.
+Phase 1 recoverability checkpoint: Neon RLS enforcement passed under a non-owner, non-superuser, non-BYPASSRLS app-like role. Same-tenant row was visible, cross-tenant row was hidden, and the rolled-back test left no table or role behind.
 
 ## Confirmed findings
 - Existing `/chat` implementation is the approved Chat Boss foundation.
@@ -40,6 +40,7 @@ Phase 1 recoverability checkpoint: Neon preserves transaction-local `app.org_id`
 - Neon successfully created a transactional test login role matching the intended app-role attributes: NOSUPERUSER, NOBYPASSRLS, LOGIN, NOCREATEDB, NOCREATEROLE. The transaction rollback removed the role, confirming no persistent change.
 - `neondb_owner` does not automatically have SET ROLE permission to a role it creates. An explicit membership grant is required for SQL-editor impersonation tests; this is a test-harness detail, not an app-runtime requirement because the app will connect directly as the restricted role.
 - Neon successfully preserved transaction-local custom settings `app.org_id`, `app.user_id`, and `app.is_staff` while running as a restricted role. After rollback, the settings were empty and the temporary role no longer existed.
+- Neon successfully enforced an RLS policy bound to `app.org_id` under a restricted app-like role: one same-tenant row visible, cross-tenant row count zero; rollback removed all test objects.
 - No migration copy or restore drill has yet been performed.
 - Neon role/ownership/grant/RLS compatibility has not yet been re-certified.
 
@@ -61,4 +62,4 @@ The copied Neon database must pass:
 8. application/database isolation tests.
 
 ## Next action
-Within a single rolled-back transaction, create an owner-owned test table, enable RLS, create a tenant policy bound to `app.org_id`, grant the restricted test role access, and prove same-tenant visibility plus cross-tenant denial. Do not import source schema/data yet.
+Inspect the repo migrations and bootstrap path for role creation, ownership, grants, extensions, and schema journal assumptions, then define the exact Neon import order. Do not copy Railway data until that inspection is complete.
