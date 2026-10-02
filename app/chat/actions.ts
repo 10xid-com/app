@@ -15,7 +15,19 @@ import {
   withheldEngineModes,
 } from "@/lib/db/workspace";
 import { defaultMode, modeOptions } from "@/lib/ai/engine/registry";
+import {
+  AlreadyLinkedError,
+  getLinkedRepository,
+  linkRepository,
+  setConversationRepository,
+  unlinkRepository,
+} from "@/lib/db/repositories";
+import { githubApp, readerFor } from "@/lib/repo";
+import { checkBranch, checkPath } from "@/lib/repo/policy";
+import { RepoError } from "@/lib/repo/types";
 import { workspaceAccess } from "@/lib/workspace/access";
+import { bindRepository } from "@/lib/workspace/bind";
+import { contextRef } from "@/lib/workspace/repo-tools";
 
 /**
  * The workspace's writes. Each one re-derives who is asking from the session
@@ -87,4 +99,94 @@ export async function archiveConversationAction(formData: FormData) {
   const conversationId = id.parse(formData.get("conversationId"));
   await archiveConversation(access.owner, conversationId);
   redirect("/chat");
+}
+
+/**
+ * Link a repository the GitHub App can see to the client in scope. The form
+ * names GitHub's repository id only; installation, owner and name are taken
+ * from GitHub's own answer, never from the form.
+ */
+export async function linkRepositoryAction(formData: FormData) {
+  const access = await requireAccess();
+  const back = backTo(formData);
+  const externalId = Number(formData.get("externalId"));
+  const app = githubApp();
+  if (!app || !Number.isSafeInteger(externalId) || externalId <= 0) redirect(`${back}&error=repo`);
+  let found;
+  try {
+    found = (await app.listAccessibleRepositories()).find((r) => r.externalId === externalId);
+  } catch (err) {
+    if (!(err instanceof RepoError)) throw err;
+  }
+  if (!found) redirect(`${back}&error=repo`);
+  try {
+    await linkRepository(access.owner, found);
+  } catch (err) {
+    if (err instanceof AlreadyLinkedError) redirect(`${back}&error=linked`);
+    throw err;
+  }
+  revalidatePath("/chat");
+  redirect(back);
+}
+
+export async function unlinkRepositoryAction(formData: FormData) {
+  const access = await requireAccess();
+  await unlinkRepository(access.owner, id.parse(formData.get("repositoryId")));
+  revalidatePath("/chat");
+  redirect(backTo(formData));
+}
+
+/** Point the conversation at a linked repository and one of its branches, or at none. */
+export async function setRepositoryAction(formData: FormData) {
+  const access = await requireAccess();
+  const conversationId = id.parse(formData.get("conversationId"));
+  const back = `/chat?c=${conversationId}`;
+  const repositoryId = String(formData.get("repositoryId") ?? "");
+  if (!repositoryId) {
+    await setConversationRepository(access.owner, conversationId, null, null);
+    revalidatePath("/chat");
+    return;
+  }
+  const row = await getLinkedRepository(access.owner, repositoryId);
+  if (!row) redirect(`${back}&error=repo`);
+  const requested = String(formData.get("branch") ?? "") || row.defaultBranch;
+  const branch = checkBranch(requested);
+  if (!branch.ok) redirect(`${back}&error=branch`);
+  // The branch must exist now; a typo would otherwise fail on the next message.
+  const reader = readerFor(row);
+  if (reader && branch.branch !== row.defaultBranch) {
+    const branches = await reader.listBranches().catch(() => [] as string[]);
+    if (!branches.includes(branch.branch)) redirect(`${back}&error=branch`);
+  }
+  await setConversationRepository(access.owner, conversationId, row.id, branch.branch);
+  revalidatePath("/chat");
+}
+
+/** Add a file or folder of the conversation's repository to its context. */
+export async function addRepoContextAction(formData: FormData) {
+  const access = await requireAccess();
+  const conversationId = id.parse(formData.get("conversationId"));
+  const back = `/chat?c=${conversationId}`;
+  const kind = z.enum(["file", "folder"]).parse(formData.get("kind"));
+  const checked = checkPath(formData.get("path"));
+  if (!checked.ok) redirect(`${back}&error=path`);
+  const conversation = await getConversation(access.owner, conversationId);
+  if (!conversation) redirect("/chat");
+  const binding = await bindRepository(access.owner, conversation);
+  if ("error" in binding || !binding.bound) redirect(`${back}&error=repo`);
+  const { bound } = binding;
+  try {
+    if (kind === "file") await bound.reader.readFile(bound.snap, checked.path, { start: 1, end: 1 });
+    else await bound.reader.listDirectory(bound.snap, checked.path);
+  } catch (err) {
+    if (err instanceof RepoError) redirect(`${back}&error=path`);
+    throw err;
+  }
+  await addContextItem(access.owner, conversationId, { kind, ref: contextRef(bound.row.id, checked.path) });
+  revalidatePath("/chat");
+}
+
+function backTo(formData: FormData) {
+  const c = formData.get("conversationId");
+  return typeof c === "string" && id.safeParse(c).success ? `/chat?c=${c}` : "/chat?";
 }

@@ -1,4 +1,5 @@
 import {
+  bigint,
   bigserial,
   boolean,
   char,
@@ -1393,6 +1394,9 @@ export const conversations = pgTable("conversations", {
   title: text("title").notNull(),
   mode: conversationMode("mode").notNull().default("ask"),
   engineMode: text("engine_mode").notNull(),
+  /** 0019: the repository and branch this conversation is about. */
+  repositoryId: uuid("repository_id"),
+  branch: text("branch"),
   createdAt,
   updatedAt,
   archivedAt: timestamp("archived_at", { withTimezone: true }),
@@ -1437,6 +1441,10 @@ export const agentRuns = pgTable("agent_runs", {
   error: text("error"),
   inputTokens: integer("input_tokens"),
   outputTokens: integer("output_tokens"),
+  /** 0019: which repository, branch and commit the run read. */
+  repositoryId: uuid("repository_id"),
+  branch: text("branch"),
+  commitSha: text("commit_sha"),
   startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
   finishedAt: timestamp("finished_at", { withTimezone: true }),
 });
@@ -1488,4 +1496,27 @@ export const engineModePolicies = pgTable("engine_mode_policies", {
     .references(() => users.id),
   reason: text("reason"),
   createdAt,
+});
+
+/**
+ * 0019: which client a GitHub repository belongs to. The link is the
+ * authorisation — the GitHub App can see what it is installed on; a client may
+ * see only what is linked to it. One live link per repository, across clients.
+ */
+export const repositories = pgTable("repositories", {
+  id: uuid("id").primaryKey(),
+  organizationId: uuid("organization_id")
+    .notNull()
+    .references(() => organizations.id),
+  provider: text("provider").notNull().default("github"),
+  installationId: bigint("installation_id", { mode: "number" }).notNull(),
+  externalId: bigint("external_id", { mode: "number" }).notNull(),
+  owner: text("owner").notNull(),
+  name: text("name").notNull(),
+  defaultBranch: text("default_branch").notNull(),
+  linkedBy: uuid("linked_by")
+    .notNull()
+    .references(() => users.id),
+  linkedAt: timestamp("linked_at", { withTimezone: true }).notNull().defaultNow(),
+  unlinkedAt: timestamp("unlinked_at", { withTimezone: true }),
 });

@@ -13,7 +13,23 @@ import {
   withheldEngineModes,
   type NewReceipt,
 } from "@/lib/db/workspace";
+import { listLinkedRepositories } from "@/lib/db/repositories";
+import { addContextItem } from "@/lib/db/workspace";
+import type { ReaderFactory } from "@/lib/repo";
+import { checkPath, LIMITS } from "@/lib/repo/policy";
+import { RepoError } from "@/lib/repo/types";
 import type { WorkspaceAccess } from "./access";
+import { bindRepository } from "./bind";
+import { parseMentions } from "./mentions";
+import {
+  contextRef,
+  fileReceipt,
+  fullName,
+  numbered,
+  parseContextRef,
+  REPO_PREAMBLE,
+  repoTools,
+} from "./repo-tools";
 import { COMMAND_SPECS, MODE_SPECS, type CommandId } from "./commands";
 import { describeJob, jobTools } from "./tools";
 import type { WireEvent } from "./wire";
@@ -48,6 +64,8 @@ export async function* runTurn(input: {
   signal?: AbortSignal;
   /** For tests: the providers' network. */
   fetch?: typeof fetch;
+  /** For tests: how a linked repository is read. */
+  readerFor?: ReaderFactory;
 }): AsyncGenerator<WireEvent> {
   const { access, command } = input;
   const owner = access.owner;
@@ -68,10 +86,21 @@ export async function* runTurn(input: {
     return;
   }
 
+  // The repository, resolved to one commit before anything is sent, so every
+  // read in this answer is of the same snapshot — and a repository that cannot
+  // be reached refuses the turn rather than producing an ungrounded answer.
+  const binding = await bindRepository(owner, conversation, input.readerFor);
+  if ("error" in binding) {
+    yield { type: "error", message: binding.error };
+    return;
+  }
+  const bound = binding.bound;
+
   const withheld = await withheldEngineModes(owner);
   const contextItems = await listContextItems(owner, conversation.id);
+  const mentions = bound ? parseMentions(input.content) : [];
   const resolved = engineFor(conversation.engineMode, withheld, {
-    hasContext: contextItems.length > 0 || !access.client.isHouse,
+    hasContext: contextItems.length > 0 || mentions.length > 0 || bound !== null || !access.client.isHouse,
     fetch: input.fetch,
   });
   if ("error" in resolved) {
@@ -93,6 +122,9 @@ export async function* runTurn(input: {
     engineMode: spec.id,
     provider: engine.provider,
     model: engine.model,
+    repositoryId: bound?.row.id ?? null,
+    branch: bound?.snap.branch ?? null,
+    commitSha: bound?.snap.commitSha ?? null,
   });
   yield {
     type: "run",
@@ -105,6 +137,9 @@ export async function* runTurn(input: {
     mode,
     command,
     client: access.client,
+    repository: bound
+      ? { id: bound.row.id, name: fullName(bound.row), branch: bound.snap.branch, commitSha: bound.snap.commitSha }
+      : null,
   };
 
   // 3. Receipts, written as they happen.
@@ -115,22 +150,83 @@ export async function* runTurn(input: {
     const batch = pending.splice(0);
     await addReceipts(owner, run.id, batch);
     for (const r of batch) {
-      yield { type: "receipt", receipt: { kind: r.kind, label: r.label, ref: r.ref ?? null, sentToProvider: r.sentToProvider } };
+      yield {
+        type: "receipt",
+        receipt: { kind: r.kind, label: r.label, ref: r.ref ?? null, sentToProvider: r.sentToProvider, detail: r.detail ?? null },
+      };
     }
   }
 
-  // Context the person put in on purpose.
+  // @path and @folder:path in the message become context, kept with the
+  // conversation — but only paths that exist and may be read.
+  const items = [...contextItems];
+  if (bound) {
+    for (const mention of mentions) {
+      const checked = checkPath(mention.path);
+      if (!checked.ok) {
+        record({ kind: "warning", label: `@${mention.path} was not added: ${checked.reason}`, sentToProvider: false });
+        continue;
+      }
+      const m = { kind: mention.kind, path: checked.path };
+      const ref = contextRef(bound.row.id, m.path);
+      if (items.some((i) => i.kind === m.kind && i.ref === ref)) continue;
+      try {
+        if (m.kind === "file") await bound.reader.readFile(bound.snap, m.path, { start: 1, end: 1 });
+        else await bound.reader.listDirectory(bound.snap, m.path);
+      } catch (err) {
+        if (!(err instanceof RepoError)) throw err;
+        record({ kind: "warning", label: `@${m.kind === "folder" ? "folder:" : ""}${m.path} was not added: ${err.message}`, sentToProvider: false });
+        continue;
+      }
+      await addContextItem(owner, conversation.id, { kind: m.kind, ref });
+      items.push({ kind: m.kind, ref } as (typeof items)[number]);
+    }
+  }
+
+  // Context the person put in on purpose. Repository files send their first
+  // lines only; the model reads further with its tools, and each read is a receipt.
   const contextBlocks: string[] = [];
-  for (const item of contextItems) {
+  for (const item of items) {
     if (item.kind === "job") {
       const text = await describeJob(access.scope, item.ref);
       contextBlocks.push(text);
       record({ kind: "job", label: text.split("\n")[0]!, ref: item.ref, sentToProvider: true });
+      continue;
+    }
+    const parsed = parseContextRef(item.ref);
+    if (!parsed) continue;
+    if (!bound || parsed.repositoryId !== bound.row.id) {
+      record({ kind: "warning", label: `${parsed.path} is from another repository and was not sent.`, sentToProvider: false });
+      continue;
+    }
+    try {
+      if (item.kind === "file") {
+        const slice = await bound.reader.readFile(bound.snap, parsed.path, { start: 1, end: LIMITS.contextHeadLines });
+        contextBlocks.push(REPO_PREAMBLE + numbered(slice));
+        record(fileReceipt(bound, slice, true));
+      } else {
+        const entries = await bound.reader.listDirectory(bound.snap, parsed.path);
+        contextBlocks.push(
+          `${REPO_PREAMBLE}Folder ${parsed.path || "/"}:\n` +
+            entries.map((e) => `${e.type === "dir" ? "dir " : "file"} ${e.path}${e.secret ? " [secret — not readable]" : ""}`).join("\n"),
+        );
+        record({
+          kind: "folder",
+          label: `${parsed.path || "/"} @ ${bound.snap.commitSha.slice(0, 7)}`,
+          ref: item.ref,
+          detail: { repository: fullName(bound.row), branch: bound.snap.branch, commitSha: bound.snap.commitSha, entries: entries.length },
+          sentToProvider: true,
+        });
+      }
+    } catch (err) {
+      if (!(err instanceof RepoError)) throw err;
+      record({ kind: "warning", label: `${parsed.path} could not be read: ${err.message}`, sentToProvider: false });
     }
   }
 
   const canUseTools = engine.supports("tool_calling");
-  const tools = canUseTools ? jobTools(access.scope, record) : [];
+  const linked = canUseTools ? await listLinkedRepositories(owner) : [];
+  const tools = canUseTools ? [...jobTools(access.scope, record), ...repoTools({ linked, bound, record })] : [];
   if (!canUseTools) {
     record({
       kind: "warning",
@@ -146,6 +242,11 @@ export async function* runTurn(input: {
   const system = [
     BASE_INSTRUCTIONS,
     `CLIENT: ${access.client.isHouse ? "none chosen — the house's own workspace" : access.client.name}.`,
+    bound
+      ? `REPOSITORY: ${fullName(bound.row)}, branch ${bound.snap.branch} at commit ${bound.snap.commitSha}. ` +
+        "Use the repository tools to look before answering about code, cite files as path:line, and say when you have not read something. " +
+        "You cannot change the repository; propose changes with create_patch_preview."
+      : null,
     MODE_SPECS[mode].instruction,
     command ? COMMAND_SPECS[command].instruction : null,
     contextBlocks.length

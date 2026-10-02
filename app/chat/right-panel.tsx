@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { WireReceipt } from "@/lib/workspace/wire";
 import { addJobContextAction, removeContextAction } from "./actions";
+import { RepoBrowser } from "./repo-browser";
 import type { UiRun, WorkspaceData } from "./types";
 
 /**
@@ -50,14 +51,12 @@ export function RightPanel({ data, run }: { data: WorkspaceData; run: UiRun | nu
         {tab === "sources" ? <Sources run={run} /> : null}
         {tab === "context" ? <Context data={data} /> : null}
         {tab === "activity" ? <Activity run={run} /> : null}
-        {tab === "changes" ? (
-          <Empty text="Ask and Plan never change anything, so there are no proposed changes. Build mode — patches on an isolated branch, with approval and rollback — is not switched on." />
-        ) : null}
+        {tab === "changes" ? <Changes data={data} /> : null}
         {tab === "attachments" ? (
           <Empty text="Image and document attachments arrive in a later update: stored privately, scanned, and only ever shown to this client's workspace." />
         ) : null}
         {tab === "repository" ? (
-          <Empty text="No repository is connected. The next update adds read-only GitHub access for this client's repositories." />
+          <RepoBrowser key={`${data.repository.current?.id}:${data.repository.current?.branch}`} data={data} />
         ) : null}
         {tab === "receipts" ? <Receipts run={run} client={data.client.name} isHouse={data.client.isHouse} /> : null}
       </div>
@@ -119,7 +118,10 @@ function Receipts({ run, client, isHouse }: { run: UiRun | null; client: string;
     ["Provider", run.provider],
     ["Mode", run.mode === "plan" ? "Plan — no changes" : "Ask — no changes"],
     ["Client scope", isHouse ? "House (no client)" : client],
-    ["Repository / branch", "None connected"],
+    [
+      "Repository / branch",
+      run.repository ? `${run.repository.name} · ${run.repository.branch} @ ${run.repository.commitSha.slice(0, 7)}` : "None",
+    ],
     ["Files inspected", String(count(["file", "folder"]))],
     ["Business records", String(count(["job"]))],
     ["Tools executed", String(count(["tool_call"]))],
@@ -184,5 +186,68 @@ function Context({ data }: { data: WorkspaceData }) {
         </form>
       )}
     </>
+  );
+}
+
+/**
+ * Proposed changes: the patch previews models made in this conversation,
+ * newest first. Nothing here has been applied anywhere — they are diffs to
+ * read and copy.
+ */
+function Changes({ data }: { data: WorkspaceData }) {
+  const previews = data.runs
+    .flatMap((run) =>
+      run.receipts
+        .filter((r) => r.detail?.["patchPreview"] === true)
+        .map((r) => ({ run, detail: r.detail as { path: string; summary: string; patch: string; branch: string; commitSha: string } })),
+    )
+    .reverse();
+  if (previews.length === 0) {
+    return (
+      <Empty text="No proposed changes yet. In Ask and Plan the model can propose a change as a diff; it is shown here and never applied. Build mode — changes on an isolated branch, with approval — is not switched on." />
+    );
+  }
+  return (
+    <ul className="space-y-3">
+      {previews.map(({ run, detail }, i) => (
+        <li key={`${run.id}:${i}`} className="overflow-hidden rounded-md border border-line bg-surface">
+          <div className="border-b border-line px-2.5 py-1.5">
+            <p className="break-words text-[13px] font-medium text-ink">{detail.path}</p>
+            <p className="text-[11px] text-ink-faint">
+              {detail.summary} · against {detail.branch} @ {String(detail.commitSha).slice(0, 7)} · not applied
+            </p>
+          </div>
+          <pre className="max-h-80 overflow-auto p-2 font-mono text-[11px] leading-snug">
+            {String(detail.patch)
+              .split("\n")
+              .map((line, n) => (
+                <span
+                  key={n}
+                  className={`block ${
+                    line.startsWith("+") && !line.startsWith("+++")
+                      ? "bg-good/10 text-good"
+                      : line.startsWith("-") && !line.startsWith("---")
+                        ? "bg-bad/10 text-bad"
+                        : line.startsWith("@@")
+                          ? "text-brand"
+                          : "text-ink-soft"
+                  }`}
+                >
+                  {line || " "}
+                </span>
+              ))}
+          </pre>
+          <div className="border-t border-line px-2.5 py-1.5">
+            <button
+              type="button"
+              onClick={() => void navigator.clipboard?.writeText(String(detail.patch))}
+              className="text-[11px] font-medium text-ink-soft hover:underline"
+            >
+              Copy diff
+            </button>
+          </div>
+        </li>
+      ))}
+    </ul>
   );
 }

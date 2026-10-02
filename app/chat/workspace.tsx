@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useTransition, type KeyboardEvent } from "react";
 import { COMMAND_SPECS, MODE_SPECS, parseCommand, type CommandId } from "@/lib/workspace/commands";
+import { parseMentions } from "@/lib/workspace/mentions";
 import type { WireEvent, WireReceipt } from "@/lib/workspace/wire";
 import { newConversationAction, setEngineAction, setModeAction } from "./actions";
 import { LeftPanel } from "./left-panel";
@@ -132,6 +133,25 @@ export function Workspace({ data }: { data: WorkspaceData }) {
       void send();
     }
   }
+
+  // "@" followed by part of a path: offer matching files from the repository.
+  const repo = data.repository.current;
+  const mentionQuery = repo ? (/(?:^|\s)@([A-Za-z0-9_.\-/]{2,})$/.exec(draft)?.[1] ?? null) : null;
+  const [mentionHits, setMentionHits] = useState<{ query: string; paths: string[] } | null>(null);
+  useEffect(() => {
+    if (!mentionQuery || !data.conversation) return;
+    const conversationId = data.conversation.id;
+    const timer = setTimeout(async () => {
+      const res = await fetch(
+        `/api/workspace/conversations/${conversationId}/repository?view=search&mode=filename&q=${encodeURIComponent(mentionQuery)}`,
+      ).catch(() => null);
+      const body = res?.ok ? await res.json() : null;
+      setMentionHits({ query: mentionQuery, paths: (body?.hits ?? []).slice(0, 8).map((h: { path: string }) => h.path) });
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [mentionQuery, data.conversation]);
+  const mentionMenu = mentionQuery && mentionHits?.query === mentionQuery ? mentionHits.paths : null;
+  const mentions = repo ? parseMentions(draft) : [];
 
   const typedCommand = parseCommand(draft).command;
   const showCommandMenu = /^\/\w*$/.test(draft.trim()) && !typedCommand;
@@ -334,6 +354,33 @@ export function Workspace({ data }: { data: WorkspaceData }) {
                   ))}
               </ul>
             ) : null}
+            {mentionMenu ? (
+              <ul className="mb-2 overflow-hidden rounded-lg border border-line bg-surface shadow-card" aria-label="Files">
+                {mentionMenu.length === 0 ? (
+                  <li className="px-3 py-1.5 text-sm text-ink-faint">No file names match “{mentionQuery}”.</li>
+                ) : (
+                  mentionMenu.map((path) => (
+                    <li key={path}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDraft((d) => d.replace(/@[^\s@]*$/, `@${path} `));
+                          input.current?.focus();
+                        }}
+                        className="block w-full truncate px-3 py-1.5 text-left font-mono text-[13px] text-ink hover:bg-sunk"
+                      >
+                        @{path}
+                      </button>
+                    </li>
+                  ))
+                )}
+              </ul>
+            ) : null}
+            {mentions.length && !mentionMenu ? (
+              <p className="mb-1.5 truncate text-xs text-ink-soft">
+                Adds to context: {mentions.map((m) => (m.kind === "folder" ? `${m.path || "/"} (folder)` : m.path)).join(", ")}
+              </p>
+            ) : null}
             {typedCommand ? (
               <p className="mb-1.5 text-xs text-ink-soft">
                 <span className="font-mono font-semibold text-ink">{COMMAND_SPECS[typedCommand].label}</span> —{" "}
@@ -361,7 +408,11 @@ export function Workspace({ data }: { data: WorkspaceData }) {
                 onKeyDown={onKeyDown}
                 rows={2}
                 maxLength={20000}
-                placeholder="Ask about this client — / for commands. Enter sends, Shift+Enter for a new line."
+                placeholder={
+                  repo
+                    ? `Ask about this client or ${repo.name} — / for commands, @ for files. Enter sends.`
+                    : "Ask about this client — / for commands. Enter sends, Shift+Enter for a new line."
+                }
                 className="min-w-0 flex-1 resize-y rounded-xl border border-line bg-surface px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-brand focus:outline-2 focus:outline-brand/30"
               />
               {busy ? (
@@ -481,7 +532,8 @@ function RunSummary({
       aria-pressed={selected}
       className={`px-1 text-left text-[11px] ${selected ? "text-brand" : "text-ink-faint"} hover:underline`}
     >
-      {run.engineLabel} · {run.model} · {client.isHouse ? "house" : client.name} · no repository ·{" "}
+      {run.engineLabel} · {run.model} · {client.isHouse ? "house" : client.name} ·{" "}
+      {run.repository ? `${run.repository.name}@${run.repository.branch} · ${plural(n("file"), "file")}` : "no repository"} ·{" "}
       {plural(n("job"), "record")} · {plural(n("tool_call"), "tool")}
       {warnings ? ` · ${plural(warnings, "warning")}` : ""} — see what it used
     </button>

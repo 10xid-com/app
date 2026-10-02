@@ -13,7 +13,10 @@ import {
 } from "@/lib/db/workspace";
 import { modeSpec } from "@/lib/ai/engine/modes";
 import { modeOptions } from "@/lib/ai/engine/registry";
+import { listLinkedRepositories, repositoryNamesByIds } from "@/lib/db/repositories";
+import { githubConfigured } from "@/lib/repo";
 import { workspaceAccess } from "@/lib/workspace/access";
+import { parseContextRef } from "@/lib/workspace/repo-tools";
 import { PortalShell } from "../portal-shell";
 import type { WorkspaceData } from "./types";
 import { Workspace } from "./workspace";
@@ -25,6 +28,10 @@ const ERRORS: Record<string, string> = {
   unknown: "That client no longer exists.",
   engine: "That engine is not available for this client.",
   job: "No job with that reference exists for this client.",
+  repo: "That repository is not available. Check the GitHub App can see it and that it is linked to this client.",
+  linked: "That repository is already linked to another client. Unlink it there first.",
+  branch: "That branch does not exist in the repository.",
+  path: "That path cannot be added: it does not exist, or it is a secret or binary file.",
 };
 
 /**
@@ -54,19 +61,31 @@ export default async function WorkspacePage({
   // Named but not ours — another client's, another person's, or archived.
   if (params.c && !conversation) redirect("/chat");
 
-  const [messages, runs, contextItems, withheld, clients, grant] = await Promise.all([
+  const [messages, runs, contextItems, withheld, clients, grant, linked] = await Promise.all([
     conversation ? listMessages(access.owner, conversation.id) : [],
     conversation ? listRuns(access.owner, conversation.id) : [],
     conversation ? listContextItems(access.owner, conversation.id) : [],
     withheldEngineModes(access.owner),
     listClientOrganizations(),
     liveGrantForSession(ctx.sessionId),
+    listLinkedRepositories(access.owner),
   ]);
+  const repoNames = await repositoryNamesByIds(
+    access.owner,
+    runs.flatMap((r) => (r.repositoryId ? [r.repositoryId] : [])),
+  );
+  const currentRepo = conversation?.repositoryId ? linked.find((r) => r.id === conversation.repositoryId) : undefined;
 
   const context = await Promise.all(
     contextItems.map(async (item) => {
-      const job = item.kind === "job" ? await getJob(access.scope, item.ref) : null;
-      return { id: item.id, kind: item.kind, label: job ? `${job.ref} — ${job.title}` : "No longer available" };
+      if (item.kind !== "job") {
+        const parsed = parseContextRef(item.ref);
+        const here = parsed && parsed.repositoryId === currentRepo?.id;
+        const label = parsed ? `${parsed.path || "/"}${item.kind === "folder" ? " (folder)" : ""}` : "No longer available";
+        return { id: item.id, kind: item.kind, label: here ? label : `${label} — another repository, not sent`, path: here ? parsed.path : null };
+      }
+      const job = await getJob(access.scope, item.ref);
+      return { id: item.id, kind: item.kind, label: job ? `${job.ref} — ${job.title}` : "No longer available", path: null };
     }),
   );
 
@@ -105,9 +124,31 @@ export default async function WorkspacePage({
       inputTokens: r.inputTokens,
       outputTokens: r.outputTokens,
       startedAt: r.startedAt.toISOString(),
-      receipts: r.receipts.map((x) => ({ kind: x.kind, label: x.label, ref: x.ref, sentToProvider: x.sentToProvider })),
+      repository:
+        r.repositoryId && r.branch && r.commitSha
+          ? { name: repoNames.get(r.repositoryId) ?? "unknown", branch: r.branch, commitSha: r.commitSha }
+          : null,
+      receipts: r.receipts.map((x) => ({
+        kind: x.kind,
+        label: x.label,
+        ref: x.ref,
+        sentToProvider: x.sentToProvider,
+        detail: x.detail as Record<string, unknown> | null,
+      })),
     })),
     context,
+    repository: {
+      configured: githubConfigured(),
+      linked: linked.map((r) => ({ id: r.id, name: `${r.owner}/${r.name}`, defaultBranch: r.defaultBranch })),
+      current: currentRepo
+        ? {
+            id: currentRepo.id,
+            name: `${currentRepo.owner}/${currentRepo.name}`,
+            branch: conversation?.branch ?? currentRepo.defaultBranch,
+            defaultBranch: currentRepo.defaultBranch,
+          }
+        : null,
+    },
     engines: modeOptions(withheld),
     error: params.error ? (ERRORS[params.error] ?? "That did not work.") : null,
   };

@@ -10,6 +10,8 @@ import { createServer, type Server } from "node:http";
  *
  *   - a question naming a job reference (ROT-0001) gets a read_job tool call;
  *   - once a tool result comes back, an answer citing that reference;
+ *   - a question about "greet" gets a read_repository_file call for src/app.ts,
+ *     and once the file comes back, an answer quoting what it says;
  *   - anything else, a plain answer.
  */
 
@@ -58,7 +60,12 @@ export function startMockAnthropic(): Promise<Server> {
       const isToolResult = Array.isArray(last?.content) && JSON.stringify(last.content).includes("tool_result");
 
       let payload: string;
-      if (isToolResult) {
+      if (isToolResult && JSON.stringify(last!.content).includes("src/app.ts")) {
+        const greeting = /return `(\w+),/.exec(JSON.stringify(last!.content))?.[1] ?? "something";
+        payload = events([{ text: `greet() says "${greeting}" (src/app.ts:2).` }], "end_turn");
+      } else if (!isToolResult && /\bgreet\b/.test(lastText)) {
+        payload = events([{ tool: "read_repository_file", input: { path: "src/app.ts" } }], "tool_use");
+      } else if (isToolResult) {
         const seen = /([A-Z]{3}-\d{4})/.exec(JSON.stringify(last!.content))?.[1] ?? "the job";
         payload = events([{ text: `That job is on record [JOB ${seen}].` }], "end_turn");
       } else if (ref) {
