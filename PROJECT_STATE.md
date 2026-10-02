@@ -4,10 +4,10 @@
 Phase 1 — Platform Hardening
 
 ## Current action
-Phase 1 / Recoverability — separate Neon restore database `railway_restore_test` created. Next step is verify the persistent `portal_app` role attributes before restoring the Railway dump.
+Phase 1 / Recoverability — Neon `portal_app` role attributes match the Railway restricted app role. Next step is restore the Railway source dump into the separate `railway_restore_test` database with source ownership suppressed.
 
 ## Last passed checkpoint
-Phase 1 recoverability checkpoint: separate empty Neon database `railway_restore_test` created inside the isolated migration project. Railway remains untouched and no app variables or DNS were changed.
+Phase 1 recoverability checkpoint: persistent Neon `portal_app` is LOGIN, NOSUPERUSER, NOBYPASSRLS, NOCREATEDB, and NOCREATEROLE, matching the intended Railway app-role security attributes.
 
 ## Confirmed findings
 - Existing `/chat` implementation is the approved Chat Boss foundation.
@@ -75,4 +75,4 @@ The copied Neon database must pass:
 8. application/database isolation tests.
 
 ## Next action
-Verify the actual persistent `portal_app` role in the Neon project is LOGIN, NOSUPERUSER, NOBYPASSRLS, NOCREATEDB, and NOCREATEROLE before restoring ACLs/policies from the Railway dump.
+Restore `/tmp/10xid-railway-source.dump` into the empty Neon database `railway_restore_test` using the Neon owner connection with `pg_restore --no-owner --exit-on-error`. Keep ACLs/policies enabled; do not change Railway or app variables.
