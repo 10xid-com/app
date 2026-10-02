@@ -333,6 +333,30 @@ export const PAGES: PageRecord[] = [
     methods: ["POST"],
     group: "Machinery",
   },
+  {
+    id: "api.workspace.repository",
+    path: "/api/workspace/conversations/[id]/repository",
+    name: "Workspace file browser",
+    purpose:
+      "Read-only views of a conversation's repository at its branch: branches, one folder at a time, file-name and text search, and files changed from the default branch. Staff only; the repository comes from the conversation, never the request.",
+    audience: "staff",
+    kind: "machinery",
+    file: "app/api/workspace/conversations/[id]/repository/route.ts",
+    methods: ["GET"],
+    group: "Machinery",
+  },
+  {
+    id: "api.workspace.repositories",
+    path: "/api/workspace/repositories",
+    name: "Repositories to link",
+    purpose:
+      "The repositories the GitHub App is installed on, by name only, for staff linking one to the client in scope.",
+    audience: "staff",
+    kind: "machinery",
+    file: "app/api/workspace/repositories/route.ts",
+    methods: ["GET"],
+    group: "Machinery",
+  },
 ];
 
 /**

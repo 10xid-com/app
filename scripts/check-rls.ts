@@ -42,6 +42,8 @@ const MUST_BE_PROTECTED = [
   "agent_run_receipts",
   "conversation_context_items",
   "engine_mode_policies",
+  // Which client a repository belongs to. The link IS the authorisation.
+  "repositories",
 ];
 
 /** Read before a scope exists. Each entry needs a reason that survives review. */

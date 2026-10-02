@@ -8,6 +8,8 @@ export type WireReceipt = {
   label: string;
   ref: string | null;
   sentToProvider: boolean;
+  /** Patch previews carry their diff here; other receipts may carry the commit read. */
+  detail?: Record<string, unknown> | null;
 };
 
 export type WireEvent =
@@ -22,6 +24,7 @@ export type WireEvent =
       mode: "ask" | "plan";
       command: string | null;
       client: { id: string; name: string; isHouse: boolean };
+      repository: { id: string; name: string; branch: string; commitSha: string } | null;
     }
   | { type: "text"; text: string }
   | { type: "model"; model: string }

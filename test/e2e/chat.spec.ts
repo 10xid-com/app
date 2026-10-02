@@ -1,7 +1,9 @@
 import type { Server } from "node:http";
 import { expect, test, type Page } from "@playwright/test";
 import { resetSignInState, settle, signIn } from "./helpers";
+import { Client } from "pg";
 import { MOCK_ANTHROPIC_URL, startMockAnthropic } from "./mock-anthropic";
+import { MOCK_GITHUB_URL, MOCK_REPOSITORY_ID, startMockGitHub } from "./mock-github";
 
 /**
  * The workspace, in a browser.
@@ -11,6 +13,11 @@ import { MOCK_ANTHROPIC_URL, startMockAnthropic } from "./mock-anthropic";
  *
  *   ANTHROPIC_API_KEY=test ANTHROPIC_BASE_URL=http://127.0.0.1:4010 npm run test:e2e
  *
+ * The repository test also needs the GitHub stand-in (test/e2e/mock-github.ts):
+ *
+ *   GITHUB_APP_ID=1 GITHUB_APP_PRIVATE_KEY="$(openssl genrsa 2048 2>/dev/null)" \
+ *   GITHUB_API_URL=http://127.0.0.1:4011
+ *
  * Under that, everything except the model is real — the SDK, the job tools,
  * the database rows the receipts panel reads back after a refresh.
  */
@@ -18,6 +25,7 @@ import { MOCK_ANTHROPIC_URL, startMockAnthropic } from "./mock-anthropic";
 const CLIENT = "jane@rotary.test";
 const STAFF = "paolo@brandingcentres.test";
 const mocked = process.env.ANTHROPIC_BASE_URL === MOCK_ANTHROPIC_URL;
+const githubMocked = mocked && process.env.GITHUB_API_URL === MOCK_GITHUB_URL;
 
 /**
  * Start a conversation and wait for ITS address. /chat already opens the most
@@ -37,11 +45,14 @@ async function newConversation(page: Page) {
 }
 
 let mock: Server | null = null;
+let githubMock: Server | null = null;
 test.beforeAll(async () => {
   if (mocked) mock = await startMockAnthropic();
+  if (githubMocked) githubMock = await startMockGitHub();
 });
 test.afterAll(async () => {
   await new Promise((r) => (mock ? mock.close(r) : r(null)));
+  await new Promise((r) => (githubMock ? githubMock.close(r) : r(null)));
 });
 
 test.describe("who gets into the workspace", () => {
@@ -132,5 +143,71 @@ test.describe("a grounded conversation", () => {
     await expect(page.getByRole("list", { name: "Commands" })).toBeVisible();
     await page.getByRole("button", { name: /\/review/ }).click();
     await expect(page.getByText(/Reviews the selected context/)).toBeVisible();
+  });
+});
+
+test.describe("a conversation about a repository", () => {
+  test.beforeEach(resetSignInState);
+  test.skip(!githubMocked, "Needs the Anthropic and GitHub stand-ins; see the note at the top.");
+
+  test.beforeEach(async () => {
+    // A previous run's link would otherwise hold the repository.
+    const db = new Client({ connectionString: process.env.DATABASE_URL });
+    await db.connect();
+    await db.query("update repositories set unlinked_at = now() where external_id = $1 and unlinked_at is null", [MOCK_REPOSITORY_ID]);
+    await db.end();
+  });
+
+  test("link a repository, pick a branch, browse it, @ a file, and see the commit the answer read", async ({ page }) => {
+    await signIn(page, STAFF, "/chat");
+    await settle(page);
+    await page.getByRole("combobox", { name: "Client" }).selectOption({ label: "Rotary" });
+    await page.getByLabel(/Reason/).fill("Reviewing the storefront for the e2e test");
+    await page.getByRole("button", { name: "Open for 30 minutes" }).click();
+    await newConversation(page);
+    await settle(page);
+
+    // Link it to Rotary from the list the GitHub App can see.
+    await page.getByText(/Manage repositories for Rotary/).click();
+    const linkRow = page.getByRole("listitem").filter({ hasText: "10xid-com/storefront" });
+    await linkRow.getByRole("button", { name: "Link" }).click();
+    await settle(page);
+
+    // Choose it, on a feature branch.
+    await page.getByRole("combobox", { name: "Repository" }).selectOption({ label: "10xid-com/storefront" });
+    const branch = page.getByRole("combobox", { name: "Branch" });
+    await expect(branch.locator("option", { hasText: "feature/checkout" })).toHaveCount(1);
+    await branch.selectOption("feature/checkout");
+    await page.getByRole("button", { name: "Use for this conversation" }).click();
+    await settle(page);
+    await expect(page.getByText(/Answers read this branch/)).toBeVisible();
+
+    // Browse: secrets are listed as such; changed files are marked.
+    await page.getByRole("tab", { name: "Repository" }).click();
+    const files = page.getByRole("list", { name: "Repository files" });
+    await expect(files.getByText("src/")).toBeVisible();
+    await files.getByRole("button", { name: /src\// }).click();
+    await expect(files.getByRole("listitem").filter({ hasText: "app.ts" }).getByText("modified")).toBeVisible();
+
+    // @ picks a file by name.
+    await page.getByLabel("Message").fill("What does greet say? @src/ap");
+    await page.getByRole("list", { name: "Files" }).getByRole("button", { name: "@src/app.ts" }).click();
+    await expect(page.getByText(/Adds to context: src\/app\.ts/)).toBeVisible();
+    await page.keyboard.press("Enter");
+
+    await expect(page.getByText(/greet\(\) says "Welcome"/)).toBeVisible();
+    await expect(page.getByText(/10xid-com\/storefront@feature\/checkout/)).toBeVisible();
+
+    // After a refresh, from the database: the file is in context, and the
+    // receipt names the repository, branch and commit.
+    await page.reload();
+    await settle(page);
+    await page.getByRole("button", { name: /see what it used/ }).click();
+    await page.getByRole("tab", { name: "Sources" }).click();
+    await expect(page.getByRole("tabpanel").getByText(/src\/app\.ts L1–4 @ [0-9a-f]{7}/).first()).toBeVisible();
+    await page.getByRole("tab", { name: "Receipts" }).click();
+    await expect(page.getByRole("tabpanel").getByText(/10xid-com\/storefront · feature\/checkout @ [0-9a-f]{7}/)).toBeVisible();
+    await page.getByRole("tab", { name: "Context" }).click();
+    await expect(page.getByRole("tabpanel").getByText("src/app.ts", { exact: true })).toBeVisible();
   });
 });

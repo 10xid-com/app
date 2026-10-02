@@ -118,13 +118,30 @@ both (0018: `app.org_id` and `app.user_id`), and child rows reference their pare
 - `/review`, `/explain`, `/plan` and `/test` are recorded choices with fixed, visible wording
   (`lib/workspace/commands.ts`), never hidden prompts.
 
-Repositories (read-only GitHub) and attachments (private Backblaze B2 storage) come next.
+- **Repositories** are read through a GitHub App (`GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`), never a
+  person's token. A repository is linked to **one client at a time** (0019); a conversation picks one
+  linked repository and a branch. Each answer resolves the branch to one commit and reads only that
+  commit, through eight read-only tools — `list_repositories`, `list_branches`,
+  `list_repository_tree`, `read_repository_file`, `search_repository`, `get_commit_history`,
+  `get_changed_files`, `create_patch_preview` — bound on the server to the conversation's repository:
+  the model names paths, never a repository. `lib/repo/policy.ts` refuses traversal, secrets
+  (`.env`, keys, credential files), `.git/`, binaries, symbolic links and submodules, and caps every
+  read, listing and search. Each file read is a receipt naming `path`, lines and commit. A patch
+  preview is a diff to read and copy; nothing is ever written to a repository.
+- **`@path`** and **`@folder:path`** in a message add that file or folder to the conversation's
+  context; context files send their first 120 lines, and the model reads further with its tools.
+
+Attachments (private Backblaze B2 storage) come next.
 
 The browser tests for grounded answers run against a local stand-in for the Anthropic API:
 
 ```bash
-ANTHROPIC_API_KEY=test ANTHROPIC_BASE_URL=http://127.0.0.1:4010 npm run test:e2e
+ANTHROPIC_API_KEY=test ANTHROPIC_BASE_URL=http://127.0.0.1:4010 \
+GITHUB_APP_ID=1 GITHUB_APP_PRIVATE_KEY="$(openssl genrsa 2048 2>/dev/null)" GITHUB_API_URL=http://127.0.0.1:4011 \
+npm run test:e2e
 ```
+
+The GitHub stand-in (`test/e2e/mock-github.ts`) does not check signatures, so any throwaway RSA key will do.
 
 ## Proving it
 

@@ -28,6 +28,8 @@ export type UiRun = {
   inputTokens: number | null;
   outputTokens: number | null;
   startedAt: string;
+  /** "owner/name", the branch, and the commit read — null when no repository. */
+  repository: { name: string; branch: string; commitSha: string } | null;
   receipts: WireReceipt[];
 };
 
@@ -38,7 +40,22 @@ export type UiConversation = {
   engineMode: string;
 };
 
-export type UiContextItem = { id: string; kind: string; label: string };
+export type UiContextItem = {
+  id: string;
+  kind: string;
+  label: string;
+  /** For repository files and folders: the path, when it is in the current repository. */
+  path: string | null;
+};
+
+export type UiRepositoryState = {
+  /** Whether the GitHub App is set up on this server at all. */
+  configured: boolean;
+  /** Repositories linked to this client. */
+  linked: { id: string; name: string; defaultBranch: string }[];
+  /** The conversation's repository and branch. */
+  current: { id: string; name: string; branch: string; defaultBranch: string } | null;
+};
 
 export type WorkspaceData = {
   client: { id: string; name: string; isHouse: boolean };
@@ -49,6 +66,7 @@ export type WorkspaceData = {
   messages: UiMessage[];
   runs: UiRun[];
   context: UiContextItem[];
+  repository: UiRepositoryState;
   engines: EngineModeOption[];
   error: string | null;
 };

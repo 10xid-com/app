@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { exitClientAction, chooseClientAction } from "../staff/actions";
 import { newConversationAction } from "./actions";
+import { RepoPicker } from "./repo-picker";
 import type { WorkspaceData } from "./types";
 
 /**
@@ -93,10 +94,7 @@ export function LeftPanel({ data }: { data: WorkspaceData }) {
         <h2 id="ws-repo" className="text-[11px] font-semibold uppercase tracking-wider text-ink-faint">
           Repository
         </h2>
-        <div className="mt-2 rounded-lg border border-dashed border-line p-3 text-xs leading-relaxed text-ink-faint">
-          Not connected yet. The next update adds read-only GitHub access: choose a repository and branch, browse and
-          search files, and add files or folders to the conversation’s context with <code className="font-mono">@</code>.
-        </div>
+        <RepoPicker data={data} />
       </section>
 
       <section aria-labelledby="ws-history" className="min-h-0 flex-1">

@@ -193,6 +193,9 @@ export async function startRun(
     engineMode: string;
     provider: string;
     model: string;
+    repositoryId?: string | null;
+    branch?: string | null;
+    commitSha?: string | null;
   },
 ): Promise<RunRow> {
   return run(owner, async (tx) => {
