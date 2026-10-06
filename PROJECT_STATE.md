@@ -4,10 +4,10 @@
 Phase 1 — Platform Hardening
 
 ## Current action
-Phase 1 / Recoverability — true Neon PITR validation passed against the certified source/restore baseline. Recoverability objective is now technically demonstrated; next step is close the recoverability checkpoint in documentation and then proceed to enforced CI/security gates.
+Phase 1 / Recoverability — recoverability runbook documented and exit test closed. Next step is Phase 1 enforced CI/security gates.
 
 ## Last passed checkpoint
-Phase 1 recoverability exit test passed: PITR branch `railway-pitr-drill` recovered from 2026-10-06T16:07:00Z and matched the certified source/restore baseline exactly on all 35 public-table row counts and all 20 Drizzle migration id/hash/created_at triples. No writes; main, prior certified copies, Railway, app variables, and DNS remain unchanged.
+Phase 1 recoverability exit test passed and documented in `docs/recoverability-runbook.md`, including the Railway source dump path, Neon `--no-owner` restore model, source-fidelity checks, security/RLS checks, tenant-isolation proof, PITR drill, and explicit no-cutover guardrail.
 
 ## Confirmed findings
 - Existing `/chat` implementation is the approved Chat Boss foundation.
@@ -76,4 +76,4 @@ The copied Neon database must pass:
 8. application/database isolation tests.
 
 ## Next action
-Add a concise recoverability runbook/checkpoint note to the repo documenting the validated Railway-to-Neon restore path, the PITR drill, the intentional `--no-owner` ownership model, and the fact that production cutover has not occurred. After that, begin Phase 1 enforced CI/security gates.
+Begin Phase 1 enforced CI/security gates by auditing the current repository for existing lint, typecheck, test, migration/RLS checks, and branch-protection readiness before adding any workflow.
