@@ -1,6 +1,6 @@
-import { generateKeyPairSync } from "node:crypto";
+import { createPrivateKey, createPublicKey, generateKeyPairSync } from "node:crypto";
 import { describe, expect, test } from "vitest";
-import { GitHubApp, GitHubRepository, githubAppConfigFromEnv } from "@/lib/repo/github";
+import { GitHubApp, GitHubRepository, githubAppConfigFromEnv, normalizePem } from "@/lib/repo/github";
 import { applyEdit, unifiedDiff } from "@/lib/repo/patch";
 import { checkBranch, checkPath, isSecretPath, LIMITS, looksBinary } from "@/lib/repo/policy";
 import { RepoError } from "@/lib/repo/types";
@@ -194,6 +194,54 @@ describe("GitHub App adapter", () => {
     expect(await app.whoAmI()).toMatchObject({ slug: "10xid-workspace" });
     const broken = new GitHubApp({ appId: "1", privateKey: "not a key" });
     expect(() => broken.appJwt()).toThrow(/not a valid private key/);
+  });
+
+  test("a key survives however it was pasted into a dashboard", () => {
+    // GitHub's own download is PKCS#1 ("BEGIN RSA PRIVATE KEY"); test that shape too.
+    const pkcs1 = createPrivateKey(privateKey).export({ type: "pkcs1", format: "pem" }).toString();
+    for (const pem of [privateKey, pkcs1]) {
+      const body = pem.trim();
+      const pasted = [
+        body, // as downloaded
+        `"${body}"`, // wrapped in quotes
+        body.replace(/\n/g, "\\n"), // newlines typed as a literal \n
+        body.replace(/\n/g, "\r\n"), // Windows line endings
+        body.replace(/\n/g, " "), // line breaks turned into spaces
+        body.replace(/-----\n/g, "-----").replace(/\n(?!-----)/g, ""), // line breaks lost
+      ];
+      for (const raw of pasted) {
+        const app = new GitHubApp({ appId: "1", privateKey: normalizePem(raw) });
+        expect(() => app.appJwt(), raw.slice(0, 40)).not.toThrow();
+      }
+    }
+  });
+
+  test("a key that cannot work says why, without repeating any of it", () => {
+    const pkcs1 = createPrivateKey(privateKey).export({ type: "pkcs1", format: "pem" }).toString();
+    const publicPem = createPublicKey(privateKey).export({ type: "spki", format: "pem" }).toString();
+    const [head, ...rest] = pkcs1.trim().split("\n");
+    const truncated = [head, ...rest.slice(0, 5), rest.at(-1)].join("\n");
+    const cases: [string, RegExp][] = [
+      ["Iv23liSomeClientSecretValue1234", /no -----BEGIN line/],
+      [publicPem, /public key, not a private key/],
+      [pkcs1.trim().split("\n").slice(0, -1).join("\n"), /END line is missing/],
+      [pkcs1.replace(/\n([A-Za-z0-9+/]{10})/, "\n$1!!"), /characters a key never contains/],
+      [truncated, /do not decode to a key/],
+    ];
+    for (const [raw, why] of cases) {
+      const app = new GitHubApp({ appId: "1", privateKey: normalizePem(raw) });
+      let message = "";
+      try {
+        app.appJwt();
+      } catch (err) {
+        message = (err as Error).message;
+      }
+      expect(message).toMatch(/^GITHUB_APP_PRIVATE_KEY is not a valid private key: /);
+      expect(message).toMatch(why);
+      // Nothing of the key's body is ever in the message.
+      const body = raw.replace(/-----[A-Z ]+-----/g, "").replace(/\s+/g, "");
+      if (body.length > 12) expect(message).not.toContain(body.slice(0, 12));
+    }
   });
 
   test("a key pasted on one line is restored", () => {
