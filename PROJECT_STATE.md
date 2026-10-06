@@ -4,10 +4,10 @@
 Phase 1 — Platform Hardening
 
 ## Current action
-Phase 1 / Enforced CI/security gates — first CI run failed only at `next build` because `DATABASE_APP_URL` is intentionally mandatory at module import. Applied a DB-free CI-only placeholder URL pointing at closed localhost port 1; next step is verify the new CI run.
+Phase 1 / Enforced CI/security gates — deterministic CI is green. Next step is make the green `CI / quality` check mandatory on `main` before adding database-backed security jobs.
 
 ## Last passed checkpoint
-Phase 1 CI debugging checkpoint: install, lint, and typecheck passed. Build failed before connecting anywhere because `lib/db/connection.ts` rejects a missing `DATABASE_APP_URL`. CI now supplies a build-step-only placeholder `postgresql://ci-build:ci-build@127.0.0.1:1/ci_build`; it cannot reach Railway/Neon and does not weaken runtime restricted-role enforcement.
+Phase 1 CI checkpoint: GitHub Actions run for commit `3af9d9c7358c593be206abe3255a0a46748ab7f2` passed successfully. Install, lint, typecheck, and build are green using a DB-free localhost placeholder only for build-time configuration; no Railway/Neon credentials are present.
 
 ## Confirmed findings
 - CI audit: no `.github/` directory or GitHub Actions workflows exist on `main`.
@@ -18,6 +18,7 @@ Phase 1 CI debugging checkpoint: install, lint, and typecheck passed. Build fail
 - `npm run prove` is a browser-backed live tenant-isolation proof and mutates test state (for example truncating sign-in codes), so it belongs only against an isolated CI database/environment.
 - Playwright E2E uses `next dev`, owner DB setup, sign-in-code sink behavior, four browser-context projects, and shared mutable database state; it is unsuitable for a simple first-pass CI job without dedicated ephemeral infrastructure.
 - GitHub branch-protection API could not be inspected through the current GitHub App because the integration lacks administration read access (403). Manual UI verification or an admin-capable integration is still required before we can assert branch protection is configured.
+- The passing CI run produced non-failing GitHub-hosted annotations that `actions/checkout@v4` and `actions/setup-node@v4` currently target the deprecated Node20 action runtime and are being forced to Node24, plus an `ubuntu-latest` migration notice. These are maintenance items, not gate failures.
 - Existing `/chat` implementation is the approved Chat Boss foundation.
 - Do not introduce a second chat/agent architecture.
 - Do not install AI SDK, AI Elements, Redis, object storage, a new auth system, or another database architecture unless specifically approved later.
@@ -84,4 +85,4 @@ The copied Neon database must pass:
 8. application/database isolation tests.
 
 ## Next action
-Verify the GitHub Actions `CI` run triggered by commit `3af9d9c7358c593be206abe3255a0a46748ab7f2`. If Build still fails, inspect the failing line before making any further change.
+Configure `main` branch protection/rules so pull requests cannot merge unless the `CI / quality` status check succeeds. Do not require database-backed checks yet. Verify the rule in the GitHub UI because the current GitHub App cannot read administration branch-protection settings.
