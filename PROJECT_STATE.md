@@ -4,10 +4,10 @@
 Phase 1 — Platform Hardening
 
 ## Current action
-Phase 1 / Enforced CI/security gates — deterministic CI is green. Next step is make the green `CI / quality` check mandatory on `main` before adding database-backed security jobs.
+Phase 1 / Enforced CI/security gates — deterministic CI is green, but enforcement on private `main` is blocked by the organization plan. Enforced CI/security gates remain incomplete pending an organization-owner decision on GitHub Team/Enterprise. Next step is continue building the database-backed security gate design without claiming branch protection.
 
 ## Last passed checkpoint
-Phase 1 CI checkpoint: GitHub Actions run for commit `3af9d9c7358c593be206abe3255a0a46748ab7f2` passed successfully. Install, lint, typecheck, and build are green using a DB-free localhost placeholder only for build-time configuration; no Railway/Neon credentials are present.
+Phase 1 CI checkpoint: deterministic GitHub Actions CI is green. Branch-protection enforcement was checked in GitHub Settings > Branches and is blocked by the organization plan for this private repository; no unenforced/misleading classic rule was saved, billing was not changed, and the repo was not made public.
 
 ## Confirmed findings
 - CI audit: no `.github/` directory or GitHub Actions workflows exist on `main`.
@@ -18,6 +18,7 @@ Phase 1 CI checkpoint: GitHub Actions run for commit `3af9d9c7358c593be206abe325
 - `npm run prove` is a browser-backed live tenant-isolation proof and mutates test state (for example truncating sign-in codes), so it belongs only against an isolated CI database/environment.
 - Playwright E2E uses `next dev`, owner DB setup, sign-in-code sink behavior, four browser-context projects, and shared mutable database state; it is unsuitable for a simple first-pass CI job without dedicated ephemeral infrastructure.
 - GitHub branch-protection API could not be inspected through the current GitHub App because the integration lacks administration read access (403). Manual UI verification or an admin-capable integration is still required before we can assert branch protection is configured.
+- Manual GitHub UI verification confirmed there are no classic branch-protection rules configured, and the new-rule page warns that rules on this private repository will not be enforced without GitHub Team or Enterprise. `main` must not be described as protected.
 - The passing CI run produced non-failing GitHub-hosted annotations that `actions/checkout@v4` and `actions/setup-node@v4` currently target the deprecated Node20 action runtime and are being forced to Node24, plus an `ubuntu-latest` migration notice. These are maintenance items, not gate failures.
 - Existing `/chat` implementation is the approved Chat Boss foundation.
 - Do not introduce a second chat/agent architecture.
@@ -50,6 +51,7 @@ Phase 1 CI checkpoint: GitHub Actions run for commit `3af9d9c7358c593be206abe325
 - Update 2026-10-02 22:16 UTC: the research data was copied to its own database on Neon (project `10xid` in the Neon organisation "Branding", database `research`, login `research_app`; not the portal migration target and not a Vercel Marketplace database) and the `research-engine` service now reads and writes only there. Railway was only read during the copy. Schema `research` and role `research_engine` are still present in the Railway database, frozen and unused, until Paolo removes them (`DROP SCHEMA research CASCADE; DROP ROLE research_engine;` as the database owner). Nothing in the portal depends on them.
 
 ## Blockers
+- GitHub private-repository branch-protection enforcement is blocked by the current organization plan. GitHub UI states rules will not be enforced until the organization upgrades to Team or Enterprise. Organization-owner approval is required before any plan upgrade. Enforced CI/security gates therefore remain incomplete even though the workflow itself is green.
 - Neon target currently contains migration-authored application rows; source data must not be imported on top of them until a safe reset/import sequence is selected.
 - Current repo migration hashes do not match the Railway source migration journal, so migration replay is not a source-faithful reconstruction method.
 - A source-authoritative custom-format pg_dump was created from Railway on 2026-10-02. The archive reports PostgreSQL 18.6 source/dumper versions, 420 TOC entries, and includes the Drizzle migration journal plus public data and security objects.
@@ -85,4 +87,4 @@ The copied Neon database must pass:
 8. application/database isolation tests.
 
 ## Next action
-Configure `main` branch protection/rules so pull requests cannot merge unless the `CI / quality` status check succeeds. Do not require database-backed checks yet. Verify the rule in the GitHub UI because the current GitHub App cannot read administration branch-protection settings.
+Design the next database-backed CI security gate against an isolated ephemeral database/environment, keeping Railway and certified Neon copies out of CI. Do not claim `main` is protected until the organization plan supports enforcement.
