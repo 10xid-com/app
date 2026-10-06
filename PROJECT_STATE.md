@@ -4,12 +4,25 @@
 Phase 1 — Platform Hardening
 
 ## Current action
-Phase 1 / Enforced CI/security gates — isolated database-backed CI design completed and documented. No workflow implementation yet. Next step is implement only the fail-closed local CI database guard script, then review it before wiring a PostgreSQL service-container job.
+Phase 1 / Enforced CI/security gates — PR #6 guard compatibility blocker fixed on `ci/database-guard`. Runner URLs remain loopback-only, while the guard now pins live PostgreSQL identity to an exact `CI_DB_EXPECTED_SERVER_ADDR` derived from the specific Docker service container. Deterministic tests pass 30/30 and existing `quality` CI is green. No workflow/database integration change yet; PR is not merged.
 
 ## Last passed checkpoint
 Phase 1 CI enforcement checkpoint: `10xid-com/login` was made public by explicit user choice with no billing change. Classic branch protection rule `84348218` applies to `main` (1 branch), requires a pull request before merging, and requires status check `quality` with updates accepted specifically from GitHub Actions. No database-backed checks or extra review restrictions are required. Approvals are off; administrator bypass remains allowed (`Do not allow bypassing` is unchecked), so do not claim universal/admin enforcement. Force pushes and branch deletions remain disallowed. No production app, DNS, Railway, or Neon changes were made.
 
 ## Confirmed findings
+- PR #6 Docker topology blocker resolved: `inet_server_addr()` is no longer required to be loopback, because a runner-side localhost port mapping terminates at the PostgreSQL container's Docker-network interface.
+- Runner DB URLs remain strictly limited to `localhost`/`127.0.0.1`, port 5432, database `portal_ci`, and expected users. The live server must exactly match `CI_DB_EXPECTED_SERVER_ADDR`; arbitrary private CIDRs/hostnames are not accepted.
+- Workflow integration contract is documented: derive exactly one IP from the specific PostgreSQL service container identified by `job.services.postgres.id`; fail on missing container ID, inspect failure, zero addresses, or ambiguous multiple addresses; pass only that exact literal to the guard.
+- Driver connection/query errors are now sanitized into fixed guard messages; raw node-postgres errors are not propagated or printed. Deterministic tests explicitly verify credential-bearing fake driver errors do not leak.
+- Exact branch files passed `node --check` for guard and test files and `node --test scripts/ci-db-guard.test.mjs` with 30/30 passing tests.
+- Existing PR #6 `quality` GitHub Actions run is green after the compatibility fix.
+- Local environment has no Docker/Podman/PostgreSQL server available, so a live PostgreSQL 18 service-container execution of the embedded guard SQL remains unverified until the separate workflow-integration PR.
+- `scripts/ci-db-guard.mjs` now implements `pre-migrate` and `post-migrate` modes on feature branch `ci/database-guard`; it has not been merged to `main` yet.
+- Guard URL checks require loopback only, database `portal_ci`, owner user `ci_owner`, restricted user `portal_app`, port 5432, disposable passwords, and no URL query parameters/fragments.
+- Pre-migrate live checks require direct `ci_owner` authentication to loopback `portal_ci` and a blank user-table target before any migration write.
+- Post-migrate live checks require direct `portal_app` authentication, no SUPERUSER/BYPASSRLS/CREATEDB/CREATEROLE/REPLICATION, no ownership of the CI database or application schemas/relations/routines/enums/domains, and no direct or transitive role memberships.
+- Guard tests use only fake PostgreSQL clients; no external database connection is made. Local syntax checks passed and Node built-in tests passed 25/25.
+- PR #6 (`ci: add fail-closed database target guard`) contains only the guard, its tests, and this project-state update; no workflow or production resource changes.
 - Database-backed CI design is documented in `docs/ci-database-security-gate-design.md`.
 - Proposed CI database is a disposable PostgreSQL 18 GitHub Actions service container on loopback, database `portal_ci`, owner role `ci_owner`, restricted role `portal_app`.
 - First DB-backed gate order is: local target guard -> repository migrations via `db:migrate:prod` -> post-migration role/ownership guard -> deterministic `db:seed` -> `db:rls-check` -> `npm test`.
@@ -93,4 +106,4 @@ The copied Neon database must pass:
 8. application/database isolation tests.
 
 ## Next action
-Implement only `scripts/ci-db-guard.mjs` with `pre-migrate` and `post-migrate` modes. It must reject any non-loopback/non-`portal_ci` target before writes and verify `portal_app` is restricted/non-owner after migrations. Do not modify the GitHub Actions workflow in the same step.
+Merge PR #6 only after human review accepts the revised Docker service-identity contract. Then create a new feature branch/PR for the PostgreSQL 18 `database-security` service-container job. That workflow must derive the exact service-container IP from `job.services.postgres.id`, export it as `CI_DB_EXPECTED_SERVER_ADDR`, then run guard pre-migrate -> migrations -> guard post-migrate -> seed -> `db:rls-check` -> `npm test`.
