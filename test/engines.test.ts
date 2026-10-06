@@ -460,6 +460,52 @@ describe("the routing policy", () => {
     expect("engine" in resolved && resolved.engine.supports("tool_calling")).toBe(true);
   });
 
+  test("each Ollama model is its own entry, named with whose model it is", () => {
+    vi.stubEnv("ENABLE_PROTOTYPE_ENGINE", "true");
+    vi.stubEnv("OLLAMA_API_KEY", "k");
+    const ollama = modeOptions(new Set()).filter((o) => o.provider === "ollama");
+    expect(ollama.map((o) => [o.id, o.label])).toEqual([
+      ["prototype-free", "Ollama — Auto"],
+      ["ollama:gpt-oss:120b", "Ollama — gpt-oss 120B (OpenAI)"],
+      ["ollama:kimi-k2.7-code", "Ollama — Kimi K2.7 Code (Moonshot AI)"],
+      ["ollama:gemma4:31b", "Ollama — Gemma 4 31B (Google)"],
+      ["ollama:gpt-oss:20b", "Ollama — gpt-oss 20B (OpenAI)"],
+    ]);
+    expect(ollama.every((o) => o.available && !o.canUseTools)).toBe(true);
+    // A model not on the server's list is not a mode, whatever a request says.
+    expect(engineFor("ollama:some-paid-model", new Set())).toMatchObject({ error: expect.stringMatching(/does not exist/) });
+  });
+
+  test("an Ollama Cloud model entry keeps the prototype's fence, and asks only its own model", async () => {
+    vi.stubEnv("ENABLE_PROTOTYPE_ENGINE", "true");
+    vi.stubEnv("OLLAMA_API_KEY", "k");
+    expect(engineFor("ollama:gemma4:31b", new Set(), { hasContext: true })).toMatchObject({
+      error: expect.stringMatching(/cannot be used/),
+    });
+
+    const captured: Captured[] = [];
+    const resolved = engineFor("ollama:gemma4:31b", new Set(), {
+      hasContext: false,
+      fetch: fakeFetch([() => Response.json({ error: "busy" }, { status: 429 })], captured),
+    });
+    if (!("engine" in resolved)) throw new Error(resolved.error);
+    expect(resolved.engine.model).toBe("gemma4:31b");
+    await expect(collect(resolved.engine.stream({ system: "s", history: [{ role: "user", content: "x" }], tools: [] }))).rejects.toThrow(
+      /gemma4:31b is busy/,
+    );
+    expect(captured.map((c) => c.body.model)).toEqual(["gemma4:31b"]);
+  });
+
+  test("self-hosted model entries come from OLLAMA_MODELS and get tools", () => {
+    vi.stubEnv("OLLAMA_SELF_HOSTED", "true");
+    vi.stubEnv("OLLAMA_BASE_URL", "http://ollama.internal:11434");
+    vi.stubEnv("OLLAMA_MODELS", "qwen3:8b");
+    const ollama = modeOptions(new Set()).filter((o) => o.provider === "ollama");
+    expect(ollama.map((o) => o.id)).toEqual(["ollama-self-hosted", "ollama:qwen3:8b"]);
+    expect(ollama.find((o) => o.id === "ollama:qwen3:8b")).toMatchObject({ label: "Ollama — qwen3:8b", canUseTools: true });
+    expect("engine" in engineFor("ollama:qwen3:8b", new Set(), { hasContext: true })).toBe(true);
+  });
+
   test("self-hosted pointed at Ollama Cloud is refused", () => {
     vi.stubEnv("OLLAMA_SELF_HOSTED", "true");
     vi.stubEnv("OLLAMA_BASE_URL", "https://ollama.com");

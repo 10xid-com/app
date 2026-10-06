@@ -16,16 +16,18 @@ import "server-only";
 const CLOUD_URL = "https://ollama.com";
 
 /**
- * The models the chat may use, in the order "auto" tries them.
+ * The models the chat may use, in the order "auto" tries them. Each is also
+ * its own entry in the picker (lib/ai/engine/modes.ts names them).
  *
- * Both are on Ollama Cloud (checked against ollama.com/api/tags on
- * 2026-10-06). OLLAMA_MODELS replaces the list — a self-hosted server will not
- * have models this size, so it names its own.
+ * All four are on Ollama Cloud (checked against ollama.com/api/tags on
+ * 2026-10-06): the two largest first, then the smaller two as backstops.
+ * OLLAMA_MODELS replaces the list — a self-hosted server will not have models
+ * this size, so it names its own.
  *
  * Only the server's environment names a model: nothing in a request can, so a
  * caller cannot point the chat at a model nobody chose.
  */
-export const DEFAULT_MODELS = ["gpt-oss:120b", "kimi-k2.7-code"] as const;
+export const DEFAULT_MODELS = ["gpt-oss:120b", "kimi-k2.7-code", "gemma4:31b", "gpt-oss:20b"] as const;
 
 /** "Use whichever model is answering." The default. */
 export const AUTO = "auto";
@@ -293,9 +295,8 @@ export function resetModelHealth() {
  * dropped — if everything is resting, trying it is still better than refusing
  * outright.
  *
- * A model named by the server's settings is tried first even while resting,
- * because someone chose it; the others follow in the order auto would use. A
- * name that is not on the list is tried alone, as asked.
+ * A model picked by name is tried alone, even while resting: the picker named
+ * it, so an answer from any other model would be the wrong answer.
  */
 export function attemptOrder(choice: string, models = ollamaModels(), now = Date.now()): string[] {
   const resting = (id: string) => (busyUntil.get(id) ?? 0) > now;
@@ -304,8 +305,7 @@ export function attemptOrder(choice: string, models = ollamaModels(), now = Date
     if (rest !== 0) return rest;
     return Number(b === lastGood) - Number(a === lastGood);
   });
-  if (choice === AUTO) return ordered;
-  return [choice, ...ordered.filter((id) => id !== choice)];
+  return choice === AUTO ? ordered : [choice];
 }
 
 /* ------------------------------------------------------------------ */
@@ -399,7 +399,9 @@ export async function openChat(input: {
   // that is all it was; a missing model is worth naming, so it is passed on.
   if (last?.status === 404) throw last;
   throw new ChatError(
-    "Every Ollama model is busy right now. Try again in a minute.",
+    input.models.length === 1
+      ? `${input.models[0]} is busy right now. Try again in a minute, or pick Auto.`
+      : "Every Ollama model is busy right now. Try again in a minute.",
     true,
     last?.status ?? null,
   );

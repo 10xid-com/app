@@ -40,6 +40,7 @@ export function Workspace({ data }: { data: WorkspaceData }) {
   const [draft, setDraft] = useState("");
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [refreshing, startRefresh] = useTransition();
+  const [switchingEngine, startEngineSwitch] = useTransition();
   const abort = useRef<AbortController | null>(null);
   const end = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
@@ -199,27 +200,33 @@ export function Workspace({ data }: { data: WorkspaceData }) {
                 Build
               </button>
             </div>
-            <form action={setEngineAction}>
-              <input type="hidden" name="conversationId" value={data.conversation.id} />
-              <label className="sr-only" htmlFor="ws-engine">
-                Engine
-              </label>
-              <select
-                id="ws-engine"
-                name="engineMode"
-                value={data.conversation.engineMode}
-                disabled={busy}
-                onChange={(e) => e.currentTarget.form?.requestSubmit()}
-                className="max-w-[14rem] rounded-md border border-line bg-surface px-2 py-1 text-xs text-ink"
-              >
-                {data.engines.map((e) => (
-                  <option key={e.id} value={e.id} disabled={!e.available}>
-                    {e.label}
-                    {e.available ? "" : " — unavailable"}
-                  </option>
-                ))}
-              </select>
-            </form>
+            {/* Saved straight from the change, not through <form action>: React
+                resets an action form to its first-render values once the action
+                finishes, which put the previous engine back on screen after
+                every change even though the new one was saved. */}
+            <label className="sr-only" htmlFor="ws-engine">
+              Engine
+            </label>
+            <select
+              id="ws-engine"
+              name="engineMode"
+              value={data.conversation.engineMode}
+              disabled={busy || switchingEngine}
+              onChange={(e) => {
+                const form = new FormData();
+                form.set("conversationId", data.conversation!.id);
+                form.set("engineMode", e.currentTarget.value);
+                startEngineSwitch(() => setEngineAction(form));
+              }}
+              className="max-w-[14rem] rounded-md border border-line bg-surface px-2 py-1 text-xs text-ink"
+            >
+              {data.engines.map((e) => (
+                <option key={e.id} value={e.id} disabled={!e.available}>
+                  {e.label}
+                  {e.available ? "" : " — unavailable"}
+                </option>
+              ))}
+            </select>
           </>
         ) : null}
         <button
