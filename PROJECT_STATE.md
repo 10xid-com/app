@@ -4,10 +4,10 @@
 Phase 1 — Platform Hardening
 
 ## Current action
-Phase 1 / Recoverability — true Neon point-in-time recovery branch `railway-pitr-drill` created from historical main state at 2026-10-06T16:07:00Z. Next step is validate the recovered `railway_restore_test` database against the certified source/restore baseline.
+Phase 1 / Recoverability — true Neon PITR validation passed against the certified source/restore baseline. Recoverability objective is now technically demonstrated; next step is close the recoverability checkpoint in documentation and then proceed to enforced CI/security gates.
 
 ## Last passed checkpoint
-Phase 1 recoverability checkpoint: Neon historical recovery was performed as a new branch `railway-pitr-drill` from main at 2026-10-06T16:07:00Z using past-point-in-time branch data/schema. In-place replacement of main was explicitly cancelled; main, `railway-restore-drill`, Railway, app variables, and DNS remain unchanged.
+Phase 1 recoverability exit test passed: PITR branch `railway-pitr-drill` recovered from 2026-10-06T16:07:00Z and matched the certified source/restore baseline exactly on all 35 public-table row counts and all 20 Drizzle migration id/hash/created_at triples. No writes; main, prior certified copies, Railway, app variables, and DNS remain unchanged.
 
 ## Confirmed findings
 - Existing `/chat` implementation is the approved Chat Boss foundation.
@@ -76,4 +76,4 @@ The copied Neon database must pass:
 8. application/database isolation tests.
 
 ## Next action
-On branch `railway-pitr-drill`, run read-only validation against database `railway_restore_test` and confirm all 35 public-table row counts and all 20 Drizzle migration id/hash/created_at triples match the certified source/restore baseline.
+Add a concise recoverability runbook/checkpoint note to the repo documenting the validated Railway-to-Neon restore path, the PITR drill, the intentional `--no-owner` ownership model, and the fact that production cutover has not occurred. After that, begin Phase 1 enforced CI/security gates.
