@@ -56,29 +56,74 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ -z "${SERVICE_CONTAINER_ID}" ]; then
-            echo "PostgreSQL service container id is missing." >&2
+          if [[ ! "${SERVICE_CONTAINER_ID}" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "PostgreSQL service container id is missing or malformed." >&2
             exit 1
           fi
 
-          mapfile -t service_ips < <(
-            docker inspect               --format '{{range .NetworkSettings.Networks}}{{println .IPAddress}}{{end}}'               "${SERVICE_CONTAINER_ID}" |
-              sed '/^[[:space:]]*$/d' |
-              sort -u
-          )
+          running="$(docker inspect --format '{{.State.Running}}' "${SERVICE_CONTAINER_ID}")"
+          image="$(docker inspect --format '{{.Config.Image}}' "${SERVICE_CONTAINER_ID}")"
+          bindings="$(
+            docker inspect               --format '{{json (index .NetworkSettings.Ports "5432/tcp")}}'               "${SERVICE_CONTAINER_ID}"
+          )"
 
-          if [ "${#service_ips[@]}" -ne 1 ]; then
-            echo "Expected exactly one PostgreSQL service-container IPv4 address; found ${#service_ips[@]}." >&2
+          if [ "${running}" != "true" ] || [ "${image}" != "postgres:18" ]; then
+            echo "PostgreSQL service container identity does not match the expected running postgres:18 service." >&2
             exit 1
           fi
 
-          service_ip="${service_ips[0]}"
-          if [[ ! "${service_ip}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "PostgreSQL service-container address is not one IPv4 literal." >&2
+          binding_count="$(
+            jq '[.[] | select(.HostPort == "5432" and (.HostIp == "0.0.0.0" or .HostIp == "127.0.0.1" or .HostIp == "::"))] | length'               <<< "${bindings}"
+          )"
+          if [ "${binding_count}" -lt 1 ]; then
+            echo "The verified PostgreSQL service container does not own the runner's published port 5432." >&2
             exit 1
           fi
 
-          echo "CI_DB_EXPECTED_SERVER_ADDR=${service_ip}" >> "${GITHUB_ENV}"
+          # The runner reaches the verified container through Docker's published
+          # localhost port. PostgreSQL may report a NAT/proxy-facing server
+          # address rather than the container's NetworkSettings IP, so derive the
+          # exact address through that already-verified port path and pin it for
+          # the guard. This query is read-only and runs before any migration.
+          service_addr="$(
+            node --input-type=module <<'NODE'
+          import { isIP } from "node:net";
+          import pg from "pg";
+
+          const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
+          try {
+            await client.connect();
+            const { rows } = await client.query(
+              "select inet_server_addr()::text as addr, inet_server_port()::int as port",
+            );
+            if (
+              rows.length !== 1 ||
+              isIP(rows[0].addr) === 0 ||
+              Number(rows[0].port) !== 5432
+            ) {
+              process.exitCode = 2;
+            } else {
+              process.stdout.write(rows[0].addr);
+            }
+          } catch {
+            process.exitCode = 2;
+          } finally {
+            try {
+              await client.end();
+            } catch {}
+          }
+          NODE
+          )" || {
+            echo "Could not derive PostgreSQL server identity through the verified local service mapping." >&2
+            exit 1
+          }
+
+          if [ -z "${service_addr}" ]; then
+            echo "PostgreSQL server identity was empty." >&2
+            exit 1
+          fi
+
+          echo "CI_DB_EXPECTED_SERVER_ADDR=${service_addr}" >> "${GITHUB_ENV}"
 
       - name: Guard disposable database before migrations
         run: node scripts/ci-db-guard.mjs pre-migrate
