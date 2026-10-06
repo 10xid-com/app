@@ -1,9 +1,10 @@
 import "server-only";
 import { AnthropicEngine } from "./anthropic";
 import { OpenAIEngine } from "./openai";
-import { PrototypeEngine } from "./prototype";
+import { OllamaEngine } from "./ollama";
 import { ENGINE_MODES, modeSpec, type EngineModeOption, type EngineModeSpec } from "./modes";
 import type { AgentEngine } from "./types";
+import { ollamaConfig, ollamaUnavailability } from "../ollama";
 
 /**
  * Which engine modes exist on this server, which a given client may use, and
@@ -17,8 +18,11 @@ import type { AgentEngine } from "./types";
  *     so the same client context is never sent to both without a person
  *     choosing a comparison (which does not exist yet).
  *   - A client can be kept off a mode by an engine_mode_policies row.
- *   - The prototype engine never receives tools, and is refused once a
- *     conversation has any context attached.
+ *   - The Ollama prototype (Ollama Cloud, a third party) never receives
+ *     tools, and is refused once a conversation has any context attached.
+ *   - Ollama self-hosted gets tools and context like Claude and OpenAI, and
+ *     exists only when OLLAMA_SELF_HOSTED=true says the server is ours. It
+ *     replaces the prototype: both would talk to the same server.
  *   - Keys and model names come from the server's environment only.
  */
 
@@ -39,10 +43,24 @@ function serverUnavailability(spec: EngineModeSpec): string | null {
     case "openai":
       if (!env("OPENAI_API_KEY")) return "Needs OPENAI_API_KEY on the server.";
       return modelFor(spec) ? null : `Needs ${spec.modelEnv} to name the model.`;
-    case "openrouter":
-      if (env("ENABLE_PROTOTYPE_ENGINE") !== "true") return "Prototype engine is switched off.";
-      return env("OPENROUTER_API_KEY") ? null : "Needs OPENROUTER_API_KEY on the server.";
+    case "ollama":
+      if (spec.id === "ollama-self-hosted") {
+        if (!ollamaConfig().selfHosted) return "Needs OLLAMA_SELF_HOSTED=true and your own Ollama server.";
+      } else {
+        if (env("ENABLE_PROTOTYPE_ENGINE") !== "true") return "Prototype engine is switched off.";
+        if (ollamaConfig().selfHosted) return "Replaced by Ollama — Self-hosted on this server.";
+      }
+      return ollamaUnavailability();
   }
+}
+
+/** Whether a mode is worth listing at all; the rest are noise when off. */
+function listed(spec: EngineModeSpec): boolean {
+  if (spec.id === "prototype-free") {
+    return env("ENABLE_PROTOTYPE_ENGINE") === "true" && !ollamaConfig().selfHosted;
+  }
+  if (spec.id === "ollama-self-hosted") return ollamaConfig().selfHosted;
+  return true;
 }
 
 /**
@@ -50,10 +68,7 @@ function serverUnavailability(spec: EngineModeSpec): string | null {
  * used and why not.
  */
 export function modeOptions(withheld: Set<string>): EngineModeOption[] {
-  return ENGINE_MODES.filter(
-    // The prototype is listed only when switched on; otherwise it is noise.
-    (m) => m.provider !== "openrouter" || env("ENABLE_PROTOTYPE_ENGINE") === "true",
-  ).map((m) => {
+  return ENGINE_MODES.filter(listed).map((m) => {
     const server = serverUnavailability(m);
     const reason = server ?? (withheld.has(m.id) ? "Not permitted for this client." : null);
     return {
@@ -70,7 +85,7 @@ export function modeOptions(withheld: Set<string>): EngineModeOption[] {
 
 /** The mode a new conversation starts in: Claude — Coding when possible. */
 export function defaultMode(options: EngineModeOption[]): string | null {
-  const preferred = ["claude-coding", "claude-deep", "openai-review", "openai-multimodal", "prototype-free"];
+  const preferred = ["claude-coding", "claude-deep", "openai-review", "openai-multimodal", "ollama-self-hosted", "prototype-free"];
   for (const id of preferred) {
     if (options.find((o) => o.id === id)?.available) return id;
   }
@@ -113,14 +128,14 @@ export function engineFor(
           fetch: opts.fetch,
         }),
       };
-    case "openrouter":
-      if (opts.hasContext) {
+    case "ollama":
+      if (spec.id === "prototype-free" && opts.hasContext) {
         return {
           error:
             "The prototype engine cannot be used once a conversation has jobs, files or attachments in it. " +
             "Choose Claude or OpenAI.",
         };
       }
-      return { spec, engine: new PrototypeEngine(model) };
+      return { spec, engine: new OllamaEngine(model, { capabilities: spec.capabilities, fetch: opts.fetch }) };
   }
 }

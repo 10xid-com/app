@@ -1,12 +1,14 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { z } from "zod";
 import { AnthropicEngine } from "@/lib/ai/engine/anthropic";
+import { OllamaEngine } from "@/lib/ai/engine/ollama";
 import { OpenAIEngine } from "@/lib/ai/engine/openai";
 import { defaultMode, engineFor, modeOptions } from "@/lib/ai/engine/registry";
 import type { AgentEvent, AgentTool } from "@/lib/ai/engine/types";
+import { resetModelHealth } from "@/lib/ai/ollama";
 
 /**
- * Both engines, driven through their REAL SDKs.
+ * The engines, driven through their REAL SDKs (Ollama has none: plain fetch).
  *
  * The network is replaced, not the SDK: each test hands the SDK a fetch that
  * answers with the provider's own streaming format, so the request the SDK
@@ -253,6 +255,150 @@ describe("the OpenAI engine", () => {
   });
 });
 
+/* ----------------------------- Ollama ----------------------------- */
+
+function ndjson(lines: unknown[]): Response {
+  return new Response(lines.map((l) => `${JSON.stringify(l)}\n`).join(""), {
+    status: 200,
+    headers: { "content-type": "application/x-ndjson" },
+  });
+}
+
+const ollamaDone = { done: true, done_reason: "stop", prompt_eval_count: 20, eval_count: 4 };
+
+describe("the Ollama engine", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    resetModelHealth();
+  });
+
+  test("streams text, names the model auto reached, and counts usage", async () => {
+    vi.stubEnv("OLLAMA_API_KEY", "k");
+    const captured: Captured[] = [];
+    const engine = new OllamaEngine("auto", {
+      capabilities: ["text", "streaming"],
+      fetch: fakeFetch(
+        [
+          () =>
+            ndjson([
+              { model: "gpt-oss:120b", message: { role: "assistant", content: "", thinking: "hmm" }, done: false },
+              { model: "gpt-oss:120b", message: { role: "assistant", content: "Hi " }, done: false },
+              { model: "gpt-oss:120b", message: { role: "assistant", content: "there" }, done: false },
+              ollamaDone,
+            ]),
+        ],
+        captured,
+      ),
+    });
+    const events = await collect(engine.stream({ system: "Be brief.", history: [{ role: "user", content: "hi" }], tools: [] }));
+    expect(events).toEqual([
+      { type: "model", model: "gpt-oss:120b" },
+      { type: "text", text: "Hi " },
+      { type: "text", text: "there" },
+      { type: "usage", inputTokens: 20, outputTokens: 4 },
+    ]);
+    expect(captured[0]!.body).toMatchObject({
+      model: "gpt-oss:120b",
+      stream: true,
+      messages: [{ role: "system", content: "Be brief." }, { role: "user", content: "hi" }],
+    });
+    expect(captured[0]!.body).not.toHaveProperty("tools");
+  });
+
+  test("self-hosted runs a valid tool call and sends the result back by name", async () => {
+    vi.stubEnv("OLLAMA_SELF_HOSTED", "true");
+    vi.stubEnv("OLLAMA_BASE_URL", "http://ollama.internal:11434");
+    lookup.calls = [];
+    const captured: Captured[] = [];
+    const engine = new OllamaEngine("gpt-oss:20b", {
+      capabilities: ["text", "tool_calling", "streaming"],
+      fetch: fakeFetch(
+        [
+          () =>
+            ndjson([
+              {
+                message: {
+                  role: "assistant",
+                  content: "",
+                  thinking: "look it up",
+                  tool_calls: [{ function: { name: "read_job", arguments: { ref: "ROT-0001" } } }],
+                },
+                done: false,
+              },
+              ollamaDone,
+            ]),
+          () => ndjson([{ message: { role: "assistant", content: "In progress." }, done: false }, ollamaDone]),
+        ],
+        captured,
+      ),
+    });
+    const events = await collect(engine.stream({ system: "s", history: [{ role: "user", content: "status?" }], tools: [lookup] }));
+
+    expect(lookup.calls).toEqual([{ ref: "ROT-0001" }]);
+    expect(events.map((e) => e.type)).toEqual(["tool_start", "tool_end", "text", "usage"]);
+    expect(captured[0]!.url).toBe("http://ollama.internal:11434/api/chat");
+    expect(captured[0]!.headers.get("authorization")).toBeNull();
+    expect(captured[0]!.body.tools).toEqual([
+      { type: "function", function: { name: "read_job", description: "Read one job", parameters: lookup.inputSchema } },
+    ]);
+    // The second request repeats the call, its thinking, then the result.
+    const second = captured[1]!.body;
+    expect(second.model).toBe("gpt-oss:20b");
+    expect((second.messages as unknown[]).slice(-2)).toEqual([
+      {
+        role: "assistant",
+        content: "",
+        thinking: "look it up",
+        tool_calls: [{ function: { name: "read_job", arguments: { ref: "ROT-0001" } } }],
+      },
+      { role: "tool", tool_name: "read_job", content: "ROT-0001: Banner reprint, in progress" },
+    ]);
+  });
+
+  test("an invalid tool input never reaches the tool", async () => {
+    vi.stubEnv("OLLAMA_API_KEY", "k");
+    lookup.calls = [];
+    const engine = new OllamaEngine("gpt-oss:120b", {
+      capabilities: ["text", "tool_calling"],
+      fetch: fakeFetch(
+        [
+          () =>
+            ndjson([
+              { message: { role: "assistant", content: "", tool_calls: [{ function: { name: "read_job", arguments: { ref: "../../etc/passwd" } } }] }, done: false },
+              ollamaDone,
+            ]),
+          () => ndjson([{ message: { role: "assistant", content: "Sorry." }, done: false }, ollamaDone]),
+        ],
+        [],
+      ),
+    });
+    const events = await collect(engine.stream({ system: "s", history: [{ role: "user", content: "x" }], tools: [lookup] }));
+    expect(lookup.calls).toEqual([]);
+    expect(events.find((e) => e.type === "tool_end")).toMatchObject({ ok: false });
+  });
+
+  test("the prototype refuses tools before anything is sent", async () => {
+    vi.stubEnv("OLLAMA_API_KEY", "k");
+    const captured: Captured[] = [];
+    const engine = new OllamaEngine("auto", { capabilities: ["text", "streaming"], fetch: fakeFetch([], captured) });
+    await expect(collect(engine.stream({ system: "s", history: [{ role: "user", content: "x" }], tools: [lookup] }))).rejects.toThrow(
+      /cannot use tools/,
+    );
+    expect(captured).toEqual([]);
+  });
+
+  test("a refused key is reported in words, not as a status code", async () => {
+    vi.stubEnv("OLLAMA_API_KEY", "bad");
+    const engine = new OllamaEngine("auto", {
+      capabilities: ["text"],
+      fetch: fakeFetch([() => Response.json({ error: "unauthorized" }, { status: 401 })], []),
+    });
+    await expect(collect(engine.stream({ system: "s", history: [{ role: "user", content: "x" }], tools: [] }))).rejects.toThrow(
+      /OLLAMA_API_KEY/,
+    );
+  });
+});
+
 /* ----------------------------- Routing ----------------------------- */
 
 describe("the routing policy", () => {
@@ -281,12 +427,45 @@ describe("the routing policy", () => {
   });
 
   test("the prototype is off unless switched on, and refused once there is context", () => {
-    vi.stubEnv("OPENROUTER_API_KEY", "k");
+    vi.stubEnv("OLLAMA_API_KEY", "k");
     expect(modeOptions(new Set()).some((o) => o.id === "prototype-free")).toBe(false);
     vi.stubEnv("ENABLE_PROTOTYPE_ENGINE", "true");
     expect("engine" in engineFor("prototype-free", new Set(), { hasContext: false })).toBe(true);
     expect(engineFor("prototype-free", new Set(), { hasContext: true })).toMatchObject({
       error: expect.stringMatching(/cannot be used/),
     });
+  });
+
+  test("the prototype without an Ollama key is listed but unavailable, and says why", () => {
+    vi.stubEnv("ENABLE_PROTOTYPE_ENGINE", "true");
+    vi.stubEnv("OLLAMA_API_KEY", "");
+    const opt = modeOptions(new Set()).find((o) => o.id === "prototype-free")!;
+    expect(opt.available).toBe(false);
+    expect(opt.reason).toMatch(/OLLAMA_API_KEY/);
+  });
+
+  test("self-hosted exists only when said, takes context and tools, and replaces the prototype", () => {
+    vi.stubEnv("ENABLE_PROTOTYPE_ENGINE", "true");
+    vi.stubEnv("OLLAMA_API_KEY", "k");
+    expect(modeOptions(new Set()).some((o) => o.id === "ollama-self-hosted")).toBe(false);
+    expect(engineFor("ollama-self-hosted", new Set())).toMatchObject({ error: expect.stringMatching(/OLLAMA_SELF_HOSTED/) });
+
+    vi.stubEnv("OLLAMA_SELF_HOSTED", "true");
+    vi.stubEnv("OLLAMA_BASE_URL", "http://ollama.internal:11434");
+    const options = modeOptions(new Set());
+    expect(options.map((o) => o.id)).not.toContain("prototype-free");
+    expect(options.find((o) => o.id === "ollama-self-hosted")).toMatchObject({ available: true, canUseTools: true });
+    expect(defaultMode(options)).toBe("ollama-self-hosted");
+    const resolved = engineFor("ollama-self-hosted", new Set(), { hasContext: true });
+    expect("engine" in resolved && resolved.engine.supports("tool_calling")).toBe(true);
+  });
+
+  test("self-hosted pointed at Ollama Cloud is refused", () => {
+    vi.stubEnv("OLLAMA_SELF_HOSTED", "true");
+    vi.stubEnv("OLLAMA_BASE_URL", "https://ollama.com");
+    vi.stubEnv("OLLAMA_API_KEY", "k");
+    const opt = modeOptions(new Set()).find((o) => o.id === "ollama-self-hosted")!;
+    expect(opt.available).toBe(false);
+    expect(opt.reason).toMatch(/your own Ollama server/);
   });
 });

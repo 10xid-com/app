@@ -19,7 +19,9 @@ export type EngineModeId =
   | "claude-deep"
   | "openai-multimodal"
   | "openai-review"
-  | "prototype-free";
+  /** Kept under its old id so existing conversations carry over. */
+  | "prototype-free"
+  | "ollama-self-hosted";
 
 export type EngineModeSpec = {
   id: EngineModeId;
@@ -97,13 +99,22 @@ export const ENGINE_MODES: EngineModeSpec[] = [
   },
   {
     id: "prototype-free",
-    label: "Prototype — Free models",
-    provider: "openrouter",
+    label: "Prototype — Ollama",
+    provider: "ollama",
     purpose:
-      "Free OpenRouter models, for trying the workspace out. Text only: no jobs, files or attachments are sent.",
-    modelEnv: "OPENROUTER_PROTOTYPE_MODEL",
+      "Ollama Cloud models, for trying the workspace out. Text only: no jobs, files or attachments are sent.",
+    modelEnv: "OLLAMA_MODEL",
     defaultModel: "auto",
     capabilities: ["text", "streaming"],
+  },
+  {
+    id: "ollama-self-hosted",
+    label: "Ollama — Self-hosted",
+    provider: "ollama",
+    purpose: "Models on our own Ollama server. Can look up this client's records; nothing leaves our infrastructure.",
+    modelEnv: "OLLAMA_MODEL",
+    defaultModel: "auto",
+    capabilities: ["text", "tool_calling", "streaming"],
   },
 ];
 

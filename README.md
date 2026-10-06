@@ -95,7 +95,8 @@ Each is **inert without configuration** rather than half-working. See `.env.exam
 | Email (Resend) | `RESEND_API_KEY`. Without it, development writes codes to a file and production refuses to start the flow. |
 | Google Drive | A service account with the `drive.file` scope, and one folder shared with it. The scope reaches only files the portal itself created. |
 | Workspace (Claude, OpenAI) | `ANTHROPIC_API_KEY` for the Claude modes; `OPENAI_API_KEY` plus `OPENAI_MODEL_MULTIMODAL` / `OPENAI_MODEL_REVIEW` for the OpenAI modes. Each mode is offered only once configured. See "The workspace" below. |
-| Free models (prototype) | `ENABLE_PROTOTYPE_ENGINE=true` and `OPENROUTER_API_KEY`. Text only, no tools, house workspace only. |
+| Ollama (prototype) | `ENABLE_PROTOTYPE_ENGINE=true` and `OLLAMA_API_KEY` for Ollama Cloud. Text only, no tools, house workspace only. |
+| Ollama (self-hosted) | `OLLAMA_SELF_HOSTED=true`, `OLLAMA_BASE_URL` naming your own server, and `OLLAMA_MODELS`. Context and tools like Claude; replaces the prototype. |
 
 ## The workspace
 
