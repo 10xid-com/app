@@ -4,12 +4,16 @@
 Phase 1 — Platform Hardening
 
 ## Current action
-Phase 1 / Enforced CI/security gates — PR #6 is merged. Implementing the isolated PostgreSQL 18 `database-security` GitHub Actions job on feature branch `ci/database-security`, without changing branch protection or production resources. Live PostgreSQL 18 verification is the objective of this PR.
+Phase 1 / Enforced CI/security gates — PR #8 (`ci/database-security`) now has a live disposable PostgreSQL 18.6 database-security run passing end-to-end. Existing `quality` remains intact. PR #8 is open/unmerged and the new database-security check has not been added to branch protection.
 
 ## Last passed checkpoint
 Phase 1 CI enforcement checkpoint: `10xid-com/login` was made public by explicit user choice with no billing change. Classic branch protection rule `84348218` applies to `main` (1 branch), requires a pull request before merging, and requires status check `quality` with updates accepted specifically from GitHub Actions. No database-backed checks or extra review restrictions are required. Approvals are off; administrator bypass remains allowed (`Do not allow bypassing` is unchecked), so do not claim universal/admin enforcement. Force pushes and branch deletions remain disallowed. No production app, DNS, Railway, or Neon changes were made.
 
 ## Confirmed findings
+- PR #8 live database-security run `37512598512` passed against disposable PostgreSQL 18.6. Guard unit tests passed 30/30; pre-migrate guard passed; all repository migrations applied; restricted `portal_app` post-migrate guard passed; deterministic seed passed; `db:rls-check` passed; Vitest passed 16 files / 263 tests.
+- The first live service-identity attempt exposed a representation bug: `inet_server_addr()::text` can differ from Docker's bare IP representation. The guard now compares Docker's exact service IP to `host(inet_server_addr())`, preserving exact-instance matching without accepting private ranges/CIDRs.
+- Database-security CI supplies no Ollama, Anthropic, OpenAI, OpenRouter, Railway, Neon, or production credentials. Engine tests use injected fake fetch responses; the Ollama test log messages are simulated provider responses, not live Ollama calls.
+- Existing `quality` CI also passed for the live-validation head before this state-only checkpoint update.
 - Chat Boss provider intent clarified by the user: **Ollama**, not OpenRouter. No Ollama model or base URL has been selected by this clarification. The repository currently still contains Anthropic and OpenAI engine modes; whether those remain part of Chat Boss is scope-ambiguous and requires a separate architecture decision before code/routing is changed. No OpenRouter dependency or credential is to be added.
 - PR #6 Docker topology blocker resolved: `inet_server_addr()` is no longer required to be loopback, because a runner-side localhost port mapping terminates at the PostgreSQL container's Docker-network interface.
 - Runner DB URLs remain strictly limited to `localhost`/`127.0.0.1`, port 5432, database `portal_ci`, and expected users. The live server must exactly match `CI_DB_EXPECTED_SERVER_ADDR`; arbitrary private CIDRs/hostnames are not accepted.
@@ -18,11 +22,11 @@ Phase 1 CI enforcement checkpoint: `10xid-com/login` was made public by explicit
 - Exact branch files passed `node --check` for guard and test files and `node --test scripts/ci-db-guard.test.mjs` with 30/30 passing tests.
 - Existing PR #6 `quality` GitHub Actions run is green after the compatibility fix.
 - Local environment has no Docker/Podman/PostgreSQL server available, so a live PostgreSQL 18 service-container execution of the embedded guard SQL remains unverified until the separate workflow-integration PR.
-- `scripts/ci-db-guard.mjs` now implements `pre-migrate` and `post-migrate` modes on feature branch `ci/database-guard`; it has not been merged to `main` yet.
+- `scripts/ci-db-guard.mjs` with `pre-migrate` and `post-migrate` modes was merged to `main` in PR #6.
 - Guard URL checks require loopback only, database `portal_ci`, owner user `ci_owner`, restricted user `portal_app`, port 5432, disposable passwords, and no URL query parameters/fragments.
 - Pre-migrate live checks require direct `ci_owner` authentication to loopback `portal_ci` and a blank user-table target before any migration write.
 - Post-migrate live checks require direct `portal_app` authentication, no SUPERUSER/BYPASSRLS/CREATEDB/CREATEROLE/REPLICATION, no ownership of the CI database or application schemas/relations/routines/enums/domains, and no direct or transitive role memberships.
-- Guard tests use only fake PostgreSQL clients; no external database connection is made. Local syntax checks passed and Node built-in tests passed 25/25.
+- Guard unit tests use fake PostgreSQL clients and pass 30/30; live database behavior is now additionally exercised by PR #8 against its disposable PostgreSQL 18.6 service container.
 - PR #6 (`ci: add fail-closed database target guard`) was explicitly approved and merged through the protected PR path with required `quality` green and no bypass. Live PostgreSQL 18 execution remained outstanding at merge.
 - Database-backed CI design is documented in `docs/ci-database-security-gate-design.md`.
 - Proposed CI database is a disposable PostgreSQL 18 GitHub Actions service container on loopback, database `portal_ci`, owner role `ci_owner`, restricted role `portal_app`.
@@ -107,4 +111,4 @@ The copied Neon database must pass:
 8. application/database isolation tests.
 
 ## Next action
-Validate the new `database-security` PR against a real disposable PostgreSQL 18 GitHub Actions service container. Do not merge it or add the new check to branch protection until the live job is green and reviewed.
+Human-review PR #8 and its live PostgreSQL 18 results. Do not merge PR #8 or add `database-security` to branch protection until explicitly approved.
