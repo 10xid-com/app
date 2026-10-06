@@ -80,14 +80,36 @@ restricted role: portal_app
 
 The owner/service-container password and `portal_app` password are throwaway CI-only values. They are not production secrets and must never be sourced from GitHub production secrets, Railway, Neon, Vercel, or any external secret store.
 
-The resulting connections are conceptually:
+The resulting runner-side connections are conceptually:
 
 ```text
 DATABASE_URL=postgresql://ci_owner:<throwaway>@127.0.0.1:5432/portal_ci
 DATABASE_APP_URL=postgresql://portal_app:<throwaway>@127.0.0.1:5432/portal_ci
 ```
 
-No remote hostname is permitted.
+No remote hostname is permitted in either connection URL.
+
+### Docker service identity contract
+
+GitHub-hosted jobs reach a PostgreSQL service container through a runner-side localhost port mapping. PostgreSQL itself therefore reports the container's Docker-network address from `inet_server_addr()`, not `127.0.0.1`.
+
+The workflow must derive the exact running PostgreSQL service-container address from the specific service container instance and pass only that exact IP literal as:
+
+```text
+CI_DB_EXPECTED_SERVER_ADDR=<exact service-container IP>
+```
+
+The integration contract is:
+
+1. keep `DATABASE_URL` and `DATABASE_APP_URL` pinned to runner loopback (`127.0.0.1:5432`);
+2. obtain the PostgreSQL service container ID from GitHub's job service context for the `postgres` service;
+3. inspect that exact container with Docker on the runner;
+4. extract exactly one service-network IP address;
+5. fail the workflow if the container ID is empty, inspection fails, zero addresses are returned, or more than one usable address is returned;
+6. export that single address as `CI_DB_EXPECTED_SERVER_ADDR`;
+7. the guard then requires `inet_server_addr()` to equal that exact address byte-for-byte.
+
+This does **not** allow arbitrary RFC1918/private address ranges. An arbitrary private IP is rejected unless it is the exact address explicitly derived from the current PostgreSQL service instance.
 
 ## Fail-closed target guard
 
@@ -107,17 +129,23 @@ The guard must fail unless all applicable assertions are true:
 4. app URL username is exactly `portal_app`;
 5. both URLs point to the same host/port/database;
 6. neither URL contains a Railway, Neon, Vercel, or other remote host;
-7. a live owner connection reports:
+7. `CI_DB_EXPECTED_SERVER_ADDR` exists and is exactly one IPv4 or IPv6 literal derived from the current PostgreSQL service container instance;
+8. a live owner connection reports:
    - `current_database() = 'portal_ci'`
    - `current_user = 'ci_owner'`
-   - server address is loopback/local to the job;
-8. after migration, a live app connection reports:
+   - `session_user = 'ci_owner'`
+   - `inet_server_addr()` exactly equals `CI_DB_EXPECTED_SERVER_ADDR`
+   - server port is 5432;
+9. after migration, a live app connection reports:
    - `current_user = 'portal_app'`
    - `rolsuper = false`
    - `rolbypassrls = false`
    - `rolcreatedb = false`
    - `rolcreaterole = false`
-   - zero ownership of public application tables.
+   - `rolreplication = false`
+   - `inet_server_addr()` exactly equals `CI_DB_EXPECTED_SERVER_ADDR`
+   - zero ownership of the CI database and application schemas/relations/routines/enums/domains
+   - no direct or transitive role memberships.
 
 The guard should have two explicit modes:
 
@@ -184,13 +212,14 @@ The first implementation should run in this order:
 2. wait for PostgreSQL health check;
 3. `npm ci`;
 4. construct only local throwaway owner/app URLs;
-5. run `ci-db-guard.mjs pre-migrate`;
-6. run `npm run db:migrate:prod`;
-7. run `ci-db-guard.mjs post-migrate`;
-8. run `npm run db:seed`;
-9. run `npm run db:rls-check`;
-10. run `npm test`;
-11. optional final read-only guard/report confirming `portal_app` remained restricted.
+5. derive the exact PostgreSQL service-container IP from the current GitHub Actions service instance and export it as `CI_DB_EXPECTED_SERVER_ADDR`;
+6. run `ci-db-guard.mjs pre-migrate`;
+7. run `npm run db:migrate:prod`;
+8. run `ci-db-guard.mjs post-migrate`;
+9. run `npm run db:seed`;
+10. run `npm run db:rls-check`;
+11. run `npm test`;
+12. optional final read-only guard/report confirming `portal_app` remained restricted.
 
 Each step stops the job immediately on failure.
 
@@ -244,6 +273,9 @@ It must not print connection URLs or passwords.
 Do not rely on an explicit `DROP DATABASE` as the safety mechanism; container destruction is stronger and simpler.
 
 ## Failure handling
+
+Driver/connection/query errors are sanitized by the guard. Raw node-postgres error messages are not printed because they may contain host/user/database details or, depending on caller/driver behavior, credential-bearing connection material. The guard emits only fixed safe failure categories.
+
 
 Every database-writing step must run only after the local-target guard succeeds.
 
@@ -306,7 +338,7 @@ The corresponding displayed check should remain stable across workflow edits.
 The implementation is acceptable only when a public-repository PR run proves all of the following without external secrets:
 
 - PostgreSQL 18 service is local and disposable;
-- pre-migrate guard proves the target is `portal_ci` on loopback;
+- runner connection URLs are loopback-only and the live PostgreSQL server identity exactly matches the address derived from the current service-container instance;
 - all migrations apply successfully;
 - `portal_app` connects directly and is restricted/non-owner/non-BYPASSRLS;
 - deterministic seed succeeds;
@@ -318,8 +350,4 @@ The implementation is acceptable only when a public-repository PR run proves all
 
 ## Exact next implementation step
 
-Implement **only** `scripts/ci-db-guard.mjs` first, with `pre-migrate` and `post-migrate` modes plus local-target/role/ownership assertions.
-
-Do not modify the GitHub Actions workflow in the same step.
-
-After the guard is reviewed and tested, the following separate action will add the PostgreSQL 18 service-container job and call the guard around migration/seed/security tests.
+Resolve and merge the guard PR only after the guard is verified against the documented Docker topology contract. The next separate implementation step after merge is to add the PostgreSQL 18 `database-security` service-container job on a new feature branch/PR. That workflow must derive `CI_DB_EXPECTED_SERVER_ADDR` from the exact running PostgreSQL service container before invoking the guard, then run migration/seed/security tests in the documented order.
