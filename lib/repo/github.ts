@@ -1,5 +1,5 @@
 import "server-only";
-import { createSign } from "node:crypto";
+import { createPrivateKey, createSign } from "node:crypto";
 import { checkBranch, checkPath, isSearchable, isSecretPath, LIMITS, looksBinary } from "./policy";
 import {
   RepoError,
@@ -45,9 +45,47 @@ export function githubAppConfigFromEnv(): GitHubAppConfig | null {
   const appId = process.env.GITHUB_APP_ID?.trim();
   const raw = process.env.GITHUB_APP_PRIVATE_KEY?.trim();
   if (!appId || !raw) return null;
-  // A key pasted on one line arrives with literal "\n"; restore the newlines.
-  const privateKey = raw.includes("\\n") ? raw.replace(/\\n/g, "\n") : raw;
-  return { appId, privateKey, apiUrl: process.env.GITHUB_API_URL?.trim() || undefined };
+  return { appId, privateKey: normalizePem(raw), apiUrl: process.env.GITHUB_API_URL?.trim() || undefined };
+}
+
+/**
+ * The key as GitHub's .pem file had it, however it was pasted.
+ *
+ * A dashboard field mangles a multi-line value in several ways, and each one
+ * makes the key unreadable: wrapped in quotes, newlines typed as a literal
+ * "\n", Windows line endings, or the line breaks turned into spaces or lost.
+ * The base64 between the BEGIN and END lines is the key; everything else is
+ * layout, so it is rebuilt from that, 64 characters a line.
+ */
+export function normalizePem(raw: string): string {
+  let s = raw.trim();
+  if (s.length > 1 && (s[0] === '"' || s[0] === "'") && s.at(-1) === s[0]) s = s.slice(1, -1).trim();
+  s = s.replace(/\\r\\n|\\n|\\r/g, "\n").replace(/\r\n?/g, "\n");
+  const m = /-----BEGIN ([A-Z0-9 ]+)-----([\s\S]*?)-----END \1-----/.exec(s);
+  if (!m) return s;
+  const body = m[2]!.replace(/\s+/g, "");
+  return `-----BEGIN ${m[1]}-----\n${(body.match(/.{1,64}/g) ?? []).join("\n")}\n-----END ${m[1]}-----\n`;
+}
+
+/**
+ * Why a key cannot be used, in words that point at the fix and never repeat
+ * any of the key: what kind of block it is and how long, nothing more.
+ */
+export function privateKeyProblem(pem: string): string | null {
+  const begin = /-----BEGIN ([A-Z0-9 ]+)-----/.exec(pem);
+  if (!begin) return "there is no -----BEGIN line. Paste the whole .pem file, including its BEGIN and END lines.";
+  const kind = begin[1]!;
+  if (!kind.includes("PRIVATE KEY")) return `it is a ${kind.toLowerCase()}, not a private key. Use the .pem file GitHub downloaded.`;
+  const end = new RegExp(`-----END ${kind}-----`).exec(pem);
+  if (!end) return "the -----END line is missing, so the key was cut short. Paste the whole file again.";
+  const body = pem.slice(begin.index + begin[0].length, end.index).replace(/\s+/g, "");
+  if (/[^A-Za-z0-9+/=]/.test(body)) return "the text between BEGIN and END has characters a key never contains. Paste the file again, unchanged.";
+  try {
+    createPrivateKey(pem);
+    return null;
+  } catch {
+    return `the ${body.length} characters between BEGIN and END do not decode to a key (a 2048-bit GitHub key is about 1,600). Part of it is missing or changed; generate a new key and paste the whole file.`;
+  }
 }
 
 /** The app itself: signs its own JWT and mints narrowed installation tokens. */
@@ -69,7 +107,8 @@ export class GitHubApp {
     try {
       signature = createSign("RSA-SHA256").update(body).sign(this.config.privateKey, "base64url");
     } catch {
-      throw new RepoError("GITHUB_APP_PRIVATE_KEY is not a valid private key.");
+      const why = privateKeyProblem(this.config.privateKey) ?? "it could not be used to sign.";
+      throw new RepoError(`GITHUB_APP_PRIVATE_KEY is not a valid private key: ${why}`);
     }
     return `${body}.${signature}`;
   }
