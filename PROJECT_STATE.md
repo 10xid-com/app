@@ -4,12 +4,20 @@
 Phase 1 — Platform Hardening
 
 ## Current action
-Phase 1 / Recoverability — recoverability runbook documented and exit test closed. Next step is Phase 1 enforced CI/security gates.
+Phase 1 / Enforced CI/security gates — repository audit completed. Next step is add the first GitHub Actions workflow for deterministic code-quality gates before wiring database-backed security checks.
 
 ## Last passed checkpoint
-Phase 1 recoverability exit test passed and documented in `docs/recoverability-runbook.md`, including the Railway source dump path, Neon `--no-owner` restore model, source-fidelity checks, security/RLS checks, tenant-isolation proof, PITR drill, and explicit no-cutover guardrail.
+Phase 1 CI audit: repo has no `.github/` directory or workflows; available deterministic gates are `npm run lint`, `npm run typecheck`, and `npm test`. Database-backed gates exist as `npm run db:rls-check`, `npm run prove`, and Playwright E2E, but tests require both owner and restricted app database connections. ESLint already enforces the raw-database-import tenancy rule. GitHub App cannot read branch-protection settings (403), so protection must be checked manually or via a credential/integration with administration read access.
 
 ## Confirmed findings
+- CI audit: no `.github/` directory or GitHub Actions workflows exist on `main`.
+- Deterministic repo gates already available: `npm run lint`, `npm run typecheck`, `npm run build`; unit/integration Vitest suite is invoked by `npm test`.
+- Vitest setup intentionally requires both `DATABASE_URL` (owner fixtures) and `DATABASE_APP_URL` (restricted runtime role), so `npm test` is database-backed rather than a secret-free unit-only gate.
+- `npm run db:rls-check` is a build-failing tenant-protection check: all organization-scoped carrier tables must be RLS-protected or explicitly exempted with a documented reason.
+- ESLint already enforces a tenancy security rule preventing application code outside `lib/db/` from importing the raw pool or opening direct `pg`/Drizzle node-postgres connections.
+- `npm run prove` is a browser-backed live tenant-isolation proof and mutates test state (for example truncating sign-in codes), so it belongs only against an isolated CI database/environment.
+- Playwright E2E uses `next dev`, owner DB setup, sign-in-code sink behavior, four browser-context projects, and shared mutable database state; it is unsuitable for a simple first-pass CI job without dedicated ephemeral infrastructure.
+- GitHub branch-protection API could not be inspected through the current GitHub App because the integration lacks administration read access (403). Manual UI verification or an admin-capable integration is still required before we can assert branch protection is configured.
 - Existing `/chat` implementation is the approved Chat Boss foundation.
 - Do not introduce a second chat/agent architecture.
 - Do not install AI SDK, AI Elements, Redis, object storage, a new auth system, or another database architecture unless specifically approved later.
@@ -76,4 +84,4 @@ The copied Neon database must pass:
 8. application/database isolation tests.
 
 ## Next action
-Begin Phase 1 enforced CI/security gates by auditing the current repository for existing lint, typecheck, test, migration/RLS checks, and branch-protection readiness before adding any workflow.
+Add a minimal GitHub Actions workflow that runs install, lint, typecheck, and build on pull requests and pushes to `main`; keep database-backed RLS/isolation/E2E checks out of the first workflow until a safe isolated CI database setup is defined.
