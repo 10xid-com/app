@@ -4,10 +4,10 @@
 Phase 1 — Platform Hardening
 
 ## Current action
-Phase 1 / Recoverability — Railway source dump restored successfully into isolated Neon database `railway_restore_test`. Next step is validate source-vs-restore row counts and Drizzle migration journal before deeper role/grant/RLS checks.
+Phase 1 / Recoverability — source-vs-restore row counts and Drizzle migration journal match exactly. Next step is validate ownership, role attributes, grants, RLS flags, and policies on the restored Neon database.
 
 ## Last passed checkpoint
-Phase 1 recoverability checkpoint: source-authoritative Railway custom dump restored into empty Neon `railway_restore_test` with `pg_restore --no-owner --exit-on-error --verbose`; exit code 0 and no restore errors. Existing `neondb`, Railway resources, app variables, and DNS were not changed.
+Phase 1 recoverability checkpoint: all 35 public-table row counts on `railway_restore_test` match the saved Railway source baseline, and all 20 Drizzle migration id/hash/timestamp triples match exactly. No writes were performed.
 
 ## Confirmed findings
 - Existing `/chat` implementation is the approved Chat Boss foundation.
@@ -76,4 +76,4 @@ The copied Neon database must pass:
 8. application/database isolation tests.
 
 ## Next action
-Run a read-only source-vs-restore validation focused first on all public-table row counts and the Drizzle migration journal. Do not modify the restored database.
+Run a read-only security-structure validation on `railway_restore_test`: confirm table ownership, `portal_app` role attributes, table grants, RLS enablement/FORCE flags, and all policies against the Railway source baseline.
