@@ -1,7 +1,4 @@
-import pg from "pg";
 import { pathToFileURL } from "node:url";
-
-const { Client } = pg;
 
 const EXPECTED = Object.freeze({
   database: "portal_ci",
@@ -77,7 +74,7 @@ export function validateTargetUrls(env = process.env) {
 }
 
 async function connectChecked(connectionString, makeClient) {
-  const client = makeClient({ connectionString });
+  const client = await makeClient({ connectionString });
   await client.connect();
   return client;
 }
@@ -305,11 +302,16 @@ async function verifyAppConnection(app, makeClient) {
   }
 }
 
+async function defaultClientFactory(config) {
+  const { default: pg } = await import("pg");
+  return new pg.Client(config);
+}
+
 export async function runGuard(
   mode,
   {
     env = process.env,
-    makeClient = (config) => new Client(config),
+    makeClient = defaultClientFactory,
     log = console.log,
   } = {},
 ) {
