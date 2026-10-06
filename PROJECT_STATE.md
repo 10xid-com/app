@@ -4,10 +4,10 @@
 Phase 1 — Platform Hardening
 
 ## Current action
-Phase 1 / Recoverability — separate Neon branch `railway-restore-drill` created from current branch HEAD. Next step is verify that `railway_restore_test` on the drill branch reproduces the certified restore state exactly.
+Phase 1 / Recoverability — recovery branch validation passed. Next step is verify an actual point-in-time restore from Neon history into a separate branch, not just a HEAD branch clone.
 
 ## Last passed checkpoint
-Phase 1 recoverability checkpoint: separate Neon branch `railway-restore-drill` created successfully from current branch HEAD without changing Railway, app variables, DNS, or the certified restore database.
+Phase 1 recoverability checkpoint: branch `railway-restore-drill` reproduced the certified `railway_restore_test` state exactly: all 35 public-table counts and all 20 Drizzle migration id/hash/created_at triples match source/certified restore. No writes; main, Railway, app variables, and DNS remain unchanged.
 
 ## Confirmed findings
 - Existing `/chat` implementation is the approved Chat Boss foundation.
@@ -76,4 +76,4 @@ The copied Neon database must pass:
 8. application/database isolation tests.
 
 ## Next action
-On branch `railway-restore-drill`, run read-only validation against database `railway_restore_test` and confirm all 35 public-table row counts plus all 20 Drizzle migration journal triples match the certified restore/source baseline exactly.
+Perform a true Neon point-in-time recovery test within the available 6-hour history window by restoring to a separate branch/copy, then validate row counts and the migration journal again. Do not overwrite or reset the certified restore branch.
