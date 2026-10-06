@@ -19,9 +19,11 @@ export type EngineModeId =
   | "claude-deep"
   | "openai-multimodal"
   | "openai-review"
-  /** Kept under its old id so existing conversations carry over. */
+  /** Ollama, any model ("auto"). Kept under its old id so existing conversations carry over. */
   | "prototype-free"
-  | "ollama-self-hosted";
+  | "ollama-self-hosted"
+  /** Ollama, one named model. Built from the server's model list (ollamaModelSpec). */
+  | `ollama:${string}`;
 
 export type EngineModeSpec = {
   id: EngineModeId;
@@ -30,8 +32,14 @@ export type EngineModeSpec = {
   /** One line shown under the label: what this mode is for. */
   purpose: string;
   /** The variable naming the model, and the model used when it is unset. */
-  modelEnv: string;
+  modelEnv?: string;
   defaultModel: string | null;
+  /**
+   * The mode whose client policy also governs this one. A per-model Ollama
+   * entry answers to its Auto mode's policy, so withholding Auto from a
+   * client withholds every model under it.
+   */
+  policyMode?: EngineModeId;
   /** Claude only: how hard the model thinks. */
   effort?: "low" | "medium" | "high" | "xhigh" | "max";
   capabilities: EngineCapability[];
@@ -99,20 +107,18 @@ export const ENGINE_MODES: EngineModeSpec[] = [
   },
   {
     id: "prototype-free",
-    label: "Prototype — Ollama",
+    label: "Ollama — Auto",
     provider: "ollama",
     purpose:
       "Ollama Cloud models, for trying the workspace out. Text only: no jobs, files or attachments are sent.",
-    modelEnv: "OLLAMA_MODEL",
     defaultModel: "auto",
     capabilities: ["text", "streaming"],
   },
   {
     id: "ollama-self-hosted",
-    label: "Ollama — Self-hosted",
+    label: "Ollama — Auto (self-hosted)",
     provider: "ollama",
     purpose: "Models on our own Ollama server. Can look up this client's records; nothing leaves our infrastructure.",
-    modelEnv: "OLLAMA_MODEL",
     defaultModel: "auto",
     capabilities: ["text", "tool_calling", "streaming"],
   },
@@ -120,6 +126,34 @@ export const ENGINE_MODES: EngineModeSpec[] = [
 
 export function modeSpec(id: string): EngineModeSpec | undefined {
   return ENGINE_MODES.find((m) => m.id === id);
+}
+
+/**
+ * What the picker calls each Ollama model, with whose model it is — people
+ * look for "OpenAI" or "Google", not "gpt-oss". A model on the server's list
+ * that is missing here is shown by its own name.
+ */
+const OLLAMA_LABELS: Record<string, string> = {
+  "gpt-oss:120b": "gpt-oss 120B (OpenAI)",
+  "gpt-oss:20b": "gpt-oss 20B (OpenAI)",
+  "gemma4:31b": "Gemma 4 31B (Google)",
+  "kimi-k2.7-code": "Kimi K2.7 Code (Moonshot AI)",
+};
+
+/**
+ * One Ollama model as its own picker entry. It answers with that model or not
+ * at all: someone who picked Gemma by name should not be handed gpt-oss. The
+ * rest — fences, tools, purpose — is the Auto mode's it is built from.
+ */
+export function ollamaModelSpec(base: EngineModeSpec, model: string): EngineModeSpec {
+  return {
+    ...base,
+    id: `ollama:${model}`,
+    label: `Ollama — ${OLLAMA_LABELS[model] ?? model}`,
+    policyMode: base.id,
+    modelEnv: undefined,
+    defaultModel: model,
+  };
 }
 
 /** What the person sees in the picker, computed on the server. */

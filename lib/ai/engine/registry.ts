@@ -2,9 +2,9 @@ import "server-only";
 import { AnthropicEngine } from "./anthropic";
 import { OpenAIEngine } from "./openai";
 import { OllamaEngine } from "./ollama";
-import { ENGINE_MODES, modeSpec, type EngineModeOption, type EngineModeSpec } from "./modes";
+import { ENGINE_MODES, modeSpec, ollamaModelSpec, type EngineModeOption, type EngineModeSpec } from "./modes";
 import type { AgentEngine } from "./types";
-import { ollamaConfig, ollamaUnavailability } from "../ollama";
+import { ollamaConfig, ollamaModels, ollamaUnavailability } from "../ollama";
 
 /**
  * Which engine modes exist on this server, which a given client may use, and
@@ -23,6 +23,8 @@ import { ollamaConfig, ollamaUnavailability } from "../ollama";
  *   - Ollama self-hosted gets tools and context like Claude and OpenAI, and
  *     exists only when OLLAMA_SELF_HOSTED=true says the server is ours. It
  *     replaces the prototype: both would talk to the same server.
+ *   - Each Ollama model on the server's list is also its own entry, with the
+ *     same fences as the Auto mode it is built from.
  *   - Keys and model names come from the server's environment only.
  */
 
@@ -32,7 +34,34 @@ function env(name: string): string | undefined {
 }
 
 export function modelFor(spec: EngineModeSpec): string | null {
-  return env(spec.modelEnv) ?? spec.defaultModel;
+  return (spec.modelEnv ? env(spec.modelEnv) : undefined) ?? spec.defaultModel;
+}
+
+/**
+ * Every mode this server knows: the fixed ones, then one per Ollama model,
+ * built from whichever Ollama mode the server runs (self-hosted or Cloud).
+ */
+function allModes(): EngineModeSpec[] {
+  const base = modeSpec(ollamaConfig().selfHosted ? "ollama-self-hosted" : "prototype-free")!;
+  return [...ENGINE_MODES, ...ollamaModels().map((m) => ollamaModelSpec(base, m))];
+}
+
+/**
+ * A mode by id, including the per-model Ollama ones. A model that has left
+ * the list (Ollama Cloud retires models) still resolves, so conversations
+ * saved with it say why they cannot run instead of failing as unknown; it is
+ * never available (serverUnavailability).
+ */
+export function findMode(id: string): EngineModeSpec | undefined {
+  const known = allModes().find((m) => m.id === id);
+  if (known || !id.startsWith("ollama:")) return known;
+  const base = modeSpec(ollamaConfig().selfHosted ? "ollama-self-hosted" : "prototype-free")!;
+  return ollamaModelSpec(base, id.slice("ollama:".length));
+}
+
+/** A per-model Ollama entry whose model is no longer on the server's list. */
+function isRetired(spec: EngineModeSpec): boolean {
+  return spec.policyMode !== undefined && !ollamaModels().includes(spec.defaultModel ?? "");
 }
 
 /** Why a mode cannot run on this server at all, or null when it can. */
@@ -43,34 +72,57 @@ function serverUnavailability(spec: EngineModeSpec): string | null {
     case "openai":
       if (!env("OPENAI_API_KEY")) return "Needs OPENAI_API_KEY on the server.";
       return modelFor(spec) ? null : `Needs ${spec.modelEnv} to name the model.`;
-    case "ollama":
-      if (spec.id === "ollama-self-hosted") {
-        if (!ollamaConfig().selfHosted) return "Needs OLLAMA_SELF_HOSTED=true and your own Ollama server.";
-      } else {
-        if (env("ENABLE_PROTOTYPE_ENGINE") !== "true") return "Prototype engine is switched off.";
-        if (ollamaConfig().selfHosted) return "Replaced by Ollama — Self-hosted on this server.";
+    case "ollama": {
+      if (isRetired(spec)) return "No longer offered on this server. Pick another model.";
+      const selfHosted = ollamaConfig().selfHosted;
+      if (spec.id === "ollama-self-hosted" && !selfHosted) {
+        return "Needs OLLAMA_SELF_HOSTED=true and your own Ollama server.";
       }
+      if (spec.id === "prototype-free" && selfHosted) return "Replaced by the self-hosted Ollama server.";
+      if (!selfHosted && env("ENABLE_PROTOTYPE_ENGINE") !== "true") return "Prototype engine is switched off.";
       return ollamaUnavailability();
+    }
   }
+}
+
+/** The Ollama models a client may be answered by: the list, less any its policy withholds by name. */
+function allowedOllamaModels(withheld: Set<string>): string[] {
+  return ollamaModels().filter((m) => !withheld.has(`ollama:${m}`));
+}
+
+/**
+ * Whether a client's policy withholds a mode: directly, through its Auto
+ * mode, or — for an Ollama Auto mode — because every model under it is
+ * withheld, leaving Auto nothing it may try.
+ */
+function isWithheld(spec: EngineModeSpec, withheld: Set<string>): boolean {
+  if (withheld.has(spec.id)) return true;
+  if (spec.policyMode !== undefined && withheld.has(spec.policyMode)) return true;
+  return spec.provider === "ollama" && spec.policyMode === undefined && allowedOllamaModels(withheld).length === 0;
 }
 
 /** Whether a mode is worth listing at all; the rest are noise when off. */
 function listed(spec: EngineModeSpec): boolean {
-  if (spec.id === "prototype-free") {
-    return env("ENABLE_PROTOTYPE_ENGINE") === "true" && !ollamaConfig().selfHosted;
-  }
-  if (spec.id === "ollama-self-hosted") return ollamaConfig().selfHosted;
-  return true;
+  if (spec.provider !== "ollama") return true;
+  const selfHosted = ollamaConfig().selfHosted;
+  if (spec.id === "prototype-free") return env("ENABLE_PROTOTYPE_ENGINE") === "true" && !selfHosted;
+  if (spec.id === "ollama-self-hosted") return selfHosted;
+  return selfHosted || env("ENABLE_PROTOTYPE_ENGINE") === "true";
 }
 
 /**
  * What the picker shows for one client: every mode, with whether it can be
- * used and why not.
+ * used and why not. `current` is the open conversation's mode: kept in the
+ * list even when it is no longer offered, so the picker shows what is saved
+ * (marked unavailable) rather than silently displaying another engine.
  */
-export function modeOptions(withheld: Set<string>): EngineModeOption[] {
-  return ENGINE_MODES.filter(listed).map((m) => {
+export function modeOptions(withheld: Set<string>, current?: string): EngineModeOption[] {
+  const modes = allModes().filter(listed);
+  const saved = current && !modes.some((m) => m.id === current) ? findMode(current) : undefined;
+  if (saved) modes.push(saved);
+  return modes.map((m) => {
     const server = serverUnavailability(m);
-    const reason = server ?? (withheld.has(m.id) ? "Not permitted for this client." : null);
+    const reason = server ?? (isWithheld(m, withheld) ? "Not permitted for this client." : null);
     return {
       id: m.id,
       label: m.label,
@@ -101,9 +153,9 @@ export function engineFor(
   withheld: Set<string>,
   opts: { hasContext: boolean; fetch?: typeof fetch } = { hasContext: false },
 ): { engine: AgentEngine; spec: EngineModeSpec } | { error: string } {
-  const spec = modeSpec(modeId);
+  const spec = findMode(modeId);
   if (!spec) return { error: "That engine mode does not exist." };
-  const why = serverUnavailability(spec) ?? (withheld.has(spec.id) ? "Not permitted for this client." : null);
+  const why = serverUnavailability(spec) ?? (isWithheld(spec, withheld) ? "Not permitted for this client." : null);
   if (why) return { error: `${spec.label} is not available: ${why}` };
   const model = modelFor(spec)!;
 
@@ -129,13 +181,22 @@ export function engineFor(
         }),
       };
     case "ollama":
-      if (spec.id === "prototype-free" && opts.hasContext) {
+      // Without tools it is the Ollama Cloud prototype, and keeps its fence.
+      if (!spec.capabilities.includes("tool_calling") && opts.hasContext) {
         return {
           error:
             "The prototype engine cannot be used once a conversation has jobs, files or attachments in it. " +
             "Choose Claude or OpenAI.",
         };
       }
-      return { spec, engine: new OllamaEngine(model, { capabilities: spec.capabilities, fetch: opts.fetch }) };
+      return {
+        spec,
+        engine: new OllamaEngine(model, {
+          capabilities: spec.capabilities,
+          // Auto never reaches a model the client's policy withholds by name.
+          models: allowedOllamaModels(withheld),
+          fetch: opts.fetch,
+        }),
+      };
   }
 }

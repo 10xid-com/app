@@ -11,8 +11,7 @@ import {
   listRuns,
   withheldEngineModes,
 } from "@/lib/db/workspace";
-import { modeSpec } from "@/lib/ai/engine/modes";
-import { modeOptions } from "@/lib/ai/engine/registry";
+import { findMode, modeOptions } from "@/lib/ai/engine/registry";
 import { listLinkedRepositories, repositoryNamesByIds } from "@/lib/db/repositories";
 import { githubConfigured } from "@/lib/repo";
 import { workspaceAccess } from "@/lib/workspace/access";
@@ -117,7 +116,7 @@ export default async function WorkspacePage({
       status: r.status,
       error: r.error,
       engineMode: r.engineMode,
-      engineLabel: modeSpec(r.engineMode)?.label ?? r.engineMode,
+      engineLabel: findMode(r.engineMode)?.label ?? r.engineMode,
       provider: r.provider,
       model: r.model,
       mode: r.mode,
@@ -149,7 +148,7 @@ export default async function WorkspacePage({
           }
         : null,
     },
-    engines: modeOptions(withheld),
+    engines: modeOptions(withheld, conversation?.engineMode),
     error: params.error ? (ERRORS[params.error] ?? "That did not work.") : null,
   };
 
