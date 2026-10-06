@@ -13,6 +13,14 @@ function fail(message) {
   throw new Error(`CI database guard refused target: ${message}`);
 }
 
+function decodeUrlPart(name, label, value) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    fail(`${name} has malformed percent-encoding in ${label}`);
+  }
+}
+
 export function parseDatabaseUrl(name, raw, expectedUser) {
   if (!raw) fail(`${name} is missing`);
 
@@ -32,13 +40,16 @@ export function parseDatabaseUrl(name, raw, expectedUser) {
   if ((url.port || "5432") !== EXPECTED.port) {
     fail(`${name} port must be ${EXPECTED.port}`);
   }
-  if (decodeURIComponent(url.username) !== expectedUser) {
+  const username = decodeUrlPart(name, "username", url.username);
+  const pathname = decodeUrlPart(name, "database name", url.pathname);
+
+  if (username !== expectedUser) {
     fail(`${name} username must be ${expectedUser}`);
   }
   if (!url.password) {
     fail(`${name} must contain a disposable CI-only password`);
   }
-  if (decodeURIComponent(url.pathname) !== `/${EXPECTED.database}`) {
+  if (pathname !== `/${EXPECTED.database}`) {
     fail(`${name} database must be exactly ${EXPECTED.database}`);
   }
   if (url.search || url.hash) {
@@ -49,8 +60,8 @@ export function parseDatabaseUrl(name, raw, expectedUser) {
     raw,
     hostClass: "loopback",
     port: url.port || "5432",
-    database: decodeURIComponent(url.pathname.slice(1)),
-    username: decodeURIComponent(url.username),
+    database: pathname.slice(1),
+    username,
   };
 }
 
@@ -151,7 +162,8 @@ async function verifyAppConnection(app, makeClient) {
           r.rolsuper,
           r.rolbypassrls,
           r.rolcreatedb,
-          r.rolcreaterole
+          r.rolcreaterole,
+          r.rolreplication
         from pg_roles r
         where r.rolname = current_user
       `,
@@ -175,6 +187,7 @@ async function verifyAppConnection(app, makeClient) {
     if (role.rolbypassrls) forbiddenAttributes.push("BYPASSRLS");
     if (role.rolcreatedb) forbiddenAttributes.push("CREATEDB");
     if (role.rolcreaterole) forbiddenAttributes.push("CREATEROLE");
+    if (role.rolreplication) forbiddenAttributes.push("REPLICATION");
     if (forbiddenAttributes.length > 0) {
       fail(`portal_app has forbidden role attributes: ${forbiddenAttributes.join(", ")}`);
     }
@@ -205,7 +218,14 @@ async function verifyAppConnection(app, makeClient) {
              join pg_namespace n on n.oid = p.pronamespace
              cross join app
             where p.proowner = app.oid
-              and n.nspname in ('public', 'drizzle')) as routines
+              and n.nspname in ('public', 'drizzle')) as routines,
+          (select count(*)::int
+             from pg_type t
+             join pg_namespace n on n.oid = t.typnamespace
+             cross join app
+            where t.typowner = app.oid
+              and n.nspname in ('public', 'drizzle')
+              and t.typtype in ('e', 'd')) as types
       `,
     );
 
@@ -213,19 +233,18 @@ async function verifyAppConnection(app, makeClient) {
       Number(ownership.databases) +
       Number(ownership.schemas) +
       Number(ownership.relations) +
-      Number(ownership.routines);
+      Number(ownership.routines) +
+      Number(ownership.types);
     if (owned !== 0) {
       fail("portal_app owns database/application schema objects");
     }
 
     const memberships = await client.query(`
       /* ci-db-guard:privilege-memberships */
-      with recursive inherited_roles(roleid, path, usable, adminable) as (
+      with recursive inherited_roles(roleid, path) as (
         select
           m.roleid,
-          array[m.member, m.roleid]::oid[],
-          (coalesce(m.inherit_option, true) or coalesce(m.set_option, true)) as usable,
-          m.admin_option as adminable
+          array[m.member, m.roleid]::oid[]
         from pg_auth_members m
         where m.member = (select oid from pg_roles where rolname = 'portal_app')
 
@@ -233,69 +252,22 @@ async function verifyAppConnection(app, makeClient) {
 
         select
           m.roleid,
-          ir.path || m.roleid,
-          ir.usable and (coalesce(m.inherit_option, true) or coalesce(m.set_option, true)),
-          ir.adminable or m.admin_option
+          ir.path || m.roleid
         from pg_auth_members m
         join inherited_roles ir on m.member = ir.roleid
         where not m.roleid = any(ir.path)
-      ),
-      privileged as (
-        select
-          ir.roleid,
-          ir.usable,
-          ir.adminable,
-          r.rolname,
-          r.rolsuper,
-          r.rolbypassrls,
-          r.rolcreatedb,
-          r.rolcreaterole,
-          exists (
-            select 1 from pg_database d where d.datdba = r.oid
-          ) as owns_database,
-          exists (
-            select 1 from pg_namespace n
-            where n.nspowner = r.oid
-              and n.nspname in ('public', 'drizzle')
-          ) as owns_schema,
-          exists (
-            select 1
-            from pg_class c
-            join pg_namespace n on n.oid = c.relnamespace
-            where c.relowner = r.oid
-              and n.nspname in ('public', 'drizzle')
-          ) as owns_relation,
-          exists (
-            select 1
-            from pg_proc p
-            join pg_namespace n on n.oid = p.pronamespace
-            where p.proowner = r.oid
-              and n.nspname in ('public', 'drizzle')
-          ) as owns_routine
-        from inherited_roles ir
-        join pg_roles r on r.oid = ir.roleid
       )
-      select rolname
-      from privileged
-      where adminable
-         or (
-           usable and (
-             rolsuper
-             or rolbypassrls
-             or rolcreatedb
-             or rolcreaterole
-             or owns_database
-             or owns_schema
-             or owns_relation
-             or owns_routine
-           )
-         )
-      order by rolname
+      select distinct r.rolname
+      from inherited_roles ir
+      join pg_roles r on r.oid = ir.roleid
+      order by r.rolname
     `);
 
     if (memberships.rows.length > 0) {
       const names = memberships.rows.map((row) => row.rolname).join(", ");
-      fail(`portal_app has privilege-escalating role membership(s): ${names}`);
+      fail(
+        `portal_app has unexpected role membership(s), treated as privilege-escalating: ${names}`,
+      );
     }
   } finally {
     await client.end();
