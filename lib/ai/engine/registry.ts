@@ -25,6 +25,10 @@ import { ollamaConfig, ollamaModels, ollamaUnavailability } from "../ollama";
  *     replaces the prototype: both would talk to the same server.
  *   - Each Ollama model on the server's list is also its own entry, with the
  *     same fences as the Auto mode it is built from.
+ *   - OLLAMA_CLOUD_CLIENT_DATA=true is the owner's decision (2026-10-06) that
+ *     Ollama Cloud may be sent client records and linked repository code: it
+ *     gives the Cloud modes the same tools as Claude, which lifts the
+ *     prototype's fence. Off unless said, like OLLAMA_SELF_HOSTED.
  *   - Keys and model names come from the server's environment only.
  */
 
@@ -38,12 +42,33 @@ export function modelFor(spec: EngineModeSpec): string | null {
 }
 
 /**
+ * The Ollama Cloud Auto mode as this server runs it: the text-only prototype,
+ * or — once the owner has allowed client data — with the record and
+ * repository tools, which is what lets it into client workspaces.
+ */
+function cloudMode(): EngineModeSpec {
+  const prototype = modeSpec("prototype-free")!;
+  if (env("OLLAMA_CLOUD_CLIENT_DATA") !== "true") return prototype;
+  return {
+    ...prototype,
+    purpose: "Ollama Cloud models. Can look up this client's jobs and linked repositories.",
+    capabilities: ["text", "tool_calling", "streaming"],
+  };
+}
+
+/** The Auto mode the per-model Ollama entries are built from on this server. */
+function ollamaBase(): EngineModeSpec {
+  return ollamaConfig().selfHosted ? modeSpec("ollama-self-hosted")! : cloudMode();
+}
+
+/**
  * Every mode this server knows: the fixed ones, then one per Ollama model,
  * built from whichever Ollama mode the server runs (self-hosted or Cloud).
  */
 function allModes(): EngineModeSpec[] {
-  const base = modeSpec(ollamaConfig().selfHosted ? "ollama-self-hosted" : "prototype-free")!;
-  return [...ENGINE_MODES, ...ollamaModels().map((m) => ollamaModelSpec(base, m))];
+  const base = ollamaBase();
+  const fixed = ENGINE_MODES.map((m) => (m.id === "prototype-free" ? cloudMode() : m));
+  return [...fixed, ...ollamaModels().map((m) => ollamaModelSpec(base, m))];
 }
 
 /**
@@ -55,8 +80,7 @@ function allModes(): EngineModeSpec[] {
 export function findMode(id: string): EngineModeSpec | undefined {
   const known = allModes().find((m) => m.id === id);
   if (known || !id.startsWith("ollama:")) return known;
-  const base = modeSpec(ollamaConfig().selfHosted ? "ollama-self-hosted" : "prototype-free")!;
-  return ollamaModelSpec(base, id.slice("ollama:".length));
+  return ollamaModelSpec(ollamaBase(), id.slice("ollama:".length));
 }
 
 /** A per-model Ollama entry whose model is no longer on the server's list. */
