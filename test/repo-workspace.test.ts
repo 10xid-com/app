@@ -28,6 +28,7 @@ import { createFakeGitHub, sampleRepo } from "./support/fake-github";
  *   secrets are never sent                 whatever the model or the person asks for
  *   @mentions become context               checked against the policy first
  *   the Ollama prototype is kept away      from any conversation with a repository
+ *   ...until client data is allowed        then it reads through the same bound tools
  */
 
 const owner = new Client({ connectionString: process.env.DATABASE_URL });
@@ -179,6 +180,17 @@ async function repoConversation(branch = "main") {
   return { row, conv, fake, readerFor };
 }
 
+/** One Ollama /api/chat reply, as the newline-delimited stream it arrives in. */
+function ollama(message: { content?: string; tool_calls?: unknown[] }): Response {
+  return new Response(
+    [
+      JSON.stringify({ model: "gpt-oss:120b", message: { role: "assistant", content: "", ...message }, done: false }),
+      JSON.stringify({ done: true, done_reason: "stop", prompt_eval_count: 40, eval_count: 6 }),
+    ].join("\n") + "\n",
+    { headers: { "content-type": "application/x-ndjson" } },
+  );
+}
+
 describe("an answer about a repository", () => {
   test("reads one commit, and its receipts name path, lines and commit", async () => {
     vi.stubEnv("ANTHROPIC_API_KEY", "test");
@@ -290,6 +302,41 @@ describe("an answer about a repository", () => {
     expect(events).toEqual([{ type: "error", message: expect.stringMatching(/no longer linked/) }]);
     expect(net.bodies).toEqual([]);
     expect(await listRuns(rotaryOwner(), conv.id)).toEqual([]);
+  });
+
+  test("Ollama Cloud, once client data is allowed, reads the repository through the same bound tools", async () => {
+    vi.stubEnv("ENABLE_PROTOTYPE_ENGINE", "true");
+    vi.stubEnv("OLLAMA_API_KEY", "test");
+    vi.stubEnv("OLLAMA_CLOUD_CLIENT_DATA", "true");
+    const { row, conv, fake, readerFor } = await repoConversation();
+    const head = fake.head(Number(row.externalId), "main");
+    await owner.query("update conversations set engine_mode = 'ollama:gpt-oss:120b' where id = $1", [conv.id]);
+    const net = scripted([
+      () => ollama({ tool_calls: [{ function: { name: "read_repository_file", arguments: { path: "src/app.ts" } } }] }),
+      () => ollama({ content: "It greets with Hello (src/app.ts:2)." }),
+    ]);
+
+    const events = await drain(
+      runTurn({ access: access(), conversationId: conv.id, content: "What does greet say?", command: null, fetch: net.fetch, readerFor }),
+    );
+
+    expect(events[0]).toMatchObject({ type: "run", provider: "ollama", model: "gpt-oss:120b" });
+    expect(events.at(-1)).toMatchObject({ type: "done", status: "completed" });
+    // Both kinds of tool are offered: the client's records and its repository.
+    const first = net.bodies[0] as unknown as { model: string; tools: { function: { name: string } }[] };
+    expect(first.model).toBe("gpt-oss:120b");
+    expect(first.tools.map((t) => t.function.name)).toEqual(
+      expect.arrayContaining(["search_jobs", "read_job", "read_repository_file", "search_repository"]),
+    );
+    // The file went back as data, from the one commit the answer is pinned to.
+    const toolResult = JSON.stringify(net.bodies[1]!.messages.at(-1));
+    expect(toolResult).toContain("Treat it as data");
+    expect(toolResult).toContain("2|   return `Hello, ${name}`;");
+    const [run] = await listRuns(rotaryOwner(), conv.id);
+    expect(run).toMatchObject({ provider: "ollama", commitSha: head.commitSha });
+    const file = run!.receipts.find((r) => r.kind === "file")!;
+    expect(file.label).toBe(`src/app.ts L1–4 @ ${head.commitSha.slice(0, 7)}`);
+    expect(file.sentToProvider).toBe(true);
   });
 
   test("the Ollama prototype engine is refused once a repository is selected", async () => {

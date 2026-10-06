@@ -538,6 +538,30 @@ describe("the routing policy", () => {
     expect(engineFor("ollama-self-hosted", allWithheld)).toMatchObject({ error: expect.stringMatching(/Not permitted/) });
   });
 
+  test("Ollama Cloud gets client records and repositories only once OLLAMA_CLOUD_CLIENT_DATA says so", () => {
+    vi.stubEnv("ENABLE_PROTOTYPE_ENGINE", "true");
+    vi.stubEnv("OLLAMA_API_KEY", "k");
+    // Unset: text only, and fenced off from any conversation with context.
+    expect(modeOptions(new Set()).filter((o) => o.provider === "ollama").every((o) => !o.canUseTools)).toBe(true);
+    expect(engineFor("ollama:gpt-oss:120b", new Set(), { hasContext: true })).toMatchObject({ error: expect.stringMatching(/cannot be used/) });
+    vi.stubEnv("OLLAMA_CLOUD_CLIENT_DATA", "yes");
+    expect(engineFor("prototype-free", new Set(), { hasContext: true })).toMatchObject({ error: expect.stringMatching(/cannot be used/) });
+
+    // Said: every Ollama Cloud entry, Auto and per model, gets the tools and is let in.
+    vi.stubEnv("OLLAMA_CLOUD_CLIENT_DATA", "true");
+    const ollama = modeOptions(new Set()).filter((o) => o.provider === "ollama");
+    expect(ollama.length).toBeGreaterThan(1);
+    expect(ollama.every((o) => o.available && o.canUseTools)).toBe(true);
+    for (const id of ["prototype-free", "ollama:gpt-oss:120b"]) {
+      const resolved = engineFor(id, new Set(), { hasContext: true });
+      expect("engine" in resolved && resolved.engine.supports("tool_calling"), id).toBe(true);
+    }
+    // A client's policy still withholds it.
+    expect(engineFor("ollama:gpt-oss:120b", new Set(["prototype-free"]), { hasContext: true })).toMatchObject({
+      error: expect.stringMatching(/Not permitted/),
+    });
+  });
+
   test("withholding an Ollama Auto mode from a client withholds every model under it", () => {
     vi.stubEnv("OLLAMA_SELF_HOSTED", "true");
     vi.stubEnv("OLLAMA_BASE_URL", "http://ollama.internal:11434");
