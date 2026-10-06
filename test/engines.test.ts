@@ -460,6 +460,100 @@ describe("the routing policy", () => {
     expect("engine" in resolved && resolved.engine.supports("tool_calling")).toBe(true);
   });
 
+  test("each Ollama model is its own entry, named with whose model it is", () => {
+    vi.stubEnv("ENABLE_PROTOTYPE_ENGINE", "true");
+    vi.stubEnv("OLLAMA_API_KEY", "k");
+    const ollama = modeOptions(new Set()).filter((o) => o.provider === "ollama");
+    expect(ollama.map((o) => [o.id, o.label])).toEqual([
+      ["prototype-free", "Ollama — Auto"],
+      ["ollama:gpt-oss:120b", "Ollama — gpt-oss 120B (OpenAI)"],
+      ["ollama:kimi-k2.7-code", "Ollama — Kimi K2.7 Code (Moonshot AI)"],
+      ["ollama:gemma4:31b", "Ollama — Gemma 4 31B (Google)"],
+      ["ollama:gpt-oss:20b", "Ollama — gpt-oss 20B (OpenAI)"],
+    ]);
+    expect(ollama.every((o) => o.available && !o.canUseTools)).toBe(true);
+    // A model not on the server's list never runs, whatever a request says.
+    expect(engineFor("ollama:some-paid-model", new Set())).toMatchObject({ error: expect.stringMatching(/No longer offered/) });
+  });
+
+  test("an Ollama Cloud model entry keeps the prototype's fence, and asks only its own model", async () => {
+    vi.stubEnv("ENABLE_PROTOTYPE_ENGINE", "true");
+    vi.stubEnv("OLLAMA_API_KEY", "k");
+    expect(engineFor("ollama:gemma4:31b", new Set(), { hasContext: true })).toMatchObject({
+      error: expect.stringMatching(/cannot be used/),
+    });
+
+    const captured: Captured[] = [];
+    const resolved = engineFor("ollama:gemma4:31b", new Set(), {
+      hasContext: false,
+      fetch: fakeFetch([() => Response.json({ error: "busy" }, { status: 429 })], captured),
+    });
+    if (!("engine" in resolved)) throw new Error(resolved.error);
+    expect(resolved.engine.model).toBe("gemma4:31b");
+    await expect(collect(resolved.engine.stream({ system: "s", history: [{ role: "user", content: "x" }], tools: [] }))).rejects.toThrow(
+      /gemma4:31b is busy/,
+    );
+    expect(captured.map((c) => c.body.model)).toEqual(["gemma4:31b"]);
+  });
+
+  test("self-hosted model entries come from OLLAMA_MODELS and get tools", () => {
+    vi.stubEnv("OLLAMA_SELF_HOSTED", "true");
+    vi.stubEnv("OLLAMA_BASE_URL", "http://ollama.internal:11434");
+    vi.stubEnv("OLLAMA_MODELS", "qwen3:8b");
+    const ollama = modeOptions(new Set()).filter((o) => o.provider === "ollama");
+    expect(ollama.map((o) => o.id)).toEqual(["ollama-self-hosted", "ollama:qwen3:8b"]);
+    expect(ollama.find((o) => o.id === "ollama:qwen3:8b")).toMatchObject({ label: "Ollama — qwen3:8b", canUseTools: true });
+    expect("engine" in engineFor("ollama:qwen3:8b", new Set(), { hasContext: true })).toBe(true);
+  });
+
+  test("a model taken off the list stays visible for its conversations, and never runs or can be picked", () => {
+    vi.stubEnv("ENABLE_PROTOTYPE_ENGINE", "true");
+    vi.stubEnv("OLLAMA_API_KEY", "k");
+    vi.stubEnv("OLLAMA_MODELS", "gpt-oss:120b");
+    expect(engineFor("ollama:gemma4:31b", new Set())).toMatchObject({ error: expect.stringMatching(/No longer offered/) });
+    // The picker for that conversation still shows it, marked unavailable...
+    expect(modeOptions(new Set(), "ollama:gemma4:31b").find((o) => o.id === "ollama:gemma4:31b")).toMatchObject({
+      label: "Ollama — Gemma 4 31B (Google)",
+      available: false,
+    });
+    // ...but no other picker lists it, so it cannot be chosen.
+    expect(modeOptions(new Set()).some((o) => o.id === "ollama:gemma4:31b")).toBe(false);
+  });
+
+  test("a model withheld by name is never tried by Auto, and Auto goes when all are withheld", async () => {
+    vi.stubEnv("OLLAMA_SELF_HOSTED", "true");
+    vi.stubEnv("OLLAMA_BASE_URL", "http://ollama.internal:11434");
+    vi.stubEnv("OLLAMA_MODELS", "qwen3:8b,gemma3:12b");
+    const captured: Captured[] = [];
+    const resolved = engineFor("ollama-self-hosted", new Set(["ollama:qwen3:8b"]), {
+      hasContext: true,
+      fetch: fakeFetch([() => Response.json({ error: "busy" }, { status: 429 })], captured),
+    });
+    if (!("engine" in resolved)) throw new Error(resolved.error);
+    await expect(collect(resolved.engine.stream({ system: "s", history: [{ role: "user", content: "x" }], tools: [] }))).rejects.toThrow();
+    expect(captured.map((c) => c.body.model)).toEqual(["gemma3:12b"]);
+
+    const allWithheld = new Set(["ollama:qwen3:8b", "ollama:gemma3:12b"]);
+    expect(modeOptions(allWithheld).find((o) => o.id === "ollama-self-hosted")!.available).toBe(false);
+    expect(engineFor("ollama-self-hosted", allWithheld)).toMatchObject({ error: expect.stringMatching(/Not permitted/) });
+  });
+
+  test("withholding an Ollama Auto mode from a client withholds every model under it", () => {
+    vi.stubEnv("OLLAMA_SELF_HOSTED", "true");
+    vi.stubEnv("OLLAMA_BASE_URL", "http://ollama.internal:11434");
+    vi.stubEnv("OLLAMA_MODELS", "qwen3:8b");
+    const withheld = new Set(["ollama-self-hosted"]);
+    expect(modeOptions(withheld).find((o) => o.id === "ollama:qwen3:8b")).toMatchObject({
+      available: false,
+      reason: "Not permitted for this client.",
+    });
+    expect(engineFor("ollama:qwen3:8b", withheld, { hasContext: true })).toMatchObject({
+      error: expect.stringMatching(/Not permitted/),
+    });
+    // A policy on one model alone still applies to that model.
+    expect(modeOptions(new Set(["ollama:qwen3:8b"])).find((o) => o.id === "ollama:qwen3:8b")!.available).toBe(false);
+  });
+
   test("self-hosted pointed at Ollama Cloud is refused", () => {
     vi.stubEnv("OLLAMA_SELF_HOSTED", "true");
     vi.stubEnv("OLLAMA_BASE_URL", "https://ollama.com");

@@ -18,8 +18,9 @@ import {
  *
  *   1. Reading Ollama's stream — where a JSON line can arrive split across two
  *      network chunks, and an error can arrive inside a 200.
- *   2. Falling over to the other model when the chosen one is throttled or
- *      missing, and NOT falling over when retrying cannot help (a refused key).
+ *   2. Falling over to the next model in "auto" when one is throttled or
+ *      missing, and NOT falling over when retrying cannot help (a refused key)
+ *      or when the person picked one model by name.
  *   3. Remembering which model is busy, so "auto" starts with the one that
  *      will answer instead of waiting on one that just said no.
  *   4. Never calling a server "self-hosted" when it is Ollama's own cloud.
@@ -108,7 +109,8 @@ describe("configuration", () => {
 
   test("OLLAMA_MODELS replaces the list; unset, the defaults stand", () => {
     expect(ollamaModels()).toEqual([...DEFAULT_MODELS]);
-    vi.stubEnv("OLLAMA_MODELS", " gpt-oss:20b , qwen3:8b ,");
+    vi.stubEnv("OLLAMA_MODELS", " gpt-oss:20b , qwen3:8b ,auto");
+    // "auto" is never a model: it would fan out like the Auto entry.
     expect(ollamaModels()).toEqual(["gpt-oss:20b", "qwen3:8b"]);
   });
 });
@@ -148,12 +150,18 @@ describe("choosing a model", () => {
     expect(seen[0]).toEqual({ url: "https://ollama.com/api/chat", auth: "Bearer test-key" });
   });
 
-  test("a throttled model hands over to the other one", async () => {
+  test("in auto, a throttled model hands over to the next one", async () => {
     const { asked } = stubFetch({ [first]: busy, [second]: () => answer("from the second") });
-    const chat = await ask(first);
+    const chat = await ask(AUTO);
     expect(asked).toEqual([first, second]);
     expect(chat.model).toBe(second);
     expect(await collect(textOf(chat.chunks))).toBe("from the second");
+  });
+
+  test("a model picked by name never hands over, and says it is busy", async () => {
+    const { asked } = stubFetch({ [first]: busy, [second]: () => answer("must not be used") });
+    await expect(ask(first)).rejects.toThrow(`${first} is busy right now`);
+    expect(asked).toEqual([first]);
   });
 
   test("a model missing from the server hands over too", async () => {
@@ -161,7 +169,7 @@ describe("choosing a model", () => {
       [first]: () => Response.json({ error: `model "${first}" not found` }, { status: 404 }),
       [second]: () => answer("ok"),
     });
-    expect((await ask(first)).model).toBe(second);
+    expect((await ask(AUTO)).model).toBe(second);
   });
 
   test("an error inside the 200, before any text, also hands over", async () => {
@@ -169,7 +177,7 @@ describe("choosing a model", () => {
       [first]: () => new Response(streamOf(`${JSON.stringify({ error: "down" })}\n`)),
       [second]: () => answer("ok"),
     });
-    expect((await ask(first)).model).toBe(second);
+    expect((await ask(AUTO)).model).toBe(second);
   });
 
   test("a refused key stops at once — the other model would be refused too", async () => {
@@ -177,7 +185,7 @@ describe("choosing a model", () => {
       [first]: () => Response.json({ error: "unauthorized" }, { status: 401 }),
       [second]: () => answer("should not be reached"),
     });
-    await expect(ask(first)).rejects.toThrow(/refused the key/);
+    await expect(ask(AUTO)).rejects.toThrow(/refused the key/);
     expect(asked).toEqual([first]);
   });
 
@@ -193,12 +201,12 @@ describe("choosing a model", () => {
     expect(asked).toEqual([second]);
   });
 
-  test("a model picked by hand is still tried first, even while resting", async () => {
+  test("a model picked by name is still tried while resting, and alone", async () => {
     const { asked } = stubFetch({ [first]: busy, [second]: () => answer("ok") });
     await ask(AUTO);
     asked.length = 0;
-    await ask(first);
-    expect(asked[0]).toBe(first);
+    await ask(first).catch(() => {});
+    expect(asked).toEqual([first]);
   });
 
   test("with everything busy, one plain sentence rather than the last refusal", async () => {
