@@ -1,0 +1,115 @@
+name: Database Security
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  database-security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: ci_owner
+          POSTGRES_PASSWORD: ci-owner-local-only
+          POSTGRES_DB: portal_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci_owner -d portal_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+    env:
+      # Public, throwaway values usable only against this job-local PostgreSQL
+      # service. This job intentionally receives no production/provider secrets.
+      DATABASE_URL: postgresql://ci_owner:ci-owner-local-only@127.0.0.1:5432/portal_ci
+      DATABASE_APP_URL: postgresql://portal_app:ci-app-local-only@127.0.0.1:5432/portal_ci
+      PORTAL_APP_PASSWORD: ci-app-local-only
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test CI database guard
+        run: node --test scripts/ci-db-guard.test.mjs
+
+      - name: Pin PostgreSQL service identity
+        env:
+          SERVICE_CONTAINER_ID: ${{ job.services.postgres.id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! "${SERVICE_CONTAINER_ID}" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "PostgreSQL service container id is missing or malformed." >&2
+            exit 1
+          fi
+
+          running="$(docker inspect --format '{{.State.Running}}' "${SERVICE_CONTAINER_ID}")"
+          image="$(docker inspect --format '{{.Config.Image}}' "${SERVICE_CONTAINER_ID}")"
+
+          if [ "${running}" != "true" ] || [ "${image}" != "postgres:18" ]; then
+            echo "PostgreSQL service container identity does not match the expected running postgres:18 service." >&2
+            exit 1
+          fi
+
+          mapfile -t service_ips < <(
+            docker inspect               --format '{{range .NetworkSettings.Networks}}{{println .IPAddress}}{{end}}'               "${SERVICE_CONTAINER_ID}" |
+              sed '/^[[:space:]]*$/d' |
+              sort -u
+          )
+
+          if [ "${#service_ips[@]}" -ne 1 ]; then
+            echo "Expected exactly one PostgreSQL service-container IPv4 address; found ${#service_ips[@]}." >&2
+            exit 1
+          fi
+
+          service_ip="${service_ips[0]}"
+          if [[ ! "${service_ip}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "PostgreSQL service-container address is not one IPv4 literal." >&2
+            exit 1
+          fi
+
+          echo "CI_DB_EXPECTED_SERVER_ADDR=${service_ip}" >> "${GITHUB_ENV}"
+
+      - name: Guard disposable database before migrations
+        run: node scripts/ci-db-guard.mjs pre-migrate
+
+      - name: Apply repository migrations
+        env:
+          # Prevent deploy-only bootstrap/domain behavior in CI.
+          BOOTSTRAP_EMAIL: ""
+          BOOTSTRAP_CLIENT_EMAIL: ""
+          PORTAL_CLIENT_DOMAINS: ""
+        run: npm run db:migrate:prod
+
+      - name: Verify restricted application role
+        run: node scripts/ci-db-guard.mjs post-migrate
+
+      - name: Seed deterministic isolation fixtures
+        run: npm run db:seed
+
+      - name: Check RLS coverage
+        run: npm run db:rls-check
+
+      - name: Run database-backed tests
+        # Provider engine tests inject fake fetch implementations; this job
+        # intentionally supplies no Ollama, Anthropic, OpenAI, or other LLM
+        # credentials and must not contact any live model provider.
+        run: npm test

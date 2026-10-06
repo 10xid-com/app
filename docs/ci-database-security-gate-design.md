@@ -91,7 +91,9 @@ No remote hostname is permitted in either connection URL.
 
 ### Docker service identity contract
 
-GitHub-hosted jobs reach a PostgreSQL service container through a runner-side localhost port mapping. PostgreSQL itself therefore reports the container's Docker-network address from `inet_server_addr()`, not `127.0.0.1`.
+GitHub-hosted jobs reach a PostgreSQL service container through a runner-side localhost port mapping. PostgreSQL itself reports the container-side address from `inet_server_addr()`, not runner loopback.
+
+The guard canonicalizes PostgreSQL's `inet` value with `host(inet_server_addr())` before comparison. This is load-bearing: casting an `inet` directly to text may include a netmask suffix (for example `/32`), which is not the same representation as Docker's bare IP literal even when both identify the same interface.
 
 The workflow must derive the exact running PostgreSQL service-container address from the specific service container instance and pass only that exact IP literal as:
 
@@ -102,14 +104,15 @@ CI_DB_EXPECTED_SERVER_ADDR=<exact service-container IP>
 The integration contract is:
 
 1. keep `DATABASE_URL` and `DATABASE_APP_URL` pinned to runner loopback (`127.0.0.1:5432`);
-2. obtain the PostgreSQL service container ID from GitHub's job service context for the `postgres` service;
-3. inspect that exact container with Docker on the runner;
-4. extract exactly one service-network IP address;
-5. fail the workflow if the container ID is empty, inspection fails, zero addresses are returned, or more than one usable address is returned;
-6. export that single address as `CI_DB_EXPECTED_SERVER_ADDR`;
-7. the guard then requires `inet_server_addr()` to equal that exact address byte-for-byte.
+2. obtain the PostgreSQL service container ID from `job.services.postgres.id`;
+3. require one exact 64-hex Docker container id;
+4. inspect that exact container and require it to be running with image `postgres:18`;
+5. extract exactly one non-empty service-network IPv4 address from that container;
+6. fail if the container identity or address is missing, malformed, or ambiguous;
+7. export that one address as `CI_DB_EXPECTED_SERVER_ADDR`;
+8. the guard requires canonical `host(inet_server_addr())` to equal it byte-for-byte for both owner and restricted-role connections.
 
-This does **not** allow arbitrary RFC1918/private address ranges. An arbitrary private IP is rejected unless it is the exact address explicitly derived from the current PostgreSQL service instance.
+This does **not** allow arbitrary RFC1918/private address ranges, CIDRs, or hostnames. An arbitrary private IP is rejected unless it is the exact address derived from the current PostgreSQL service instance.
 
 ## Fail-closed target guard
 
@@ -212,7 +215,7 @@ The first implementation should run in this order:
 2. wait for PostgreSQL health check;
 3. `npm ci`;
 4. construct only local throwaway owner/app URLs;
-5. derive the exact PostgreSQL service-container IP from the current GitHub Actions service instance and export it as `CI_DB_EXPECTED_SERVER_ADDR`;
+5. verify the exact GitHub Actions PostgreSQL service container (64-hex container id, running `postgres:18`), extract exactly one service-network IPv4 address, and export it as `CI_DB_EXPECTED_SERVER_ADDR`;
 6. run `ci-db-guard.mjs pre-migrate`;
 7. run `npm run db:migrate:prod`;
 8. run `ci-db-guard.mjs post-migrate`;

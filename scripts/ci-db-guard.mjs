@@ -155,7 +155,7 @@ async function verifyOwnerConnection(owner, expectedServerAddr, makeClient, mode
           current_database() as database,
           current_user as role,
           session_user as session_role,
-          inet_server_addr()::text as server_addr,
+          host(inet_server_addr()) as server_addr,
           inet_server_port()::int as server_port
       `,
       "owner identity",
@@ -205,7 +205,7 @@ async function verifyAppConnection(app, expectedServerAddr, makeClient) {
           current_database() as database,
           current_user as role,
           session_user as session_role,
-          inet_server_addr()::text as server_addr,
+          host(inet_server_addr()) as server_addr,
           inet_server_port()::int as server_port,
           r.rolsuper,
           r.rolbypassrls,
