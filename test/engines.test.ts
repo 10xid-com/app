@@ -520,6 +520,24 @@ describe("the routing policy", () => {
     expect(modeOptions(new Set()).some((o) => o.id === "ollama:gemma4:31b")).toBe(false);
   });
 
+  test("a model withheld by name is never tried by Auto, and Auto goes when all are withheld", async () => {
+    vi.stubEnv("OLLAMA_SELF_HOSTED", "true");
+    vi.stubEnv("OLLAMA_BASE_URL", "http://ollama.internal:11434");
+    vi.stubEnv("OLLAMA_MODELS", "qwen3:8b,gemma3:12b");
+    const captured: Captured[] = [];
+    const resolved = engineFor("ollama-self-hosted", new Set(["ollama:qwen3:8b"]), {
+      hasContext: true,
+      fetch: fakeFetch([() => Response.json({ error: "busy" }, { status: 429 })], captured),
+    });
+    if (!("engine" in resolved)) throw new Error(resolved.error);
+    await expect(collect(resolved.engine.stream({ system: "s", history: [{ role: "user", content: "x" }], tools: [] }))).rejects.toThrow();
+    expect(captured.map((c) => c.body.model)).toEqual(["gemma3:12b"]);
+
+    const allWithheld = new Set(["ollama:qwen3:8b", "ollama:gemma3:12b"]);
+    expect(modeOptions(allWithheld).find((o) => o.id === "ollama-self-hosted")!.available).toBe(false);
+    expect(engineFor("ollama-self-hosted", allWithheld)).toMatchObject({ error: expect.stringMatching(/Not permitted/) });
+  });
+
   test("withholding an Ollama Auto mode from a client withholds every model under it", () => {
     vi.stubEnv("OLLAMA_SELF_HOSTED", "true");
     vi.stubEnv("OLLAMA_BASE_URL", "http://ollama.internal:11434");

@@ -85,9 +85,20 @@ function serverUnavailability(spec: EngineModeSpec): string | null {
   }
 }
 
-/** Whether a client's policy withholds a mode, directly or through its Auto mode. */
+/** The Ollama models a client may be answered by: the list, less any its policy withholds by name. */
+function allowedOllamaModels(withheld: Set<string>): string[] {
+  return ollamaModels().filter((m) => !withheld.has(`ollama:${m}`));
+}
+
+/**
+ * Whether a client's policy withholds a mode: directly, through its Auto
+ * mode, or — for an Ollama Auto mode — because every model under it is
+ * withheld, leaving Auto nothing it may try.
+ */
 function isWithheld(spec: EngineModeSpec, withheld: Set<string>): boolean {
-  return withheld.has(spec.id) || (spec.policyMode !== undefined && withheld.has(spec.policyMode));
+  if (withheld.has(spec.id)) return true;
+  if (spec.policyMode !== undefined && withheld.has(spec.policyMode)) return true;
+  return spec.provider === "ollama" && spec.policyMode === undefined && allowedOllamaModels(withheld).length === 0;
 }
 
 /** Whether a mode is worth listing at all; the rest are noise when off. */
@@ -178,6 +189,14 @@ export function engineFor(
             "Choose Claude or OpenAI.",
         };
       }
-      return { spec, engine: new OllamaEngine(model, { capabilities: spec.capabilities, fetch: opts.fetch }) };
+      return {
+        spec,
+        engine: new OllamaEngine(model, {
+          capabilities: spec.capabilities,
+          // Auto never reaches a model the client's policy withholds by name.
+          models: allowedOllamaModels(withheld),
+          fetch: opts.fetch,
+        }),
+      };
   }
 }

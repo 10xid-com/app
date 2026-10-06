@@ -35,7 +35,12 @@ export class OllamaEngine implements AgentEngine {
 
   constructor(
     readonly model: string,
-    private readonly opts: { capabilities: EngineCapability[]; fetch?: typeof fetch },
+    private readonly opts: {
+      capabilities: EngineCapability[];
+      /** The models Auto may try: the server's list less any the client's policy withholds. */
+      models?: string[];
+      fetch?: typeof fetch;
+    },
   ) {}
 
   supports(capability: EngineCapability): boolean {
@@ -73,7 +78,7 @@ export class OllamaEngine implements AgentEngine {
       let started;
       try {
         started = await openChat({
-          models: answering ? [answering] : attemptOrder(this.model),
+          models: answering ? [answering] : attemptOrder(this.model, this.opts.models),
           messages,
           tools,
           signal: request.signal,
