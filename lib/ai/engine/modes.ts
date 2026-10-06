@@ -34,6 +34,12 @@ export type EngineModeSpec = {
   /** The variable naming the model, and the model used when it is unset. */
   modelEnv?: string;
   defaultModel: string | null;
+  /**
+   * The mode whose client policy also governs this one. A per-model Ollama
+   * entry answers to its Auto mode's policy, so withholding Auto from a
+   * client withholds every model under it.
+   */
+  policyMode?: EngineModeId;
   /** Claude only: how hard the model thinks. */
   effort?: "low" | "medium" | "high" | "xhigh" | "max";
   capabilities: EngineCapability[];
@@ -144,6 +150,7 @@ export function ollamaModelSpec(base: EngineModeSpec, model: string): EngineMode
     ...base,
     id: `ollama:${model}`,
     label: `Ollama — ${OLLAMA_LABELS[model] ?? model}`,
+    policyMode: base.id,
     modelEnv: undefined,
     defaultModel: model,
   };

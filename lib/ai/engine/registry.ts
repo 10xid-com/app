@@ -71,6 +71,11 @@ function serverUnavailability(spec: EngineModeSpec): string | null {
   }
 }
 
+/** Whether a client's policy withholds a mode, directly or through its Auto mode. */
+function isWithheld(spec: EngineModeSpec, withheld: Set<string>): boolean {
+  return withheld.has(spec.id) || (spec.policyMode !== undefined && withheld.has(spec.policyMode));
+}
+
 /** Whether a mode is worth listing at all; the rest are noise when off. */
 function listed(spec: EngineModeSpec): boolean {
   if (spec.provider !== "ollama") return true;
@@ -87,7 +92,7 @@ function listed(spec: EngineModeSpec): boolean {
 export function modeOptions(withheld: Set<string>): EngineModeOption[] {
   return allModes().filter(listed).map((m) => {
     const server = serverUnavailability(m);
-    const reason = server ?? (withheld.has(m.id) ? "Not permitted for this client." : null);
+    const reason = server ?? (isWithheld(m, withheld) ? "Not permitted for this client." : null);
     return {
       id: m.id,
       label: m.label,
@@ -120,7 +125,7 @@ export function engineFor(
 ): { engine: AgentEngine; spec: EngineModeSpec } | { error: string } {
   const spec = findMode(modeId);
   if (!spec) return { error: "That engine mode does not exist." };
-  const why = serverUnavailability(spec) ?? (withheld.has(spec.id) ? "Not permitted for this client." : null);
+  const why = serverUnavailability(spec) ?? (isWithheld(spec, withheld) ? "Not permitted for this client." : null);
   if (why) return { error: `${spec.label} is not available: ${why}` };
   const model = modelFor(spec)!;
 

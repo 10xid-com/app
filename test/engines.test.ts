@@ -506,6 +506,22 @@ describe("the routing policy", () => {
     expect("engine" in engineFor("ollama:qwen3:8b", new Set(), { hasContext: true })).toBe(true);
   });
 
+  test("withholding an Ollama Auto mode from a client withholds every model under it", () => {
+    vi.stubEnv("OLLAMA_SELF_HOSTED", "true");
+    vi.stubEnv("OLLAMA_BASE_URL", "http://ollama.internal:11434");
+    vi.stubEnv("OLLAMA_MODELS", "qwen3:8b");
+    const withheld = new Set(["ollama-self-hosted"]);
+    expect(modeOptions(withheld).find((o) => o.id === "ollama:qwen3:8b")).toMatchObject({
+      available: false,
+      reason: "Not permitted for this client.",
+    });
+    expect(engineFor("ollama:qwen3:8b", withheld, { hasContext: true })).toMatchObject({
+      error: expect.stringMatching(/Not permitted/),
+    });
+    // A policy on one model alone still applies to that model.
+    expect(modeOptions(new Set(["ollama:qwen3:8b"])).find((o) => o.id === "ollama:qwen3:8b")!.available).toBe(false);
+  });
+
   test("self-hosted pointed at Ollama Cloud is refused", () => {
     vi.stubEnv("OLLAMA_SELF_HOSTED", "true");
     vi.stubEnv("OLLAMA_BASE_URL", "https://ollama.com");
