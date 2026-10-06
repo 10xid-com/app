@@ -4,12 +4,19 @@
 Phase 1 — Platform Hardening
 
 ## Current action
-Phase 1 / Enforced CI/security gates — repository is now public by explicit user decision, and classic `main` protection rule 84348218 is active. Pull requests and the GitHub Actions `quality` status check are required before merge for non-bypass paths. Administrator bypass remains allowed, so enforcement is not universal. Next step is design the isolated database-backed CI security gate without implementing it yet.
+Phase 1 / Enforced CI/security gates — isolated database-backed CI design completed and documented. No workflow implementation yet. Next step is implement only the fail-closed local CI database guard script, then review it before wiring a PostgreSQL service-container job.
 
 ## Last passed checkpoint
 Phase 1 CI enforcement checkpoint: `10xid-com/login` was made public by explicit user choice with no billing change. Classic branch protection rule `84348218` applies to `main` (1 branch), requires a pull request before merging, and requires status check `quality` with updates accepted specifically from GitHub Actions. No database-backed checks or extra review restrictions are required. Approvals are off; administrator bypass remains allowed (`Do not allow bypassing` is unchecked), so do not claim universal/admin enforcement. Force pushes and branch deletions remain disallowed. No production app, DNS, Railway, or Neon changes were made.
 
 ## Confirmed findings
+- Database-backed CI design is documented in `docs/ci-database-security-gate-design.md`.
+- Proposed CI database is a disposable PostgreSQL 18 GitHub Actions service container on loopback, database `portal_ci`, owner role `ci_owner`, restricted role `portal_app`.
+- First DB-backed gate order is: local target guard -> repository migrations via `db:migrate:prod` -> post-migration role/ownership guard -> deterministic `db:seed` -> `db:rls-check` -> `npm test`.
+- `scripts/seed.ts` is the correct CI fixture boundary because it truncates migration-authored account/client data and recreates the two-tenant Rotary/Northstar fixture expected by isolation tests.
+- `npm run prove` and Playwright E2E are deliberately excluded from the first database gate; they require a separate browser/runtime design.
+- Public-repo CI posture for the DB gate: `pull_request` only (never `pull_request_target`), `contents: read`, no production secrets, no Railway/Neon/Vercel credentials, and only disposable local DB passwords.
+- CI cleanup relies on destruction of the GitHub Actions service container/job network, not remote DROP/TRUNCATE cleanup.
 - CI audit: no `.github/` directory or GitHub Actions workflows exist on `main`.
 - Deterministic repo gates already available: `npm run lint`, `npm run typecheck`, `npm run build`; unit/integration Vitest suite is invoked by `npm test`.
 - Vitest setup intentionally requires both `DATABASE_URL` (owner fixtures) and `DATABASE_APP_URL` (restricted runtime role), so `npm test` is database-backed rather than a secret-free unit-only gate.
@@ -86,4 +93,4 @@ The copied Neon database must pass:
 8. application/database isolation tests.
 
 ## Next action
-Design the database-backed CI security gate against an isolated ephemeral database/environment, keeping Railway and all certified Neon copies out of CI. Do not implement the database-backed job until the isolation model, lifecycle, credentials, and failure behavior are reviewed.
+Implement only `scripts/ci-db-guard.mjs` with `pre-migrate` and `post-migrate` modes. It must reject any non-loopback/non-`portal_ci` target before writes and verify `portal_app` is restricted/non-owner after migrations. Do not modify the GitHub Actions workflow in the same step.
