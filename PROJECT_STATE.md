@@ -4,12 +4,18 @@
 Phase 1 — Platform Hardening
 
 ## Current action
-Phase 1 / Enforced CI/security gates — isolated database-backed CI design completed and documented. No workflow implementation yet. Next step is implement only the fail-closed local CI database guard script, then review it before wiring a PostgreSQL service-container job.
+Phase 1 / Enforced CI/security gates — fail-closed CI database guard implemented on feature branch `ci/database-guard` and opened as PR #6. Deterministic guard tests pass locally; existing protected `quality` CI is running on the PR. No workflow/database integration change yet.
 
 ## Last passed checkpoint
 Phase 1 CI enforcement checkpoint: `10xid-com/login` was made public by explicit user choice with no billing change. Classic branch protection rule `84348218` applies to `main` (1 branch), requires a pull request before merging, and requires status check `quality` with updates accepted specifically from GitHub Actions. No database-backed checks or extra review restrictions are required. Approvals are off; administrator bypass remains allowed (`Do not allow bypassing` is unchecked), so do not claim universal/admin enforcement. Force pushes and branch deletions remain disallowed. No production app, DNS, Railway, or Neon changes were made.
 
 ## Confirmed findings
+- `scripts/ci-db-guard.mjs` now implements `pre-migrate` and `post-migrate` modes on feature branch `ci/database-guard`; it has not been merged to `main` yet.
+- Guard URL checks require loopback only, database `portal_ci`, owner user `ci_owner`, restricted user `portal_app`, port 5432, disposable passwords, and no URL query parameters/fragments.
+- Pre-migrate live checks require direct `ci_owner` authentication to loopback `portal_ci` and a blank user-table target before any migration write.
+- Post-migrate live checks require direct `portal_app` authentication, no SUPERUSER/BYPASSRLS/CREATEDB/CREATEROLE/REPLICATION, no ownership of the CI database or application schemas/relations/routines/enums/domains, and no direct or transitive role memberships.
+- Guard tests use only fake PostgreSQL clients; no external database connection is made. Local syntax checks passed and Node built-in tests passed 25/25.
+- PR #6 (`ci: add fail-closed database target guard`) contains only the guard, its tests, and this project-state update; no workflow or production resource changes.
 - Database-backed CI design is documented in `docs/ci-database-security-gate-design.md`.
 - Proposed CI database is a disposable PostgreSQL 18 GitHub Actions service container on loopback, database `portal_ci`, owner role `ci_owner`, restricted role `portal_app`.
 - First DB-backed gate order is: local target guard -> repository migrations via `db:migrate:prod` -> post-migration role/ownership guard -> deterministic `db:seed` -> `db:rls-check` -> `npm test`.
@@ -93,4 +99,4 @@ The copied Neon database must pass:
 8. application/database isolation tests.
 
 ## Next action
-Implement only `scripts/ci-db-guard.mjs` with `pre-migrate` and `post-migrate` modes. It must reject any non-loopback/non-`portal_ci` target before writes and verify `portal_app` is restricted/non-owner after migrations. Do not modify the GitHub Actions workflow in the same step.
+After PR #6 passes the existing `quality` check and is reviewed/merged through the protected PR path, add a separate feature branch/PR for the PostgreSQL 18 service-container `database-security` job that calls the guard before migration and after migration, then seeds, runs `db:rls-check`, and runs `npm test`.
