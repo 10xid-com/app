@@ -72,8 +72,8 @@ test("accepts localhost and 127.0.0.1 as the same loopback target class", () => 
 });
 
 for (const [name, owner, app, pattern] of [
-  ["missing owner URL", undefined, APP, /DATABASE_URL is missing/],
-  ["missing app URL", OWNER, undefined, /DATABASE_APP_URL is missing/],
+  ["missing owner URL", null, APP, /DATABASE_URL is missing/],
+  ["missing app URL", OWNER, null, /DATABASE_APP_URL is missing/],
   ["malformed owner URL", "not a url", APP, /DATABASE_URL is malformed/],
   [
     "remote owner host",
