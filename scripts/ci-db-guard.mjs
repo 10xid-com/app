@@ -1,4 +1,5 @@
 import { pathToFileURL } from "node:url";
+import { isIP } from "node:net";
 
 const EXPECTED = Object.freeze({
   database: "portal_ci",
@@ -11,6 +12,10 @@ const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost"]);
 
 function fail(message) {
   throw new Error(`CI database guard refused target: ${message}`);
+}
+
+function safeFailure(message) {
+  return new Error(`CI database guard failed safely: ${message}`);
 }
 
 function decodeUrlPart(name, label, value) {
@@ -65,6 +70,17 @@ export function parseDatabaseUrl(name, raw, expectedUser) {
   };
 }
 
+export function parseExpectedServerAddress(raw) {
+  if (!raw) fail("CI_DB_EXPECTED_SERVER_ADDR is missing");
+  if (raw !== raw.trim()) {
+    fail("CI_DB_EXPECTED_SERVER_ADDR must not contain surrounding whitespace");
+  }
+  if (isIP(raw) === 0) {
+    fail("CI_DB_EXPECTED_SERVER_ADDR must be one explicit IPv4 or IPv6 literal");
+  }
+  return raw;
+}
+
 export function validateTargetUrls(env = process.env) {
   const owner = parseDatabaseUrl("DATABASE_URL", env.DATABASE_URL, EXPECTED.ownerUser);
   const app = parseDatabaseUrl(
@@ -81,25 +97,55 @@ export function validateTargetUrls(env = process.env) {
     fail("DATABASE_URL and DATABASE_APP_URL do not point at the same local target");
   }
 
-  return { owner, app };
+  const expectedServerAddr = parseExpectedServerAddress(
+    env.CI_DB_EXPECTED_SERVER_ADDR,
+  );
+
+  return { owner, app, expectedServerAddr };
 }
 
-async function connectChecked(connectionString, makeClient) {
-  const client = await makeClient({ connectionString });
-  await client.connect();
-  return client;
+async function connectChecked(connectionString, makeClient, label) {
+  let client;
+  try {
+    client = await makeClient({ connectionString });
+    await client.connect();
+    return client;
+  } catch {
+    try {
+      await client?.end();
+    } catch {
+      // Never replace the sanitized connection failure with a driver close error.
+    }
+    throw safeFailure(`could not connect to the verified local ${label} target`);
+  }
 }
 
-async function queryOne(client, sql) {
-  const result = await client.query(sql);
+async function safeQuery(client, sql, label) {
+  try {
+    return await client.query(sql);
+  } catch {
+    throw safeFailure(`${label} verification query failed`);
+  }
+}
+
+async function queryOne(client, sql, label) {
+  const result = await safeQuery(client, sql, label);
   if (result.rows.length !== 1) {
-    fail("database verification query returned an unexpected row count");
+    fail(`${label} verification query returned an unexpected row count`);
   }
   return result.rows[0];
 }
 
-async function verifyOwnerConnection(owner, makeClient, mode) {
-  const client = await connectChecked(owner.raw, makeClient);
+async function closeQuietly(client) {
+  try {
+    await client.end();
+  } catch {
+    // Connection teardown cannot expose a raw driver error or mask guard results.
+  }
+}
+
+async function verifyOwnerConnection(owner, expectedServerAddr, makeClient, mode) {
+  const client = await connectChecked(owner.raw, makeClient, "owner");
   try {
     const facts = await queryOne(
       client,
@@ -112,6 +158,7 @@ async function verifyOwnerConnection(owner, makeClient, mode) {
           inet_server_addr()::text as server_addr,
           inet_server_port()::int as server_port
       `,
+      "owner identity",
     );
 
     if (facts.database !== EXPECTED.database) {
@@ -120,8 +167,8 @@ async function verifyOwnerConnection(owner, makeClient, mode) {
     if (facts.role !== EXPECTED.ownerUser || facts.session_role !== EXPECTED.ownerUser) {
       fail("live owner connection is not authenticated directly as ci_owner");
     }
-    if (!["127.0.0.1", "::1"].includes(facts.server_addr)) {
-      fail("live owner connection is not served from a loopback address");
+    if (facts.server_addr !== expectedServerAddr) {
+      fail("live owner connection does not match the trusted service-container address");
     }
     if (Number(facts.server_port) !== Number(EXPECTED.port)) {
       fail("live owner connection is not served from port 5432");
@@ -136,18 +183,19 @@ async function verifyOwnerConnection(owner, makeClient, mode) {
           from pg_tables
           where schemaname not in ('pg_catalog', 'information_schema')
         `,
+        "blank target",
       );
       if (Number(blank.user_tables) !== 0) {
         fail("pre-migrate target is not blank");
       }
     }
   } finally {
-    await client.end();
+    await closeQuietly(client);
   }
 }
 
-async function verifyAppConnection(app, makeClient) {
-  const client = await connectChecked(app.raw, makeClient);
+async function verifyAppConnection(app, expectedServerAddr, makeClient) {
+  const client = await connectChecked(app.raw, makeClient, "application");
   try {
     const role = await queryOne(
       client,
@@ -167,6 +215,7 @@ async function verifyAppConnection(app, makeClient) {
         from pg_roles r
         where r.rolname = current_user
       `,
+      "application identity",
     );
 
     if (role.database !== EXPECTED.database) {
@@ -175,8 +224,8 @@ async function verifyAppConnection(app, makeClient) {
     if (role.role !== EXPECTED.appUser || role.session_role !== EXPECTED.appUser) {
       fail("live app connection is not authenticated directly as portal_app");
     }
-    if (!["127.0.0.1", "::1"].includes(role.server_addr)) {
-      fail("live app connection is not served from a loopback address");
+    if (role.server_addr !== expectedServerAddr) {
+      fail("live app connection does not match the trusted service-container address");
     }
     if (Number(role.server_port) !== Number(EXPECTED.port)) {
       fail("live app connection is not served from port 5432");
@@ -227,6 +276,7 @@ async function verifyAppConnection(app, makeClient) {
               and n.nspname in ('public', 'drizzle')
               and t.typtype in ('e', 'd')) as types
       `,
+      "application ownership",
     );
 
     const owned =
@@ -239,7 +289,9 @@ async function verifyAppConnection(app, makeClient) {
       fail("portal_app owns database/application schema objects");
     }
 
-    const memberships = await client.query(`
+    const memberships = await safeQuery(
+      client,
+      `
       /* ci-db-guard:privilege-memberships */
       with recursive inherited_roles(roleid, path) as (
         select
@@ -261,7 +313,9 @@ async function verifyAppConnection(app, makeClient) {
       from inherited_roles ir
       join pg_roles r on r.oid = ir.roleid
       order by r.rolname
-    `);
+    `,
+      "application role-membership",
+    );
 
     if (memberships.rows.length > 0) {
       const names = memberships.rows.map((row) => row.rolname).join(", ");
@@ -270,7 +324,7 @@ async function verifyAppConnection(app, makeClient) {
       );
     }
   } finally {
-    await client.end();
+    await closeQuietly(client);
   }
 }
 
@@ -291,12 +345,12 @@ export async function runGuard(
     fail("mode must be pre-migrate or post-migrate");
   }
 
-  const { owner, app } = validateTargetUrls(env);
+  const { owner, app, expectedServerAddr } = validateTargetUrls(env);
 
-  await verifyOwnerConnection(owner, makeClient, mode);
+  await verifyOwnerConnection(owner, expectedServerAddr, makeClient, mode);
 
   if (mode === "post-migrate") {
-    await verifyAppConnection(app, makeClient);
+    await verifyAppConnection(app, expectedServerAddr, makeClient);
   }
 
   log(`CI database guard passed (${mode}): local disposable portal_ci target verified.`);
