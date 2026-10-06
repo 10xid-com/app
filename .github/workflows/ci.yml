@@ -34,4 +34,10 @@ jobs:
         run: npm run typecheck
 
       - name: Build
+        env:
+          # Build-time placeholder only. It points at a closed local port, so the
+          # CI build cannot reach Railway, Neon, or any other database. Runtime
+          # startup still verifies DATABASE_APP_URL by connecting and checking
+          # that the role is restricted before serving traffic.
+          DATABASE_APP_URL: postgresql://ci-build:ci-build@127.0.0.1:1/ci_build
         run: npm run build
