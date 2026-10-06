@@ -148,7 +148,7 @@ export default async function WorkspacePage({
           }
         : null,
     },
-    engines: modeOptions(withheld),
+    engines: modeOptions(withheld, conversation?.engineMode),
     error: params.error ? (ERRORS[params.error] ?? "That did not work.") : null,
   };
 

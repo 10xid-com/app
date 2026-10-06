@@ -41,7 +41,8 @@ export function ollamaModels(): string[] {
   const listed = env("OLLAMA_MODELS")
     ?.split(",")
     .map((m) => m.trim())
-    .filter(Boolean);
+    // "auto" is the Auto entry's name; as a model it would fan out like Auto.
+    .filter((m) => m && m !== AUTO);
   return listed?.length ? listed : [...DEFAULT_MODELS];
 }
 

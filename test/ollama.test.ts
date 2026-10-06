@@ -109,7 +109,8 @@ describe("configuration", () => {
 
   test("OLLAMA_MODELS replaces the list; unset, the defaults stand", () => {
     expect(ollamaModels()).toEqual([...DEFAULT_MODELS]);
-    vi.stubEnv("OLLAMA_MODELS", " gpt-oss:20b , qwen3:8b ,");
+    vi.stubEnv("OLLAMA_MODELS", " gpt-oss:20b , qwen3:8b ,auto");
+    // "auto" is never a model: it would fan out like the Auto entry.
     expect(ollamaModels()).toEqual(["gpt-oss:20b", "qwen3:8b"]);
   });
 });

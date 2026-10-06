@@ -46,9 +46,22 @@ function allModes(): EngineModeSpec[] {
   return [...ENGINE_MODES, ...ollamaModels().map((m) => ollamaModelSpec(base, m))];
 }
 
-/** A mode by id, including the per-model Ollama ones. */
+/**
+ * A mode by id, including the per-model Ollama ones. A model that has left
+ * the list (Ollama Cloud retires models) still resolves, so conversations
+ * saved with it say why they cannot run instead of failing as unknown; it is
+ * never available (serverUnavailability).
+ */
 export function findMode(id: string): EngineModeSpec | undefined {
-  return allModes().find((m) => m.id === id);
+  const known = allModes().find((m) => m.id === id);
+  if (known || !id.startsWith("ollama:")) return known;
+  const base = modeSpec(ollamaConfig().selfHosted ? "ollama-self-hosted" : "prototype-free")!;
+  return ollamaModelSpec(base, id.slice("ollama:".length));
+}
+
+/** A per-model Ollama entry whose model is no longer on the server's list. */
+function isRetired(spec: EngineModeSpec): boolean {
+  return spec.policyMode !== undefined && !ollamaModels().includes(spec.defaultModel ?? "");
 }
 
 /** Why a mode cannot run on this server at all, or null when it can. */
@@ -60,6 +73,7 @@ function serverUnavailability(spec: EngineModeSpec): string | null {
       if (!env("OPENAI_API_KEY")) return "Needs OPENAI_API_KEY on the server.";
       return modelFor(spec) ? null : `Needs ${spec.modelEnv} to name the model.`;
     case "ollama": {
+      if (isRetired(spec)) return "No longer offered on this server. Pick another model.";
       const selfHosted = ollamaConfig().selfHosted;
       if (spec.id === "ollama-self-hosted" && !selfHosted) {
         return "Needs OLLAMA_SELF_HOSTED=true and your own Ollama server.";
@@ -87,10 +101,15 @@ function listed(spec: EngineModeSpec): boolean {
 
 /**
  * What the picker shows for one client: every mode, with whether it can be
- * used and why not.
+ * used and why not. `current` is the open conversation's mode: kept in the
+ * list even when it is no longer offered, so the picker shows what is saved
+ * (marked unavailable) rather than silently displaying another engine.
  */
-export function modeOptions(withheld: Set<string>): EngineModeOption[] {
-  return allModes().filter(listed).map((m) => {
+export function modeOptions(withheld: Set<string>, current?: string): EngineModeOption[] {
+  const modes = allModes().filter(listed);
+  const saved = current && !modes.some((m) => m.id === current) ? findMode(current) : undefined;
+  if (saved) modes.push(saved);
+  return modes.map((m) => {
     const server = serverUnavailability(m);
     const reason = server ?? (isWithheld(m, withheld) ? "Not permitted for this client." : null);
     return {

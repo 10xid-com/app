@@ -472,8 +472,8 @@ describe("the routing policy", () => {
       ["ollama:gpt-oss:20b", "Ollama — gpt-oss 20B (OpenAI)"],
     ]);
     expect(ollama.every((o) => o.available && !o.canUseTools)).toBe(true);
-    // A model not on the server's list is not a mode, whatever a request says.
-    expect(engineFor("ollama:some-paid-model", new Set())).toMatchObject({ error: expect.stringMatching(/does not exist/) });
+    // A model not on the server's list never runs, whatever a request says.
+    expect(engineFor("ollama:some-paid-model", new Set())).toMatchObject({ error: expect.stringMatching(/No longer offered/) });
   });
 
   test("an Ollama Cloud model entry keeps the prototype's fence, and asks only its own model", async () => {
@@ -504,6 +504,20 @@ describe("the routing policy", () => {
     expect(ollama.map((o) => o.id)).toEqual(["ollama-self-hosted", "ollama:qwen3:8b"]);
     expect(ollama.find((o) => o.id === "ollama:qwen3:8b")).toMatchObject({ label: "Ollama — qwen3:8b", canUseTools: true });
     expect("engine" in engineFor("ollama:qwen3:8b", new Set(), { hasContext: true })).toBe(true);
+  });
+
+  test("a model taken off the list stays visible for its conversations, and never runs or can be picked", () => {
+    vi.stubEnv("ENABLE_PROTOTYPE_ENGINE", "true");
+    vi.stubEnv("OLLAMA_API_KEY", "k");
+    vi.stubEnv("OLLAMA_MODELS", "gpt-oss:120b");
+    expect(engineFor("ollama:gemma4:31b", new Set())).toMatchObject({ error: expect.stringMatching(/No longer offered/) });
+    // The picker for that conversation still shows it, marked unavailable...
+    expect(modeOptions(new Set(), "ollama:gemma4:31b").find((o) => o.id === "ollama:gemma4:31b")).toMatchObject({
+      label: "Ollama — Gemma 4 31B (Google)",
+      available: false,
+    });
+    // ...but no other picker lists it, so it cannot be chosen.
+    expect(modeOptions(new Set()).some((o) => o.id === "ollama:gemma4:31b")).toBe(false);
   });
 
   test("withholding an Ollama Auto mode from a client withholds every model under it", () => {
