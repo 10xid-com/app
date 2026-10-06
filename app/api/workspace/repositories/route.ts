@@ -34,7 +34,12 @@ export async function GET() {
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (err) {
-    if (err instanceof RepoError) return NextResponse.json({ error: err.message }, { status: 502 });
+    if (err instanceof RepoError) {
+      // Fixed wording, never a token or key: the one place the cause is kept,
+      // since the person who saw it on screen may not say what it was.
+      console.warn(`[workspace] listing repositories failed: ${err.message}`);
+      return NextResponse.json({ error: err.message }, { status: 502 });
+    }
     console.error("[workspace] listing installations failed", err);
     return NextResponse.json({ error: "GitHub could not be reached." }, { status: 502 });
   }
