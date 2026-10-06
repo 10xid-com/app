@@ -169,9 +169,17 @@ test.describe("a conversation about a repository", () => {
 
     // Link it to Rotary from the list the GitHub App can see.
     await page.getByText(/Manage repositories for Rotary/).click();
+    const search = page.getByRole("searchbox", { name: "Search repositories" });
+    await search.fill("no-such-repo");
+    await expect(page.getByText(/No repository matches/)).toBeVisible();
+    await search.fill("STORE");
     const linkRow = page.getByRole("listitem").filter({ hasText: "10xid-com/storefront" });
     await linkRow.getByRole("button", { name: "Link" }).click();
     await settle(page);
+
+    // Linked, the panel shows only Rotary's own repository.
+    await expect(page.getByRole("button", { name: "Link another repository" })).toBeVisible();
+    await expect(search).toHaveCount(0);
 
     // Choose it, on a feature branch.
     await page.getByRole("combobox", { name: "Repository" }).selectOption({ label: "10xid-com/storefront" });

@@ -131,9 +131,15 @@ function Selector({ data, conversationId }: { data: WorkspaceData; conversationI
 type Available = { externalId: number; name: string; private: boolean; linkedHere: boolean };
 
 function Manage({ data, conversationId }: { data: WorkspaceData; conversationId: string | null }) {
+  const linked = data.repository.linked;
   const [available, setAvailable] = useState<Available[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  // A client with its repository linked sees just that one; the full list is
+  // one click away, for the rare second repository.
+  const [adding, setAdding] = useState(false);
+  const [query, setQuery] = useState("");
+  const listing = adding || linked.length === 0;
 
   async function load() {
     if (available || loading) return;
@@ -151,16 +157,24 @@ function Manage({ data, conversationId }: { data: WorkspaceData; conversationId:
   }
 
   const owner = data.client.isHouse ? "the house" : data.client.name;
+  // By name too: the list may have been fetched before the latest link.
+  const linkedNames = new Set(linked.map((r) => r.name));
+  const linkable = available?.filter((r) => !r.linkedHere && !linkedNames.has(r.name)) ?? null;
+  const needle = query.trim().toLowerCase();
+  const shown = linkable?.filter((r) => r.name.toLowerCase().includes(needle)) ?? null;
 
   return (
-    <details className="rounded-lg border border-line bg-surface" onToggle={(e) => e.currentTarget.open && void load()}>
+    <details
+      className="rounded-lg border border-line bg-surface"
+      onToggle={(e) => e.currentTarget.open && listing && void load()}
+    >
       <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium text-ink-soft">
         Manage repositories for {owner}
       </summary>
       <div className="space-y-3 px-3 pb-3">
-        {data.repository.linked.length ? (
+        {linked.length ? (
           <ul className="space-y-1">
-            {data.repository.linked.map((r) => (
+            {linked.map((r) => (
               <li key={r.id} className="flex items-center justify-between gap-2 text-xs">
                 <span className="truncate text-ink">{r.name}</span>
                 <form action={unlinkRepositoryAction}>
@@ -174,19 +188,30 @@ function Manage({ data, conversationId }: { data: WorkspaceData; conversationId:
             ))}
           </ul>
         ) : null}
-        <div>
-          <p className="text-[11px] font-semibold text-ink-soft">Link a repository the GitHub App can see</p>
-          {loading ? <p className="mt-1 text-xs text-ink-faint">Asking GitHub…</p> : null}
-          {error ? <p className="mt-1 text-xs text-bad">{error}</p> : null}
-          {available && available.filter((r) => !r.linkedHere).length === 0 ? (
-            <p className="mt-1 text-xs text-ink-faint">
-              Nothing else to link. Install the GitHub App on more repositories to see them here.
-            </p>
-          ) : null}
-          <ul className="mt-1 space-y-1">
-            {available
-              ?.filter((r) => !r.linkedHere)
-              .map((r) => (
+        {listing ? (
+          <div>
+            <p className="text-[11px] font-semibold text-ink-soft">Link a repository the GitHub App can see</p>
+            {linkable && linkable.length > 0 ? (
+              <input
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search repositories"
+                aria-label="Search repositories"
+                className="mt-1 w-full rounded-md border border-line bg-surface px-2 py-1.5 text-xs text-ink"
+              />
+            ) : null}
+            {loading ? <p className="mt-1 text-xs text-ink-faint">Asking GitHub…</p> : null}
+            {error ? <p className="mt-1 text-xs text-bad">{error}</p> : null}
+            {linkable && linkable.length === 0 ? (
+              <p className="mt-1 text-xs text-ink-faint">
+                Nothing else to link. Install the GitHub App on more repositories to see them here.
+              </p>
+            ) : shown && shown.length === 0 ? (
+              <p className="mt-1 text-xs text-ink-faint">No repository matches “{query.trim()}”.</p>
+            ) : null}
+            <ul className="mt-1 space-y-1">
+              {shown?.map((r) => (
                 <li key={r.externalId} className="flex items-center justify-between gap-2 text-xs">
                   <span className="truncate text-ink">
                     {r.name}
@@ -201,11 +226,23 @@ function Manage({ data, conversationId }: { data: WorkspaceData; conversationId:
                   </form>
                 </li>
               ))}
-          </ul>
-          <p className="mt-2 text-[11px] leading-relaxed text-ink-faint">
-            A repository belongs to one client at a time. Linking it here makes it readable in {owner}’s workspace only.
-          </p>
-        </div>
+            </ul>
+            <p className="mt-2 text-[11px] leading-relaxed text-ink-faint">
+              A repository belongs to one client at a time. Linking it here makes it readable in {owner}’s workspace only.
+            </p>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => {
+              setAdding(true);
+              void load();
+            }}
+            className="text-[11px] font-medium text-brand hover:underline"
+          >
+            Link another repository
+          </button>
+        )}
       </div>
     </details>
   );
