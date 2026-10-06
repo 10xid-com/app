@@ -4,10 +4,10 @@
 Phase 1 — Platform Hardening
 
 ## Current action
-Phase 1 / Enforced CI/security gates — repository audit completed. Next step is add the first GitHub Actions workflow for deterministic code-quality gates before wiring database-backed security checks.
+Phase 1 / Enforced CI/security gates — first GitHub Actions workflow added on `main`. Next step is verify the workflow actually runs and passes before adding branch-protection requirements or database-backed security jobs.
 
 ## Last passed checkpoint
-Phase 1 CI audit: repo has no `.github/` directory or workflows; available deterministic gates are `npm run lint`, `npm run typecheck`, and `npm test`. Database-backed gates exist as `npm run db:rls-check`, `npm run prove`, and Playwright E2E, but tests require both owner and restricted app database connections. ESLint already enforces the raw-database-import tenancy rule. GitHub App cannot read branch-protection settings (403), so protection must be checked manually or via a credential/integration with administration read access.
+Phase 1 CI checkpoint: `.github/workflows/ci.yml` added on `main` with read-only contents permission, Node 22, `npm ci`, `npm run lint`, `npm run typecheck`, and `npm run build` on pull requests and pushes to `main`. No database credentials or production resources are involved.
 
 ## Confirmed findings
 - CI audit: no `.github/` directory or GitHub Actions workflows exist on `main`.
@@ -84,4 +84,4 @@ The copied Neon database must pass:
 8. application/database isolation tests.
 
 ## Next action
-Add a minimal GitHub Actions workflow that runs install, lint, typecheck, and build on pull requests and pushes to `main`; keep database-backed RLS/isolation/E2E checks out of the first workflow until a safe isolated CI database setup is defined.
+Verify the new GitHub Actions `CI` workflow run for commit `7bc30230562e858f648db13a385e15790868a132`. If it fails, inspect and fix only the failing deterministic gate before proceeding.
