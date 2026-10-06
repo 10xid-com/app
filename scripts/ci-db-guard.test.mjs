@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   parseDatabaseUrl,
+  parseExpectedServerAddress,
   runGuard,
   validateTargetUrls,
 } from "./ci-db-guard.mjs";
 
 const OWNER = "postgresql://ci_owner:owner-pass@127.0.0.1:5432/portal_ci";
 const APP = "postgresql://portal_app:app-pass@localhost:5432/portal_ci";
+const SERVICE_ADDR = "172.18.0.2";
 
 function result(rows) {
   return { rows };
@@ -18,7 +20,7 @@ function fakeClientFactory({
     database: "portal_ci",
     role: "ci_owner",
     session_role: "ci_owner",
-    server_addr: "127.0.0.1",
+    server_addr: SERVICE_ADDR,
     server_port: 5432,
   },
   blank = { user_tables: 0 },
@@ -26,7 +28,7 @@ function fakeClientFactory({
     database: "portal_ci",
     role: "portal_app",
     session_role: "portal_app",
-    server_addr: "127.0.0.1",
+    server_addr: SERVICE_ADDR,
     server_port: 5432,
     rolsuper: false,
     rolbypassrls: false,
@@ -57,9 +59,10 @@ function fakeClientFactory({
   });
 }
 
-const env = (owner = OWNER, app = APP) => ({
+const env = (owner = OWNER, app = APP, expectedServerAddr = SERVICE_ADDR) => ({
   DATABASE_URL: owner,
   DATABASE_APP_URL: app,
+  CI_DB_EXPECTED_SERVER_ADDR: expectedServerAddr,
 });
 
 test("accepts the exact disposable local owner/app target pair", () => {
@@ -71,6 +74,22 @@ test("accepts the exact disposable local owner/app target pair", () => {
 
 test("accepts localhost and 127.0.0.1 as the same loopback target class", () => {
   assert.doesNotThrow(() => validateTargetUrls(env()));
+});
+
+test("requires one exact trusted service-container address", () => {
+  assert.equal(parseExpectedServerAddress(SERVICE_ADDR), SERVICE_ADDR);
+  assert.throws(
+    () => parseExpectedServerAddress(""),
+    /CI_DB_EXPECTED_SERVER_ADDR is missing/,
+  );
+  assert.throws(
+    () => parseExpectedServerAddress("172.18.0.0/16"),
+    /one explicit IPv4 or IPv6 literal/,
+  );
+  assert.throws(
+    () => parseExpectedServerAddress("postgres"),
+    /one explicit IPv4 or IPv6 literal/,
+  );
 });
 
 for (const [name, owner, app, pattern] of [
@@ -167,7 +186,15 @@ test("pre-migrate rejects a nonblank target before migration", async () => {
   );
 });
 
-test("rejects a live owner connection that is not loopback", async () => {
+test("accepts Docker service address while runner URLs stay loopback", async () => {
+  await runGuard("pre-migrate", {
+    env: env(),
+    makeClient: fakeClientFactory(),
+    log() {},
+  });
+});
+
+test("rejects a live owner connection that does not match the pinned service address", async () => {
   await assert.rejects(
     runGuard("pre-migrate", {
       env: env(),
@@ -176,13 +203,24 @@ test("rejects a live owner connection that is not loopback", async () => {
           database: "portal_ci",
           role: "ci_owner",
           session_role: "ci_owner",
-          server_addr: "10.0.0.5",
+          server_addr: "172.18.0.99",
           server_port: 5432,
         },
       }),
       log() {},
     }),
-    /not served from a loopback address/,
+    /does not match the trusted service-container address/,
+  );
+});
+
+test("rejects arbitrary private service address unless it is the exact pinned instance", async () => {
+  await assert.rejects(
+    runGuard("pre-migrate", {
+      env: env(OWNER, APP, "10.20.30.40"),
+      makeClient: fakeClientFactory(),
+      log() {},
+    }),
+    /does not match the trusted service-container address/,
   );
 });
 
@@ -212,7 +250,7 @@ for (const [field, label] of [
             database: "portal_ci",
             role: "portal_app",
             session_role: "portal_app",
-            server_addr: "127.0.0.1",
+            server_addr: SERVICE_ADDR,
             server_port: 5432,
             rolsuper: false,
             rolbypassrls: false,
@@ -258,6 +296,47 @@ test("post-migrate rejects privilege-escalating role memberships", async () => {
       log() {},
     }),
     /unexpected role membership\(s\), treated as privilege-escalating: ci_owner/,
+  );
+});
+
+test("sanitizes driver connection errors", async () => {
+  await assert.rejects(
+    runGuard("pre-migrate", {
+      env: env(),
+      makeClient: async () => ({
+        async connect() {
+          throw new Error("password=SUPERSECRET host=127.0.0.1");
+        },
+        async end() {},
+      }),
+      log() {},
+    }),
+    (error) => {
+      assert.match(error.message, /failed safely: could not connect/);
+      assert.doesNotMatch(error.message, /SUPERSECRET/);
+      return true;
+    },
+  );
+});
+
+test("sanitizes driver query errors", async () => {
+  await assert.rejects(
+    runGuard("pre-migrate", {
+      env: env(),
+      makeClient: async () => ({
+        async connect() {},
+        async end() {},
+        async query() {
+          throw new Error("postgresql://ci_owner:SUPERSECRET@127.0.0.1:5432/portal_ci");
+        },
+      }),
+      log() {},
+    }),
+    (error) => {
+      assert.match(error.message, /failed safely: owner identity verification query failed/);
+      assert.doesNotMatch(error.message, /SUPERSECRET/);
+      return true;
+    },
   );
 });
 
