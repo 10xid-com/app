@@ -1,0 +1,222 @@
+# Recoverability Runbook: Railway PostgreSQL -> Neon
+
+Status: validated rehearsal procedure. Production cutover has **not** occurred.
+
+## Purpose
+
+This runbook records the source-authoritative recovery path validated during Phase 1. The Railway PostgreSQL database remains the source of truth until an explicit cutover is approved. Do not change production application variables, DNS, or delete Railway resources as part of this procedure.
+
+## Architecture decision
+
+The approved recoverability architecture is Railway PostgreSQL -> Neon PostgreSQL.
+
+Important constraints:
+
+- Treat the live Railway database as authoritative for schema, data, functions, triggers, policies, grants, and Drizzle migration history.
+- Do not reconstruct the database by replaying the current repository migrations. The committed migration files no longer reproduce the exact migration journal/hash history present on Railway, and some historical migrations contain data writes.
+- Restore into a separate Neon database or branch first.
+- Keep the runtime application role separate from object ownership.
+- Do not enable FORCE RLS automatically; that remains a separate reviewed decision.
+
+## 1. Create the Railway source dump
+
+Run from an authorized Railway shell using the owner connection already available to that runtime. Never paste database URLs into chat, tickets, or documentation.
+
+```bash
+set -e
+DUMP=/tmp/10xid-railway-source.dump
+
+pg_dump "$DATABASE_URL" \
+  --format=custom \
+  --no-password \
+  --verbose \
+  --file="$DUMP"
+
+ls -lh "$DUMP"
+pg_restore --list "$DUMP" | sed -n '1,120p'
+```
+
+The custom-format dump is expected to contain:
+
+- `drizzle.__drizzle_migrations`
+- public schema tables and data
+- functions and triggers
+- indexes and constraints
+- ACLs/grants
+- RLS policies and metadata
+
+PostgreSQL logical dumps do **not** recreate cluster roles. Required roles must exist on the target separately.
+
+## 2. Prepare an isolated Neon target
+
+Create a separate empty database, for example:
+
+```sql
+create database railway_restore_test;
+```
+
+Before restore, verify the persistent application role:
+
+```sql
+select
+  rolname,
+  rolsuper,
+  rolbypassrls,
+  rolcanlogin,
+  rolcreatedb,
+  rolcreaterole
+from pg_roles
+where rolname = 'portal_app';
+```
+
+Required posture:
+
+```text
+portal_app | false | false | true | false | false
+```
+
+The application role must remain a restricted non-owner and must not have `BYPASSRLS`.
+
+## 3. Restore the source-authoritative dump
+
+Use the Neon owner/direct connection privately. Do not expose it in logs or chat.
+
+```bash
+read -s -p "Neon restore target owner URL: " NEON_RESTORE_URL
+echo
+
+pg_restore \
+  --dbname="$NEON_RESTORE_URL" \
+  --no-owner \
+  --exit-on-error \
+  --verbose \
+  /tmp/10xid-railway-source.dump
+```
+
+Do not use `--clean` for the certified restore procedure.
+
+### Why `--no-owner` is intentional
+
+Railway objects are owned by Railway's `postgres` role. Neon uses its managed owner role, currently `neondb_owner`. Preserving the literal Railway owner is neither required nor desirable.
+
+With `--no-owner`:
+
+- restored objects become owned by the Neon owner
+- `portal_app` remains non-owner
+- source ACLs and policies can still be restored
+- the critical security invariant is preserved: the runtime application role is restricted and subject to RLS
+
+## 4. Validate source fidelity
+
+Validation must be read-only.
+
+### Public table counts
+
+Compare all public table counts against the saved Railway source baseline. The validated rehearsal matched all 35 public tables exactly.
+
+### Drizzle migration journal
+
+Compare:
+
+```sql
+select id, hash, created_at
+from drizzle.__drizzle_migrations
+order by id;
+```
+
+The validated rehearsal matched all 20 `id/hash/created_at` triples exactly.
+
+## 5. Validate security structure
+
+Check:
+
+- ownership of all public tables
+- `portal_app` role attributes
+- RLS enablement and FORCE flags
+- all `portal_app` table grants
+- every RLS policy, including table, policy name, roles, command, `qual`, and `with_check`
+
+Validated rehearsal result:
+
+- all 35 public tables owned by `neondb_owner` on Neon, intentionally
+- all 35 RLS/FORCE flags matched Railway exactly
+- `portal_app` remained LOGIN, NOSUPERUSER, NOBYPASSRLS, NOCREATEDB, NOCREATEROLE
+- all 110 `portal_app` table privilege triples matched exactly
+- all 27 policies matched exactly
+
+## 6. Validate tenant isolation
+
+Use a transaction that temporarily permits the Neon owner to `SET ROLE portal_app`, then roll the entire transaction back.
+
+Required assertions from the validated drill:
+
+```text
+unscoped_jobs = 0
+own_tenant_jobs > 0
+cross_tenant_jobs = 0
+own_conversation_visible = 1
+wrong_user_conversation_visible = 0
+```
+
+The validated rehearsal produced:
+
+```text
+unscoped_jobs = 0
+own_tenant_jobs = 2
+cross_tenant_jobs = 0
+own_conversation_visible = 1
+wrong_user_conversation_visible = 0
+```
+
+No persistent role-membership or data changes should remain after rollback.
+
+## 7. Recovery drill
+
+A branch created from current HEAD is useful for clone verification, but it is **not** sufficient to prove point-in-time recovery.
+
+For the Phase 1 exit test, use Neon's historical branch creation path:
+
+1. Create a **new branch** from the protected/certified source branch.
+2. Choose **branch data and schema from a past point in time**, within the available history-retention window.
+3. Do not use an in-place restore that replaces the source branch.
+4. On the recovered branch, validate the restored database again:
+   - all 35 public table counts
+   - all 20 Drizzle migration journal triples
+
+Validated PITR drill:
+
+- branch: `railway-pitr-drill`
+- historical timestamp: `2026-10-06T16:07:00Z`
+- all 35 public table counts matched
+- all 20 migration `id/hash/created_at` triples matched
+- source branch, previous certified copies, Railway, app variables, and DNS remained unchanged
+
+At the time of this rehearsal, the Neon Free plan exposed a 6-hour history window. Production retention tier remains a separate architecture/cost decision.
+
+## 8. Cutover guardrails
+
+This runbook does **not** authorize production cutover.
+
+Before any cutover:
+
+- obtain explicit approval for the production resource change
+- re-run source-fidelity and security checks on the final target
+- confirm the production recovery-retention tier
+- configure production application credentials privately
+- verify app runtime connects as the restricted non-owner role
+- run isolation tests against the final target
+- plan rollback before changing application variables or DNS
+- keep Railway intact until the new production database is accepted
+
+## Phase 1 recoverability result
+
+The recoverability objective is technically demonstrated:
+
+1. source-authoritative Railway logical backup created
+2. restore completed into an isolated Neon database
+3. row counts and migration history matched exactly
+4. grants, RLS flags, policies, and restricted role posture matched
+5. live tenant isolation behavior passed
+6. a separate historical Neon point-in-time recovery branch reproduced the certified state
+
+Production cutover remains pending and requires separate approval.
