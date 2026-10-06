@@ -100,6 +100,11 @@ Each is **inert without configuration** rather than half-working. See `.env.exam
 
 ## The workspace
 
+> **Provider intent:** Chat Boss is intended to use **Ollama**. No Ollama model or base URL is
+> prescribed here; those are deployment choices. The repository currently also contains Anthropic
+> and OpenAI engine modes. Whether those alternatives should remain available inside `/chat` is a
+> separate architecture decision, so this clarification does not remove or rewrite them.
+
 `/chat` is where staff land: one client's workspace, with conversations kept per client **and per
 person** — two staff on the same client do not read each other's conversations. Postgres enforces
 both (0018: `app.org_id` and `app.user_id`), and child rows reference their parent by
