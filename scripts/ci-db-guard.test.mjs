@@ -32,12 +32,14 @@ function fakeClientFactory({
     rolbypassrls: false,
     rolcreatedb: false,
     rolcreaterole: false,
+    rolreplication: false,
   },
   ownership = {
     databases: 0,
     schemas: 0,
     relations: 0,
     routines: 0,
+    types: 0,
   },
   memberships = [],
 } = {}) {
@@ -120,6 +122,18 @@ for (const [name, owner, app, pattern] of [
   });
 }
 
+test("rejects malformed percent-encoding without echoing credentials", () => {
+  assert.throws(
+    () =>
+      parseDatabaseUrl(
+        "DATABASE_URL",
+        "postgresql://ci%ZZ_owner:secret@127.0.0.1:5432/portal_ci",
+        "ci_owner",
+      ),
+    /malformed percent-encoding in username/,
+  );
+});
+
 test("rejects a URL without a disposable password", () => {
   assert.throws(
     () =>
@@ -187,6 +201,7 @@ for (const [field, label] of [
   ["rolbypassrls", "BYPASSRLS"],
   ["rolcreatedb", "CREATEDB"],
   ["rolcreaterole", "CREATEROLE"],
+  ["rolreplication", "REPLICATION"],
 ]) {
   test(`post-migrate rejects portal_app with ${label}`, async () => {
     await assert.rejects(
@@ -203,6 +218,7 @@ for (const [field, label] of [
             rolbypassrls: false,
             rolcreatedb: false,
             rolcreaterole: false,
+            rolreplication: false,
             [field]: true,
           },
         }),
@@ -223,6 +239,7 @@ test("post-migrate rejects any application-object ownership", async () => {
           schemas: 0,
           relations: 1,
           routines: 0,
+          types: 0,
         },
       }),
       log() {},
@@ -240,7 +257,7 @@ test("post-migrate rejects privilege-escalating role memberships", async () => {
       }),
       log() {},
     }),
-    /privilege-escalating role membership\(s\): ci_owner/,
+    /unexpected role membership\(s\), treated as privilege-escalating: ci_owner/,
   );
 });
 
