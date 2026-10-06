@@ -27,7 +27,7 @@ import { createFakeGitHub, sampleRepo } from "./support/fake-github";
  *   receipts name what was read            path, lines and commit, as rows
  *   secrets are never sent                 whatever the model or the person asks for
  *   @mentions become context               checked against the policy first
- *   the free prototype is kept away        from any conversation with a repository
+ *   the Ollama prototype is kept away      from any conversation with a repository
  */
 
 const owner = new Client({ connectionString: process.env.DATABASE_URL });
@@ -292,9 +292,9 @@ describe("an answer about a repository", () => {
     expect(await listRuns(rotaryOwner(), conv.id)).toEqual([]);
   });
 
-  test("the free prototype engine is refused once a repository is selected", async () => {
+  test("the Ollama prototype engine is refused once a repository is selected", async () => {
     vi.stubEnv("ENABLE_PROTOTYPE_ENGINE", "true");
-    vi.stubEnv("OPENROUTER_API_KEY", "test");
+    vi.stubEnv("OLLAMA_API_KEY", "test");
     const { conv, readerFor } = await repoConversation();
     await owner.query("update conversations set engine_mode = 'prototype-free' where id = $1", [conv.id]);
     const net = scripted([]);

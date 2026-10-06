@@ -4,8 +4,9 @@
  * The workspace never imports a provider SDK. It asks an AgentEngine to stream
  * a request and reads AgentEvents back, so adding a provider, or changing a
  * model, is a new implementation of this file's interface and nothing else.
- * Claude and OpenAI are the two engines this is built for; the free OpenRouter
- * models are a third, kept as a prototype (lib/ai/engine/modes.ts).
+ * Claude and OpenAI are the two engines this is built for; Ollama is a third,
+ * as a text-only prototype on Ollama Cloud, or with tools on a self-hosted server
+ * (lib/ai/engine/modes.ts).
  */
 
 export type EngineCapability =
@@ -19,7 +20,7 @@ export type EngineCapability =
   | "long_repository_context"
   | "streaming";
 
-export type Provider = "anthropic" | "openai" | "openrouter";
+export type Provider = "anthropic" | "openai" | "ollama";
 
 export type HistoryMessage = { role: "user" | "assistant"; content: string };
 
