@@ -4,10 +4,10 @@
 Phase 1 — Platform Hardening
 
 ## Current action
-Phase 1 / Recoverability — restored Neon security structure matches the Railway source baseline. Next step is validate transaction-local tenant context and live isolation behavior against `railway_restore_test` using the restricted `portal_app` role.
+Phase 1 / Recoverability — tenant-context and isolation behavior passed on the restored Neon copy. Next step is perform a separate Neon restore/recovery drill from the restored state to prove recoverability without touching the source database.
 
 ## Last passed checkpoint
-Phase 1 recoverability checkpoint: all 35 public-table RLS/FORCE flags match source, `portal_app` role attributes match the intended restricted posture, all 110 `portal_app` table privilege triples match source exactly, and all 27 RLS policies match source exactly. All restored public tables are owned by `neondb_owner` by design due to `--no-owner`.
+Phase 1 recoverability checkpoint: live isolation behavior passed on `railway_restore_test` under restricted `portal_app`: unscoped jobs=0, own-tenant jobs=2, cross-tenant jobs=0, own conversation visible=1, wrong-user conversation visible=0. Test transaction rolled back.
 
 ## Confirmed findings
 - Existing `/chat` implementation is the approved Chat Boss foundation.
@@ -76,4 +76,4 @@ The copied Neon database must pass:
 8. application/database isolation tests.
 
 ## Next action
-Run the app's tenant-context and isolation test suite against `railway_restore_test` using a dedicated Neon `portal_app` connection. Do not change production variables; use temporary local environment variables only.
+Create a separate Neon branch or recovery copy from the migrated project and restore/recover `railway_restore_test` into that separate target, then compare row counts and migration journal again. Do not modify Railway, app variables, or the certified `railway_restore_test` database.
