@@ -4,10 +4,10 @@
 Phase 1 — Platform Hardening
 
 ## Current action
-Phase 1 / Enforced CI/security gates — first GitHub Actions workflow added on `main`. Next step is verify the workflow actually runs and passes before adding branch-protection requirements or database-backed security jobs.
+Phase 1 / Enforced CI/security gates — first CI run failed only at `next build` because `DATABASE_APP_URL` is intentionally mandatory at module import. Applied a DB-free CI-only placeholder URL pointing at closed localhost port 1; next step is verify the new CI run.
 
 ## Last passed checkpoint
-Phase 1 CI checkpoint: `.github/workflows/ci.yml` added on `main` with read-only contents permission, Node 22, `npm ci`, `npm run lint`, `npm run typecheck`, and `npm run build` on pull requests and pushes to `main`. No database credentials or production resources are involved.
+Phase 1 CI debugging checkpoint: install, lint, and typecheck passed. Build failed before connecting anywhere because `lib/db/connection.ts` rejects a missing `DATABASE_APP_URL`. CI now supplies a build-step-only placeholder `postgresql://ci-build:ci-build@127.0.0.1:1/ci_build`; it cannot reach Railway/Neon and does not weaken runtime restricted-role enforcement.
 
 ## Confirmed findings
 - CI audit: no `.github/` directory or GitHub Actions workflows exist on `main`.
@@ -84,4 +84,4 @@ The copied Neon database must pass:
 8. application/database isolation tests.
 
 ## Next action
-Verify the new GitHub Actions `CI` workflow run for commit `7bc30230562e858f648db13a385e15790868a132`. If it fails, inspect and fix only the failing deterministic gate before proceeding.
+Verify the GitHub Actions `CI` run triggered by commit `3af9d9c7358c593be206abe3255a0a46748ab7f2`. If Build still fails, inspect the failing line before making any further change.
