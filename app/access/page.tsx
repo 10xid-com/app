@@ -35,9 +35,9 @@ const DENIED: Record<string, { title: string; intro: string }> = {
     intro: "It may have been closed. Ask its owner if you think this is a mistake.",
   },
   role_lacks_action: {
-    title: "Your role doesn't include this yet",
+    title: "Your role doesn't include this",
     intro:
-      "Only owners have permissions at the moment. The other roles are being set up and will get theirs soon.",
+      "Your role in this business doesn't allow it. If you need it, ask an owner or a manager of the business to change your role.",
   },
   staff_access_off: {
     title: "Staff access is turned off",
