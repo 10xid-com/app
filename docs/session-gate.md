@@ -1,44 +1,32 @@
 # Session gate
 
-The build brief (7 October 2026), instruction 4: prove two things before anything is built
-on the WorkOS sign-in. The code-level proof is in the test suite; this is the part only a
-deployed environment can show.
+What only a deployed environment can show, after the self-hosted sign-in (Better Auth on
+`login.10xid.com`) goes live. The code-level proof is in the test suites — here
+(`test/proxy.test.ts`, `test/auth-session.test.ts`) and in login (`test/better-auth.test.ts`,
+and `test/e2e/better-auth.spec.ts` across both hosts in a real browser).
 
-## 1. The cookie is host-only, Secure, HttpOnly, Path=/
-
-Already proven in code (`test/session-cookie.test.ts`, `test/proxy.test.ts`): the SDK's own
-callback and refresh paths, driven with a request arriving the way Railway delivers it, write
-`wos-session` with `Secure; HttpOnly; Path=/; SameSite=Lax; Max-Age=604800` and no `Domain`.
-Startup refuses any other setting (`lib/auth/origin.ts`, `sessionConfigProblems`).
+## 1. Both cookies are host-only, Secure, HttpOnly
 
 On staging, and again on production after the first real sign-in:
 
-1. Open DevTools → Network, sign in, select the request to `/callback`.
-2. In its response headers, find `set-cookie: wos-session=…`. Record the attributes.
-3. Pass only if it has `Secure`, `HttpOnly`, `Path=/`, `SameSite=Lax`, `Max-Age=604800`, and
-   **no** `Domain`. Anything else: stop the deployment and report. Do not change a setting to
-   make it pass.
-4. Visit `https://<any other>.10xid.com` (and a client domain): no `wos-session` is sent.
+1. DevTools → Network. Sign in on `login.10xid.com`. In the response to the sign-in request,
+   find `set-cookie: __Secure-10xid.session_token=…`: `Secure`, `HttpOnly`, `Path=/`,
+   `SameSite=Lax`, **no** `Domain`.
+2. Follow the handoff to `app.10xid.com/auth/sso/callback`. Its response sets
+   `__Host-portal_session=…`: `Secure`, `HttpOnly`, `Path=/`, `SameSite=Lax`, **no** `Domain`,
+   `Max-Age` no more than seven days.
+3. Visit another `*.10xid.com` host: neither cookie is sent.
+
+Anything else: stop the deployment and report. Do not change a setting to make it pass.
 
 ## 2. How the session really behaves
 
-WorkOS dashboard, management environment, before the test:
-
-- Authentication → Multi-factor authentication: **Required**.
-- Sessions: maximum length **7 days**, inactivity timeout **48 hours**, access token **5 minutes**.
-- Redirects: callback `https://app.10xid.com/callback`, Initiate login URI
-  `https://app.10xid.com/sign-in`, Sign-out URI `https://app.10xid.com/sign-in`.
-
-Record, for each, what the person actually sees and when:
-
-| Test | How | Record |
+| Test | How | Expected |
 |---|---|---|
-| Idle tab | Sign in, leave the tab untouched for > 5 min, then for > 48 h. Click a link. | Still signed in? Asked to sign in? MFA asked? |
-| Background refresh | Sign in, keep the tab open and visible for an hour; watch `/` requests in DevTools. | Does `wos-session` get re-set every ~5 min? Does the 48 h clock restart without a click? |
-| Phone | Sign in on a phone, use it daily for 7 days. | When was sign-in asked for again? Day 7 exactly? |
-| Revocation | Remove a person's membership while they are signed in. | Their next click is refused (`/access`), cookie still valid. |
-| Sign-out | Press Sign out, then press Back. | WorkOS session ended (signing in asks again)? |
-
-The 48 hours measures time since the last token refresh, which can happen without a person
-doing anything. What an owner actually experiences is for Paolo to judge; the settings are
-the launch policy unless this test fails.
+| Every method needs the authenticator | Sign in with a password, an emailed code, Google, Microsoft. | Each stops at "Enter your authenticator code" (or set-up) before the portal. |
+| Idle | Sign in, leave everything untouched for > 48 h. Click a link in the portal. | Sent to sign in. |
+| Hard end | Use the portal daily for 7 days. | Asked to sign in again 7 days after signing in, however active. |
+| Revocation | On login's "Your sign-in" page, sign out another device. | That device's next portal click is sent to sign in. |
+| Membership | Remove a person's membership while they are signed in. | Their next click is refused (`/access`). |
+| Sign-out | Press Sign out in the portal, then Back. | Back shows the sign-in page; the portal asks to sign in again. |
+| Everywhere | "Sign out everywhere" in the portal. | Every device is signed out of both hosts. |

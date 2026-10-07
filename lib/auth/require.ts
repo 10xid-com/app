@@ -4,7 +4,7 @@ import type { SessionContext } from "./session";
 
 /**
  * Kept for the staff and act-as screens, which are turned off rather than
- * deleted. Under WorkOS there is no acting as anybody (`actingAs` is always
+ * deleted. There is no acting as anybody (`actingAs` is always
  * null), so this never redirects; it stays so those files keep their guard if
  * the feature is ever rebuilt on agency grants.
  *

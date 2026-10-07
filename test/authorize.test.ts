@@ -29,7 +29,8 @@ import {
 vi.mock("server-only", () => ({}));
 
 const ORIGIN = "https://app.10xid.com";
-const SECRET = "s".repeat(40);
+/** The session cookie's secret value, which the CSRF token is keyed by. */
+const TOKEN = "t".repeat(43);
 const BUSINESS = "11111111-1111-4111-8111-111111111111";
 const OTHER = "22222222-2222-4222-8222-222222222222";
 const SESSION = "session_01ABC";
@@ -37,7 +38,8 @@ const SESSION = "session_01ABC";
 function ctx(role = "owner", organizationId: string | null = BUSINESS): SessionContext {
   return {
     sessionId: SESSION,
-    workosUserId: "user_01ABC",
+    authSessionId: "auth_session_01",
+    authUserId: "auth_user_01",
     userId: "33333333-3333-4333-8333-333333333333",
     email: "owner@example.com",
     fullName: null,
@@ -60,6 +62,7 @@ function ctx(role = "owner", organizationId: string | null = BUSINESS): SessionC
           },
         ]
       : [],
+    absoluteExpiresAt: new Date(Date.now() + 86_400_000),
     needsSecondFactor: false,
     realUserId: "33333333-3333-4333-8333-333333333333",
     realEmail: "owner@example.com",
@@ -69,7 +72,7 @@ function ctx(role = "owner", organizationId: string | null = BUSINESS): SessionC
 }
 
 function active(c = ctx()): Identity {
-  return { state: "active", workosUserId: c.workosUserId, sessionId: c.sessionId, ctx: c };
+  return { state: "active", sessionId: c.sessionId, csrfToken: csrfTokenFor(TOKEN), ctx: c };
 }
 
 function deps(overrides: Partial<AuthorizationDeps> = {}): AuthorizationDeps {
@@ -78,14 +81,13 @@ function deps(overrides: Partial<AuthorizationDeps> = {}): AuthorizationDeps {
     business: async () => ({ type: "client", deletedAt: null }),
     resourceInBusiness: async () => true,
     expectedOrigin: () => ORIGIN,
-    csrfSecret: () => SECRET,
     ...overrides,
   };
 }
 
 const mutation = (over: Partial<{ origin: string | null; csrfToken: unknown }> = {}) => ({
   origin: ORIGIN,
-  csrfToken: csrfTokenFor(SESSION, SECRET),
+  csrfToken: csrfTokenFor(TOKEN),
   ...over,
 });
 
@@ -113,7 +115,7 @@ describe("the order of checks", () => {
     expect(await reason({ action: "jobs.create", mutation: mutation({ origin: null }) }, d)).toBe("bad_origin");
   });
 
-  test("2. no WorkOS session", async () => {
+  test("2. no live portal session", async () => {
     const d = deps({ identity: async () => ({ state: "signed_out" }) });
     expect(await reason({ action: "jobs.read" }, d)).toBe("signed_out");
     expect(await reason({ action: "jobs.create", mutation: mutation() }, d)).toBe("signed_out");
@@ -123,31 +125,10 @@ describe("the order of checks", () => {
     expect(await reason({ action: "jobs.create", mutation: mutation({ csrfToken: undefined }) })).toBe("bad_csrf");
     expect(await reason({ action: "jobs.create", mutation: mutation({ csrfToken: "forged" }) })).toBe("bad_csrf");
     expect(
-      await reason({ action: "jobs.create", mutation: mutation({ csrfToken: csrfTokenFor("session_other", SECRET) }) }),
+      await reason({ action: "jobs.create", mutation: mutation({ csrfToken: csrfTokenFor("another session's token") }) }),
     ).toBe("bad_csrf");
     // A read needs none.
     expect(await reason({ action: "jobs.read" })).toBe("allowed");
-  });
-
-  test("4. a WorkOS impersonation is refused: staff access is off", async () => {
-    const d = deps({
-      identity: async () => ({ state: "impersonated", workosUserId: "user_01ABC", sessionId: SESSION }),
-    });
-    expect(await reason({ action: "jobs.read" }, d)).toBe("impersonated");
-  });
-
-  test("5. signed in to WorkOS but bound to no account", async () => {
-    const d = deps({
-      identity: async () => ({
-        state: "unbound",
-        workosUserId: "user_01ABC",
-        sessionId: SESSION,
-        email: "someone@example.com",
-        emailVerified: true,
-        pendingBinding: true,
-      }),
-    });
-    expect(await reason({ action: "jobs.read" }, d)).toBe("not_bound");
   });
 
   test("6. staff access is refused to everybody, owners included", async () => {
@@ -230,15 +211,14 @@ describe("the request guards", () => {
     expect(isTrustedOrigin(ORIGIN, null)).toBe(false);
   });
 
-  test("CSRF: bound to one session and one secret", () => {
-    const token = csrfTokenFor(SESSION, SECRET);
-    expect(isValidCsrfToken(token, SESSION, SECRET)).toBe(true);
-    expect(isValidCsrfToken(token, "session_other", SECRET)).toBe(false);
-    expect(isValidCsrfToken(token, SESSION, "t".repeat(40))).toBe(false);
-    expect(isValidCsrfToken(token, null, SECRET)).toBe(false);
-    expect(isValidCsrfToken(token, SESSION, null)).toBe(false);
-    expect(isValidCsrfToken(`${token}x`, SESSION, SECRET)).toBe(false);
-    expect(isValidCsrfToken(42, SESSION, SECRET)).toBe(false);
+  test("CSRF: bound to one session's secret", () => {
+    const token = csrfTokenFor(TOKEN);
+    expect(isValidCsrfToken(token, csrfTokenFor(TOKEN))).toBe(true);
+    expect(isValidCsrfToken(token, csrfTokenFor("u".repeat(43)))).toBe(false);
+    expect(isValidCsrfToken(token, null)).toBe(false);
+    expect(isValidCsrfToken(`${token}x`, csrfTokenFor(TOKEN))).toBe(false);
+    expect(isValidCsrfToken("", csrfTokenFor(TOKEN))).toBe(false);
+    expect(isValidCsrfToken(42, csrfTokenFor(TOKEN))).toBe(false);
   });
 
   test("return paths are local, or they are /", () => {

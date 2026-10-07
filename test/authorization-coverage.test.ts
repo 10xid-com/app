@@ -29,8 +29,10 @@ const GUARDS = [
 
 const EXEMPT: Record<string, string> = {
   "app/page.tsx": "Redirects to /dashboard; reads and grants nothing.",
-  "app/callback/route.ts": "The WorkOS callback: establishes who signed in. PKCE and state are verified by the SDK.",
-  "app/sign-in/route.ts": "Starts a WorkOS sign-in. No session yet.",
+  "app/auth/sso/start/route.ts": "Starts the handoff to the login host. No session yet; the return path stays in this host's cookie.",
+  "app/auth/sso/callback/route.ts":
+    "Ends the handoff: state cookie, single-use ticket for this host, live sign-in past the authenticator. Creates the session.",
+  "app/auth/sso/failed/page.tsx": "One static message for every handoff failure. Reads nothing.",
   "app/healthz/route.ts": "Railway's healthcheck: answers 200 once startup has passed, and says nothing else.",
   "app/access/page.tsx": "Describes the person's own sign-in state after a refusal; shows no business data.",
   "app/api/v1/jobs/route.ts":

@@ -595,9 +595,9 @@ describe("no permanent takeover: the guard is on every route that could be one",
    * directories are walked instead, and anything new inside them has to carry
    * the guard or fail here.
    */
-  // Since sign-in moved to WorkOS (2026-10-07) the account itself — address,
-  // authenticator, recovery, devices — is WorkOS's, and the portal has no
-  // screen for any of it: the old app/account root is gone, and there is no
+  // Since sign-in moved to the login host (Better Auth, October 2026) the
+  // account itself — address, authenticator, recovery, devices — is managed
+  // there, and the portal has no screen for any of it: the old app/account root is gone, and there is no
   // acting as anybody (staff access is off). What stays pinned below is the
   // dormant staff code keeping its guard, in case it is ever rebuilt.
 
@@ -611,7 +611,7 @@ describe("no permanent takeover: the guard is on every route that could be one",
     );
   };
 
-  test("the portal has no account-security screen of its own: that is WorkOS's", () => {
+  test("the portal has no account-security screen of its own: that is the login host's", () => {
     expect(existsSync("app/account")).toBe(false);
   });
 
@@ -625,14 +625,14 @@ describe("no permanent takeover: the guard is on every route that could be one",
     expect(src).toContain('redirect("/act-as?error=blocked")');
   });
 
-  test("signing out ends this WorkOS session and names nobody", () => {
-    // It used to have to name the REAL person, so that signing out while
-    // acting as Joel did not sign Joel out everywhere. WorkOS's signOut() ends
-    // the session it is called from and takes no user at all, which removes
-    // the way to get that wrong.
+  test("signing out ends this browser's sign-in, and everywhere means the REAL person", () => {
+    // Signing out of the portal alone would leave the login host's sign-in,
+    // and the next page would hand the browser straight back in. And signing
+    // out everywhere while acting as Joel must not sign Joel out everywhere.
     const src = readFileSync("app/sign-out.ts", "utf8");
-    expect(src).toContain("await signOut()");
-    expect(src).not.toContain("signOutEverywhere");
+    expect(src).toContain("revokeAuthSession(identity.ctx.authSessionId)");
+    expect(src).toContain("revokeAllSessionsForUser(identity.ctx.realUserId)");
+    expect(src).not.toContain("revokeAllSessionsForUser(identity.ctx.userId)");
   });
 
   test("the act-as action decides from the REAL identity, never the worn one", () => {

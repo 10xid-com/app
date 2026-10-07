@@ -9,8 +9,10 @@ import { signOutAction } from "../sign-out";
 export const metadata: Metadata = { title: "Access" };
 
 /**
- * Where somebody signed in to WorkOS lands when the portal has nothing to
- * show them, told plainly why.
+ * Where a signed-in person lands when the portal has nothing to show them,
+ * told plainly why. (Somebody signed in on the login host but not yet tied to
+ * an account never gets this far: the login host's own /auth/access page
+ * explains that, and no handoff happens.)
  *
  * Read-only. It is the one signed-in page that does not go through the
  * central authorization function, because its whole job is to describe the
@@ -53,28 +55,10 @@ export default async function AccessPage({
   if (identity.state === "signed_out") redirect(signInPath("/"));
 
   const { reason } = await searchParams;
-  let title: string;
-  let intro: string;
 
-  if (identity.state === "impersonated") {
-    title = "Impersonation isn't available";
-    intro = "Signing in as somebody else is turned off for the 10XiD portal.";
-  } else if (identity.state === "unbound") {
-    if (!identity.emailVerified) {
-      title = "Verify your email address";
-      intro = "Your address hasn't been verified yet. Sign out, then sign in again and follow the verification step.";
-    } else if (identity.pendingBinding) {
-      title = "We're confirming it's you";
-      intro = `You already have a 10XiD account at ${identity.email}. Before the new sign-in can open it, someone at 10XiD will confirm it's really you. You'll be able to continue once that's done.`;
-    } else {
-      title = "This sign-in doesn't have access yet";
-      intro = `There's no invitation for ${identity.email}. Ask the owner of the business you work with to invite this exact address.`;
-    }
-  } else {
-    const denied = reason ? DENIED[reason] : undefined;
-    if (!denied) redirect("/dashboard");
-    ({ title, intro } = denied);
-  }
+  const denied = reason ? DENIED[reason] : undefined;
+  if (!denied) redirect("/dashboard");
+  const { title, intro } = denied;
 
   return (
     <AuthCard title={title} intro={intro}>

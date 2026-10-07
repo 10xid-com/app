@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireAction } from "@/lib/auth/authorize";
 import { sendInvitation } from "@/lib/auth/mailer";
-import { appOrigin } from "@/lib/auth/origin";
+import { loginOrigin } from "@/lib/auth/origin";
 import { ROLE_TEMPLATES } from "@/lib/auth/permissions";
 import {
   inviteToOrganization,
@@ -69,8 +69,8 @@ export async function inviteAction(formData: FormData) {
       to: parsed.data.email,
       organizationName: org?.name ?? "your company",
       invitedByEmail: ctx.email,
-      // Signing up is signing in, through WorkOS, starting from the portal.
-      signUpUrl: `${appOrigin() ?? ""}/sign-in`,
+      // Accounts are created on the login host, for exactly this address.
+      signUpUrl: `${loginOrigin() ?? ""}/auth/sign-up`,
     });
   } catch (cause) {
     // The shape of the failure, never the payload or any credential.

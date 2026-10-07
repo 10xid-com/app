@@ -15,15 +15,19 @@ export async function register() {
   // Only the Node.js runtime can reach the database; the edge runtime cannot.
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
 
-  // Revision 2's session settings. A deployment missing one stops here rather
-  // than issuing a session cookie that is not what was agreed.
+  // The two hosts. A deployment missing one stops here rather than issuing a
+  // session cookie for the wrong host or sending people to the wrong sign-in.
   if (process.env.NODE_ENV === "production") {
-    const { sessionConfigProblems } = await import("./lib/auth/origin");
+    const { obsoleteVariables, sessionConfigProblems } = await import("./lib/auth/origin");
     const problems = sessionConfigProblems(process.env);
     if (problems.length > 0) {
-      throw new Error(`[startup] WorkOS session settings: ${problems.join("; ")}`);
+      throw new Error(`[startup] session settings: ${problems.join("; ")}`);
     }
-    console.log("[startup] WorkOS session settings verified");
+    const obsolete = obsoleteVariables(process.env);
+    if (obsolete.length > 0) {
+      console.warn(`[startup] unused variables, remove at cutover: ${obsolete.join(", ")}`);
+    }
+    console.log("[startup] session settings verified");
   }
 
   const { assertRestrictedRole } = await import("./lib/db/connection");

@@ -1,52 +1,44 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { NextRequest } from "next/server";
+import proxy from "@/proxy";
 
 /**
  * What proxy.ts does with a request before any page sees it.
  *
  * Routing and the cheap half of the request checks only — nothing here is a
- * permission. Every branch that does not need a live WorkOS session is pinned
- * down; the signed-in branch needs WorkOS's signing keys and is covered by the
- * staging session test instead.
- *
- * The SDK reads its configuration when it is imported, so each test imports
- * the proxy afresh after setting the environment.
+ * permission. Whether a session cookie is valid, and whether the sign-in
+ * behind it still is, is lib/auth/session.ts's job (test/portal-session.test.ts).
  */
 
 const APP = "app.10xid.com";
 const ORIGIN = `https://${APP}`;
 
-async function loadProxy() {
-  vi.resetModules();
-  return (await import("@/proxy")).default;
-}
-
 /**
  * As the server sees it behind Railway's proxy: plain http to the address the
- * process is bound to, with the public host in the Host header. A page
- * navigation carries the headers a browser sends for one.
+ * process is bound to, with the public host in the Host header.
  */
 function request(
   host: string,
   path: string,
-  init: { method?: string; origin?: string; page?: boolean } = {},
+  init: { method?: string; origin?: string; cookie?: string } = {},
 ) {
   return new NextRequest(`http://localhost:8080${path}`, {
     method: init.method ?? "GET",
     headers: {
       host,
       ...(init.origin ? { origin: init.origin } : {}),
-      ...(init.page ? { accept: "text/html", "sec-fetch-dest": "document" } : {}),
+      ...(init.cookie ? { cookie: init.cookie } : {}),
     },
   });
 }
 
+const SESSION = "__Host-portal_session=opaque";
+const passed = (r: Response) => r.headers.get("x-middleware-next") === "1";
+
 beforeEach(() => {
-  vi.stubEnv("NEXT_PUBLIC_WORKOS_REDIRECT_URI", `${ORIGIN}/callback`);
-  vi.stubEnv("WORKOS_CLIENT_ID", "client_test");
-  vi.stubEnv("WORKOS_API_KEY", "sk_test_proxy");
-  vi.stubEnv("WORKOS_COOKIE_PASSWORD", "x".repeat(40));
-  vi.stubEnv("WORKOS_COOKIE_MAX_AGE", "604800");
+  vi.stubEnv("PORTAL_HOST", APP);
+  vi.stubEnv("PRIMARY_HOST", "login.10xid.com");
+  vi.stubEnv("SESSION_COOKIE_SECURE", "true");
 });
 
 afterEach(() => {
@@ -54,95 +46,66 @@ afterEach(() => {
 });
 
 describe("one host", () => {
-  test("a client domain gets nothing from the portal", async () => {
-    const proxy = await loadProxy();
+  test("any other host gets nothing from the portal, the login host included", async () => {
     for (const host of ["northstar.10xconnections.com", "login.10xid.com", "evil.10xid.com"]) {
-      const response = await proxy(request(host, "/dashboard"));
-      expect(response.status).toBe(404);
-      expect(response.headers.get("set-cookie")).toBeNull();
+      const response = await proxy(request(host, "/dashboard", { cookie: SESSION }));
+      expect(response.status, host).toBe(404);
     }
   });
 
-  test("without a configured callback, nothing is served", async () => {
-    vi.stubEnv("NEXT_PUBLIC_WORKOS_REDIRECT_URI", "");
-    const proxy = await loadProxy();
+  test("without PORTAL_HOST, nothing is served", async () => {
+    vi.stubEnv("PORTAL_HOST", "");
     expect((await proxy(request(APP, "/dashboard"))).status).toBe(500);
   });
 });
 
 describe("state-changing requests", () => {
   test("refused unless the Origin is exactly the app's", async () => {
-    const proxy = await loadProxy();
-    for (const origin of [
-      undefined,
-      "null",
-      "https://evil.10xid.com",
-      "https://app.10xid.com.evil.test",
-      "http://app.10xid.com",
-    ]) {
-      const response = await proxy(request(APP, "/jobs", { method: "POST", origin }));
+    for (const origin of [undefined, "null", "https://login.10xid.com", "https://evil.10xid.com", `${ORIGIN}.evil.test`]) {
+      const response = await proxy(request(APP, "/jobs", { method: "POST", origin, cookie: SESSION }));
       expect(response.status, String(origin)).toBe(403);
     }
   });
 
-  test("from the app's own origin, they go on to the session check", async () => {
-    const proxy = await loadProxy();
-    // No session cookie, so the next refusal is "sign in first", not the origin.
-    const response = await proxy(request(APP, "/jobs", { method: "POST", origin: ORIGIN }));
-    expect(response.status).toBe(401);
+  test("from the app's own origin, they go on", async () => {
+    expect(passed(await proxy(request(APP, "/jobs", { method: "POST", origin: ORIGIN, cookie: SESSION })))).toBe(true);
   });
 });
 
-describe("signed out", () => {
-  test("a page is sent to WorkOS, and comes back to the one callback", async () => {
-    const proxy = await loadProxy();
-    const response = await proxy(request(APP, "/jobs?x=1", { page: true }));
-    const location = new URL(response.headers.get("location")!);
-    expect(location.hostname).toBe("api.workos.com");
-    expect(location.searchParams.get("redirect_uri")).toBe(`${ORIGIN}/callback`);
-    expect(location.searchParams.get("client_id")).toBe("client_test");
-    expect(location.searchParams.get("code_challenge_method")).toBe("S256");
-    // The PKCE verifier cookie travels with the redirect: host-only, Secure
-    // even though the server itself was reached over http, HttpOnly.
-    const cookie = response.headers.get("set-cookie") ?? "";
-    expect(cookie).toMatch(/^wos-auth-verifier/);
-    expect(cookie).toMatch(/; Secure/);
-    expect(cookie).toMatch(/; HttpOnly/);
-    expect(cookie).toMatch(/Path=\//);
-    expect(cookie).not.toMatch(/Domain=/i);
+describe("no session cookie", () => {
+  test("a page goes into the handoff, keeping the path on this host", async () => {
+    const response = await proxy(request(APP, "/jobs/123?tab=files"));
+    expect(response.headers.get("location")).toBe(`${ORIGIN}/auth/sso/start?path=%2Fjobs%2F123%3Ftab%3Dfiles`);
   });
 
-  test("the callback and sign-in routes are reachable", async () => {
-    const proxy = await loadProxy();
-    for (const path of ["/callback?code=c&state=s", "/sign-in"]) {
-      const response = await proxy(request(APP, path));
-      expect(response.headers.get("location"), path).toBeNull();
-      expect(response.status, path).toBe(200);
+  test("the handoff's own routes are reachable", async () => {
+    for (const path of ["/auth/sso/start?path=%2F", "/auth/sso/callback?ticket=x&state=y", "/auth/sso/failed"]) {
+      expect(passed(await proxy(request(APP, path))), path).toBe(true);
     }
   });
 
-  test("a fetch is refused rather than answered with a sign-in page", async () => {
-    const proxy = await loadProxy();
+  test("a fetch or a form post is refused rather than answered with a page", async () => {
     expect((await proxy(request(APP, "/api/workspace/repositories"))).status).toBe(401);
+    expect((await proxy(request(APP, "/jobs", { method: "POST", origin: ORIGIN }))).status).toBe(401);
+  });
+
+  test("a legacy WorkOS cookie is not a session", async () => {
+    const response = await proxy(request(APP, "/dashboard", { cookie: "wos-session=sealed" }));
+    expect(response.headers.get("location")).toContain("/auth/sso/start");
   });
 });
 
 describe("the healthcheck", () => {
   test("answers on any host, so Railway's checker reaches it", async () => {
-    const proxy = await loadProxy();
-    const response = await proxy(request("healthcheck.railway.app", "/healthz"));
-    expect(response.status).toBe(200);
-    expect(response.headers.get("location")).toBeNull();
+    for (const host of [APP, "localhost:8080", "10.0.0.7:8080"]) {
+      expect(passed(await proxy(request(host, "/healthz"))), host).toBe(true);
+    }
   });
 });
 
 describe("the machine endpoint", () => {
   test("carries an API key, not a cookie, and is let through untouched", async () => {
-    const proxy = await loadProxy();
-    const response = await proxy(
-      request(APP, "/api/v1/jobs", { method: "POST", origin: "https://northstar.example" }),
-    );
-    expect(response.status).toBe(200);
-    expect(response.headers.get("location")).toBeNull();
+    const response = await proxy(request(APP, "/api/v1/jobs", { method: "POST", origin: "https://client.example" }));
+    expect(passed(response)).toBe(true);
   });
 });

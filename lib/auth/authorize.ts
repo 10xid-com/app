@@ -3,7 +3,7 @@ import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { getJob } from "@/lib/db";
 import { organizationById } from "@/lib/db/identity";
-import { CSRF_FIELD, CSRF_HEADER, csrfSecret, isValidCsrfToken } from "./csrf";
+import { CSRF_FIELD, CSRF_HEADER, isValidCsrfToken } from "./csrf";
 import { appOrigin, isTrustedOrigin } from "./origin";
 import { type BusinessAction, roleAllows } from "./permissions";
 import { resolveIdentity, type Identity, type SessionContext } from "./session";
@@ -15,17 +15,18 @@ import { safePath } from "./paths";
  * Every protected page, server action and route handler in this app passes
  * through here (test/authorization-coverage.test.ts fails the build when one
  * does not). It answers one question — may THIS person do THIS action, in THIS
- * business, to THIS resource — from the database, on every request. A WorkOS
- * session on its own grants nothing; it only says who is asking.
+ * business, to THIS resource — from the database, on every request. Being
+ * signed in grants nothing on its own; it only says who is asking.
  *
  * The checks, in order. Each stops at the first failure, and the reason is
  * logged with the action and ids (never an address):
  *
  *   1. state-changing requests only: the Origin is exactly the app's origin
- *   2. there is a WorkOS session                                 signed_out
+ *   2. there is a live portal session, from a live sign-in that
+ *      passed the authenticator, of a bound account (session.ts) signed_out
  *   3. state-changing requests only: a valid CSRF token for it   bad_csrf
- *   4. it is not a WorkOS impersonation                          impersonated
- *   5. it is bound to a live local account                       not_bound
+ *   4. (retired: impersonation and unbound sign-ins never reach the portal)
+ *   5. (retired)
  *   6. the action is a business action, not staff access         staff_access_off
  *   7. a business is named                                       no_business
  *   8. it exists, is a client business, and is not deleted       business_unavailable
@@ -60,8 +61,6 @@ export type DenyReason =
   | "bad_origin"
   | "signed_out"
   | "bad_csrf"
-  | "impersonated"
-  | "not_bound"
   | "staff_access_off"
   | "no_business"
   | "business_unavailable"
@@ -88,7 +87,6 @@ export type AuthorizationDeps = {
   business: (id: string) => Promise<{ type: string; deletedAt: Date | null } | null>;
   resourceInBusiness: (ctx: SessionContext, businessId: string, resource: Resource) => Promise<boolean>;
   expectedOrigin: () => string | null;
-  csrfSecret: () => string | null;
 };
 
 const defaultDeps: AuthorizationDeps = {
@@ -106,7 +104,6 @@ const defaultDeps: AuthorizationDeps = {
     }
   },
   expectedOrigin: appOrigin,
-  csrfSecret,
 };
 
 export async function authorize(
@@ -114,7 +111,7 @@ export async function authorize(
   deps: AuthorizationDeps = defaultDeps,
 ): Promise<Decision> {
   const deny = (reason: DenyReason, identity: Identity): Decision => {
-    const who = identity.state === "signed_out" ? "anonymous" : identity.workosUserId;
+    const who = identity.state === "signed_out" ? "anonymous" : identity.ctx.userId;
     console.warn(`[authz] deny ${request.action} reason=${reason} who=${who}`);
     return { allowed: false, reason, identity };
   };
@@ -128,16 +125,13 @@ export async function authorize(
   const identity = await deps.identity();
   if (identity.state === "signed_out") return deny("signed_out", identity);
 
-  // 3. The token is bound to the WorkOS session, which exists from here on.
+  // 3. The token is bound to the portal session, which exists from here on.
   if (request.mutation) {
-    if (!isValidCsrfToken(request.mutation.csrfToken, identity.sessionId, deps.csrfSecret())) {
+    if (!isValidCsrfToken(request.mutation.csrfToken, identity.csrfToken)) {
       return deny("bad_csrf", identity);
     }
   }
 
-  // 4, 5.
-  if (identity.state === "impersonated") return deny("impersonated", identity);
-  if (identity.state === "unbound") return deny("not_bound", identity);
   const { ctx } = identity;
 
   // 6.
@@ -242,8 +236,8 @@ export async function authorizeRequest(
 
 /**
  * For the few state-changing requests that act on the person rather than on a
- * business — signing out. Origin and CSRF, nothing else; any signed-in WorkOS
- * session may end itself, bound or not.
+ * business — signing out. Origin and CSRF, nothing else; any live portal
+ * session may end itself.
  */
 export async function requireSameOriginRequest(formData: FormData): Promise<void> {
   const h = await headers();
@@ -252,7 +246,7 @@ export async function requireSameOriginRequest(formData: FormData): Promise<void
   }
   const identity = await resolveIdentity();
   if (identity.state === "signed_out") return;
-  if (!isValidCsrfToken(formData.get(CSRF_FIELD), identity.sessionId, csrfSecret())) {
+  if (!isValidCsrfToken(formData.get(CSRF_FIELD), identity.csrfToken)) {
     throw new Error("This request did not come from the portal.");
   }
 }
@@ -270,6 +264,7 @@ export async function requireStaffAccess(returnPath = "/"): Promise<SessionConte
   redirect(`/access?reason=${decision.reason}`);
 }
 
+/** Into the handoff: the login host signs the person in, then sends them back to returnPath. */
 export function signInPath(returnPath: string): string {
-  return `/sign-in?returnTo=${encodeURIComponent(safePath(returnPath))}`;
+  return `/auth/sso/start?path=${encodeURIComponent(safePath(returnPath))}`;
 }

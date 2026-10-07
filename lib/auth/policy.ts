@@ -11,55 +11,35 @@ import type { MembershipRole } from "@/lib/db/schema";
 export const MAX_COOKIE_SECONDS = 400 * 24 * 60 * 60;
 
 /**
- * Session policy.
+ * Session policy (self-hosted sign-in, 0022).
  *
- * Two clocks, both enforced on the server:
+ * A portal session exists only as the far end of a sign-in on the login host,
+ * and it lives no longer than that sign-in:
  *
- *   idleSeconds       restarts on every visit. Null means no idle timeout.
- *   absoluteSeconds   renewal can never push past it.
+ *   absolute   the sign-in's hard end — seven days from when the person signed
+ *              in on the login host, never extended by activity. The portal
+ *              row is created with exactly that end (auth_session_touch()).
+ *   idle       48 hours without a request. Enforced on the portal row and, on
+ *              every request, on the sign-in session it came from, which the
+ *              database hides once it has been idle that long.
  *
- * Both are switched off. A session lasts until it is signed out — asked for
- * directly, and the right call for a portal people open a handful of times a
- * year: an expiry they did not ask for is indistinguishable from the thing
- * being broken, and it recreates the "can you let me back in" support burden
- * this exists to remove. 400 days is not a policy, it is the browser's own
- * ceiling; the row and the cookie lapse together rather than the row outliving
- * a cookie nobody is sending any more.
- *
- * The cost, stated plainly: a stolen session cookie now works until somebody
- * notices and ends it, where a staff one previously died within 8 hours on its
- * own. What still bounds it is not the clock:
- *
- *   * Staff reach ONE client at a time, through a grant that carries a typed
- *     reason and lapses after 30 minutes. An endless session does not become
- *     endless access to every client — STAFF_GRANT_SECONDS below is what
- *     governs that, and it is deliberately untouched.
- *   * Sessions live server-side and are revoked from the Sessions screen,
- *     taking effect on the very next request rather than whenever a token
- *     would have expired.
- *   * Staff still pass a second factor to establish a session at all.
- *
- * These values are COPIED ONTO THE SESSION ROW when it is created. Promoting
- * someone to staff tomorrow must not retroactively stretch a session that is
- * already live, and demoting them must not silently extend one either. That
- * also means this change reaches a session only when it is next created: one
- * more sign-in, and then not again.
+ * Both are checked on the server on every request; the cookie's own expiry is
+ * only a convenience for the browser. Revoking the sign-in on the login host
+ * (signing out, a password reset, an operator) ends the portal session on its
+ * next request.
  */
 
 export type SessionRole = "client" | "staff";
+
+export const SESSION_ABSOLUTE_SECONDS = 7 * 24 * 60 * 60;
+export const SESSION_IDLE_SECONDS = 48 * 60 * 60;
 
 export const SESSION_POLICY: Record<
   SessionRole,
   { idleSeconds: number | null; absoluteSeconds: number }
 > = {
-  client: {
-    idleSeconds: null,
-    absoluteSeconds: MAX_COOKIE_SECONDS,
-  },
-  staff: {
-    idleSeconds: null,
-    absoluteSeconds: MAX_COOKIE_SECONDS,
-  },
+  client: { idleSeconds: SESSION_IDLE_SECONDS, absoluteSeconds: SESSION_ABSOLUTE_SECONDS },
+  staff: { idleSeconds: SESSION_IDLE_SECONDS, absoluteSeconds: SESSION_ABSOLUTE_SECONDS },
 };
 
 /** Sign-in codes are short-lived and few. */
