@@ -8,6 +8,7 @@ import {
   revokeOwnSession,
 } from "@/lib/db/identity";
 import { requireOwnAccount } from "@/lib/auth/require";
+import { signInUrl } from "@/lib/auth/sso";
 
 /**
  * Revoking is scoped to the signed-in person by the query itself — the session
@@ -25,7 +26,7 @@ export async function revokeSessionAction(formData: FormData) {
   const endingThisOne = parsed.data === ctx.sessionId;
   await revokeOwnSession(ctx.userId, parsed.data);
 
-  if (endingThisOne) redirect("/auth/login");
+  if (endingThisOne) redirect(signInUrl());
 
   revalidatePath("/account/sessions");
   redirect("/account/sessions?done=one");

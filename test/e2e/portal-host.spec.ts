@@ -60,14 +60,12 @@ test.describe("the portal on its own host", () => {
     // The way there was the ordinary handoff, and no portal page was ever
     // rendered on the login host.
     expect(hops.some((h) => h.includes("/auth/sso/callback"))).toBe(true);
+    // Sign-in hands over by full address, so the login host is never even
+    // asked for a portal page on the way.
     const portalPagesOnLogin = hops.filter(
       (h) => hostOf(h) === LOGIN_HOST && !new URL(h).pathname.startsWith("/auth/"),
     );
-    for (const h of portalPagesOnLogin) {
-      // Allowed only as the redirect the proxy answers, never as a page: the
-      // only such hop is the "/" the sign-in returns to.
-      expect(new URL(h).pathname).toBe("/");
-    }
+    expect(portalPagesOnLogin).toEqual([]);
 
     // The session the portal runs on was issued for the portal host.
     const session = await latestSessionFor(CLIENT);
