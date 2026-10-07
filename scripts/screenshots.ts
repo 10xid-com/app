@@ -14,7 +14,7 @@ const CHROMIUM =
   process.env.E2E_CHROMIUM_PATH ??
   "/opt/pw-browsers/chromium-1194/chrome-linux/chrome";
 const PRIMARY = `http://${process.env.E2E_PRIMARY_HOST ?? "login.portal-a.test:3000"}`;
-const ROTARY = "http://rotary.portal-b.test:3000";
+const ROTARY = "http://rotary.portal-b.test:3001";
 const OUT = "/tmp/portal-shots";
 const SINK = process.env.DEV_CODE_SINK ?? "/tmp/portal-signin-codes.log";
 

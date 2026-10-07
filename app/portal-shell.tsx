@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { getSessionContext } from "@/lib/auth/session";
-import { signOutAction } from "./auth/actions";
+import { signOutAction } from "./sign-out";
 import { exitClientAction } from "./staff/actions";
 import { stopActingAsAction } from "./act-as/actions";
 import { PortalHeader, menuItemClass } from "./portal-nav";

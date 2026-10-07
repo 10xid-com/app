@@ -1,37 +1,31 @@
 import "server-only";
 import { redirect } from "next/navigation";
-import { currentHost, getSessionContext, type SessionContext } from "./session";
-import { isPrimaryHost } from "./sso";
+import { getSessionContext, type SessionContext } from "./session";
 
 /**
  * Every signed-in page starts here.
  *
- * Where an unauthenticated visitor is sent depends on which domain they are on:
- * the login host shows the sign-in form, and a client domain restarts the
- * cross-domain handoff, because sign-in happens on the login host and nowhere
- * else. A client domain showing its own sign-in form would be a second place to
- * authenticate, which is exactly what this design avoids.
+ * This app signs nobody in: sign-in happens on the login host (10xid-com/login)
+ * and nowhere else, and a session arrives here by the cross-domain handoff. So
+ * whatever is missing, the answer is to go through the handoff again.
  */
 export async function requireSession(
   returnPath = "/",
 ): Promise<SessionContext> {
   const ctx = await getSessionContext();
 
-  if (ctx) {
-    // Staff have proved they hold the inbox and nothing more. A staff session
-    // reaches every client's data, and an inbox is the thing most likely to be
-    // compromised — it is where password resets for everything else arrive.
-    if (ctx.needsSecondFactor) {
-      redirect(`/auth/2fa?next=${encodeURIComponent(returnPath)}`);
-    }
-    return ctx;
-  }
+  // A staff session that has proved the inbox and nothing more carries no
+  // authority (see getSessionContext). The login host finishes the second step
+  // before it hands a session over, so one should not reach here; if one does,
+  // the handoff is how it gets finished, on the login host.
+  if (ctx && !ctx.needsSecondFactor) return ctx;
 
-  const host = await currentHost();
-  if (isPrimaryHost(host)) {
-    redirect(`/auth/login?next=${encodeURIComponent(returnPath)}`);
-  }
-  redirect(`/auth/sso/start?path=${encodeURIComponent(returnPath)}`);
+  redirect(handoffPath(returnPath));
+}
+
+/** Back through the handoff, landing on `returnPath` afterwards. */
+export function handoffPath(returnPath = "/"): string {
+  return `/auth/sso/start?path=${encodeURIComponent(returnPath)}`;
 }
 
 /**

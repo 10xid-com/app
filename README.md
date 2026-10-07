@@ -1,64 +1,27 @@
-# 10XiD Portal
+# 10XiD Portal — app
 
-One sign-in across several domains, and a job exchange between Branding Centres and its
-clients — replacing the email thread that carries that work today.
+The portal at **`app.10xid.com`**: the dashboard, requests and jobs, the staff workspace at
+`/chat`, clients and keys, and the team and account screens. It also serves the client
+domains (`northstar.10xconnections.com`), which are the same portal under a client's own
+address and branding.
 
-**Status: deployed.** Two Railway services build from `main`, each with a custom domain and
-a Railway address:
+**Sign-in is not here.** It lives in [`10xid-com/login`](https://github.com/10xid-com/login)
+at `login.10xid.com`, which also owns the database schema and its migrations. This app
+never shows a sign-in form: a visitor with no session is sent to the login host by the
+cross-domain handoff and comes back signed in (`/auth/sso/start` → login's
+`/auth/sso/authorize` → `/auth/sso/callback` here). Any other `/auth/` address is
+forwarded to the login host.
 
-| Service | Custom domain | Railway address | Port |
-|---|---|---|---|
-| `portal` — the login host | `login.10xid.com` | `portal-production-56c9.up.railway.app` | 8080 |
-| `portal-northstar` — a client domain | `northstar.10xconnections.com` | `portal-northstar-production.up.railway.app` | 3000 |
-
-The two custom domains are genuinely different registrable domains, which is what makes
-the cross-domain handoff a real test. Both carry a valid certificate. A custom domain on
-Railway needs two records in Cloudflare, not one: the CNAME that routes traffic, and a
-`_railway-verify.<name>` TXT record proving ownership. With only the CNAME, the
-certificate sits at "issuing" indefinitely and browsers refuse the address.
-
-### Moving the portal to `app.10xid.com`
-
-The portal pages (dashboard, chat, jobs, team, staff…) can live on a host of their own,
-leaving `login.10xid.com` with nothing but sign-in. `PORTAL_HOST` switches this on; unset,
-nothing changes, so the code can be deployed before any of the steps below.
-
-`app.10xid.com` is a sibling of `login.10xid.com`, but the session cookie is `__Host-`
-prefixed and so is never shared between them. That is deliberate — a cookie scoped to
-`.10xid.com` could be read or overwritten by any other subdomain. The portal host gets its
-own session through the same handoff a client domain uses, with no second prompt.
-
-1. **Domain.** Add `app.10xid.com` as a second custom domain on the `portal` service (or on
-   a new service built from `main`, with the same environment). In Cloudflare: the CNAME,
-   and the `_railway-verify.app` TXT record.
-2. **Register it** as a handoff destination, under the house company, as the owner
-   connection:
-
-   ```sql
-   select id, name from organizations where type = 'internal';   -- expect one row
-   insert into organization_domains (organization_id, hostname, is_primary, verified_at)
-   select id, 'app.10xid.com', false, now() from organizations where type = 'internal';
-   ```
-3. **Check** that `https://app.10xid.com/` signs you in through `login.10xid.com` and
-   lands on the dashboard.
-4. **Switch.** Set `PORTAL_HOST=app.10xid.com` on the service answering
-   `login.10xid.com`, and redeploy. From then on every portal page asked for there is sent to
-   `app.10xid.com`, the sign-in screens on any other host are sent to the login host, and
-   staff finish their authenticator step on the login host before being handed over.
-
-Undoing it is unsetting `PORTAL_HOST`. The redirects are 307s, which browsers do not cache.
+Both apps use **one database**. `lib/db/schema.ts` here is a copy of login's, kept
+identical by CI (`.github/workflows/database.yml`): a schema change is made in login, with
+its migration, then copied here unchanged.
 
 ## What it does
 
-- **Sign in once** at the login host, then land already signed in on a site at a
-  **genuinely different registrable domain**, with no second prompt, via a single-use
-  ticket handoff.
-- **No passwords anywhere.** A first-time account gets a six-digit emailed code; once an
-  authenticator is enrolled, that code is what signs the account in and **the emailed code
-  stops working for it**. Ten single-use recovery codes are issued at enrolment.
-- **Accounts are by invitation**, never by open registration — a portal holds several
-  companies' data, and an address typed into a form says nothing about which company its
-  owner belongs to.
+- **Arrive signed in** from the login host, on this host or a client's own domain, with
+  no second prompt, via a single-use ticket handoff.
+- **Accounts are by invitation**, sent from `/team`; the invited person sets the account
+  up on the login host.
 - **A client sees only their own company's jobs.** Staff see every client, and act on one
   at a time through a time-boxed grant carrying a typed reason.
 - **Requests arrive as cards** on the dashboard, carrying what the sender actually wrote,
@@ -82,41 +45,45 @@ The application **refuses to start** if its database role is a superuser, can by
 row-level security, or owns the tables. That is the case where Postgres silently ignores
 every policy and an isolation test passes while proving nothing.
 
-`npm run db:rls-check` fails the build if a new table carries an organization id without
-either a policy or a written exemption. It has caught two tables so far.
+Row-level security policies, and the check that every table carrying an organization id
+has one, live with the migrations in `10xid-com/login`.
 
 ## Running it locally
 
-Needs Node 22+ and PostgreSQL 16.
+Needs Node 22+, PostgreSQL 16, and a checkout of `10xid-com/login` next to this one
+(`../login`), because the database is built from login's migrations and nobody can sign
+in without it.
 
 ```bash
 npm install
-cp .env.example .env.local        # then fill in the two connection strings
+cp .env.example .env.local        # the same two connection strings login uses
 
-npm run db:migrate                # runs as the OWNER
-npm run db:seed                   # two client companies, one internal, three people
-npm run dev
+# Database, from login (once, and after any schema change there):
+(cd ../login && npm install && npm run db:migrate && \
+  SEED_HOST_ROTARY=rotary.portal-b.test:3001 \
+  SEED_HOST_NORTHSTAR=northstar.portal-b.test:3001 \
+  SEED_HOST_PORTAL=app.portal-a.test:3001 npm run db:seed)
+
+(cd ../login && PORTAL_HOST=app.portal-a.test:3001 npm run dev)   # login, on :3000
+npm run dev -- -p 3001                                             # this app, on :3001
 ```
 
-Two connection strings, and they must differ: `DATABASE_URL` owns the tables and runs
-migrations, `DATABASE_APP_URL` is the restricted role the application connects as.
+Then open `http://app.portal-a.test:3001/`. Sign-in codes are not emailed in development:
+login appends them to `/tmp/portal-signin-codes.log`.
 
-Sign-in codes are not emailed in development — they are appended to
-`/tmp/portal-signin-codes.log` and printed to the server log. In production the mailer
-**refuses** to fall back to that, rather than writing codes to disk where they might be
-read.
-
-### The two domains
-
-Cross-domain sign-in cannot be demonstrated between two subdomains of one domain; that is
-ordinary cookie behaviour. Local development uses two separate registrable domains:
+### The domains
 
 ```
-127.0.0.1  login.portal-a.test      # the only place sign-in happens
-127.0.0.1  app.portal-a.test        # the portal pages, when PORTAL_HOST is set
-127.0.0.1  rotary.portal-b.test     # a client domain
-127.0.0.1  northstar.portal-b.test  # a second client, so isolation has a target
+127.0.0.1  login.portal-a.test      # login (10xid-com/login), :3000
+127.0.0.1  app.portal-a.test        # this app, :3001
+127.0.0.1  rotary.portal-b.test     # a client domain, served by this app, :3001
+127.0.0.1  northstar.portal-b.test  # a second client, so isolation has a target, :3001
 ```
+
+portal-a.test and portal-b.test are different registrable domains, as 10xid.com and
+10xconnections.com are, so the handoff is tested for real. `app` and `login` are siblings
+under one domain, as in production, and still do not share a cookie: it is `__Host-`
+prefixed, so it belongs to exactly one host.
 
 ## Optional integrations
 
@@ -185,7 +152,8 @@ The GitHub stand-in (`test/e2e/mock-github.ts`) does not check signatures, so an
 
 ```bash
 npm test          # unit and database tests, as the restricted role, against real Postgres
-npm run test:e2e  # browser tests across Chrome and Firefox, normal and fresh profiles
+npm run test:e2e  # browser tests across Chrome and Firefox, normal and fresh profiles;
+                  # starts this app on :3001 and login (E2E_LOGIN_DIR, default ../login) on :3000
 npm run prove     # signs in as a real client and guesses another client's job address
 ```
 
@@ -219,9 +187,10 @@ engine available is not the same thing where it matters.
 
 ## Conventions worth knowing
 
-- **Next.js 16 renamed middleware to `proxy.ts`.** It does one cheap thing: send a
-  cookie-less request on a client domain into the handoff. It deliberately does not
-  validate sessions — that belongs in the data layer.
+- **Next.js 16 renamed middleware to `proxy.ts`.** It does two cheap things: send a
+  cookie-less request into the handoff, and send any `/auth/` page other than the handoff
+  to the login host. It deliberately does not validate sessions — that belongs in the data
+  layer.
 - **Versions are pinned exactly.** Drizzle's documentation site describes 1.0 while npm
   installs 0.45.2 with a different migration layout, so a caret produces a build that
   does not match its own documentation.

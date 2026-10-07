@@ -596,11 +596,10 @@ describe("no permanent takeover: the guard is on every route that could be one",
    * directories are walked instead, and anything new inside them has to carry
    * the guard or fail here.
    */
-  const ROOTS = [
-    "app/account",
-    "app/auth/2fa",
-    "app/auth/recovery-codes",
-  ];
+  // The authenticator and recovery-code screens are account security too, and
+  // carry the same guard, but they live with sign-in in 10xid-com/login and
+  // are walked by its copy of this test.
+  const ROOTS = ["app/account"];
 
   /** Named individually: these are not account security, but they file audit
    * rows with a single identity column, so they refuse too. */
@@ -645,18 +644,9 @@ describe("no permanent takeover: the guard is on every route that could be one",
     // Acting as Joel, `ctx.userId` IS Joel. The unchanged line would have
     // signed him out of every device he owns because somebody else pressed a
     // button in a window wearing his name.
-    const src = readFileSync("app/auth/actions.ts", "utf8");
+    const src = readFileSync("app/sign-out.ts", "utf8");
     expect(src).toContain("signOutEverywhere(ctx.realUserId");
     expect(src).not.toContain("signOutEverywhere(ctx.userId");
-  });
-
-  test("the handoff hands over the REAL person, never the one being worn", () => {
-    // Acting as Joel, `ctx.userId` IS Joel. A ticket minted for it would become
-    // a full session as Joel on the destination, with no grant behind it — no
-    // banner, no hour — which is exactly the takeover this block exists to stop.
-    const src = readFileSync("app/auth/sso/authorize/route.ts", "utf8");
-    expect(src).toContain("userId: ctx.realUserId");
-    expect(src).not.toContain("userId: ctx.userId");
   });
 
   test("the act-as action decides from the REAL identity, never the worn one", () => {

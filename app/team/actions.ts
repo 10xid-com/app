@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { getSessionContext } from "@/lib/auth/session";
-import { refuseWhileActingAs } from "@/lib/auth/require";
+import { handoffPath, refuseWhileActingAs } from "@/lib/auth/require";
 import { sendInvitation } from "@/lib/auth/mailer";
 import { originFor, PRIMARY_HOST, signInUrl } from "@/lib/auth/sso";
 import {
@@ -35,7 +35,7 @@ const inviteSchema = z.object({
 async function requireInviter() {
   const ctx = await getSessionContext();
   if (!ctx) redirect(signInUrl());
-  if (ctx.needsSecondFactor) redirect("/auth/2fa");
+  if (ctx.needsSecondFactor) redirect(handoffPath());
   // `invitations.invited_by` is a single column too, and an invitation creates
   // ACCESS that outlives the hour. Same reasoning as staff grants: refused
   // rather than filed under the wrong name.

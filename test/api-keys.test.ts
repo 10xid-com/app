@@ -9,7 +9,6 @@ import {
   touchKey,
 } from "@/lib/db/api-keys";
 import { closePool } from "@/lib/db/connection";
-import { verifySignInCode } from "@/lib/auth/codes";
 
 /**
  * Keys for machines, held to the same rule as people.
@@ -252,33 +251,6 @@ describe("revoking", () => {
 });
 
 describe("the service account behind a key", () => {
-  test("cannot be signed in as, even with a valid code", async () => {
-    const minted = await mintKey({
-      organizationId: northstarId,
-      label: "Northstar — sign-in refusal test",
-      createdBy: paoloId,
-    });
-    const identified = (await identifyKey(minted.secret))!;
-
-    // Write a live, correct code straight into the table for the service
-    // account's address — i.e. assume the attacker has already won every step
-    // that precedes verification. It must still not produce a session.
-    const code = "424242";
-    const { createHash } = await import("node:crypto");
-    const hash = createHash("sha256")
-      .update(`${identified.serviceEmail.toLowerCase()}:${code}`, "utf8")
-      .digest();
-
-    await owner.query(
-      `insert into sign_in_codes (email, code_hash, expires_at)
-       values ($1, $2, now() + interval '10 minutes')`,
-      [identified.serviceEmail, hash],
-    );
-
-    const result = await verifySignInCode(identified.serviceEmail, code);
-    expect(result.ok).toBe(false);
-  });
-
   test("its address is on a domain that can never receive mail", async () => {
     const minted = await mintKey({
       organizationId: northstarId,

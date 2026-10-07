@@ -7,6 +7,7 @@ import { getSessionContext } from "@/lib/auth/session";
 import { attachDriveFolder, getJob, listJobEvents } from "@/lib/db";
 import { createJobFolder, driveIsConfigured, uploadToFolder } from "@/lib/integrations/google-drive";
 import { signInUrl } from "@/lib/auth/sso";
+import { handoffPath } from "@/lib/auth/require";
 
 /**
  * Give a request a folder in Google Drive, and put the request in it.
@@ -20,7 +21,7 @@ import { signInUrl } from "@/lib/auth/sso";
 export async function createDriveFolderAction(formData: FormData) {
   const ctx = await getSessionContext();
   if (!ctx) redirect(signInUrl());
-  if (ctx.needsSecondFactor) redirect("/auth/2fa");
+  if (ctx.needsSecondFactor) redirect(handoffPath());
 
   const jobId = z.uuid().safeParse(formData.get("jobId"));
   if (!jobId.success) redirect("/dashboard?error=unknown");

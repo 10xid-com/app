@@ -12,8 +12,8 @@ import { expectSignedIn, resetSignInState, signIn, openAccountMenu } from "./hel
  */
 
 const PRIMARY = "http://login.portal-a.test:3000";
-const ROTARY = "http://rotary.portal-b.test:3000";
-const NORTHSTAR = "http://northstar.portal-b.test:3000";
+const ROTARY = "http://rotary.portal-b.test:3001";
+const NORTHSTAR = "http://northstar.portal-b.test:3001";
 
 const CLIENT = "jane@rotary.test";
 
@@ -57,7 +57,7 @@ test.describe("cross-domain sign-in", () => {
     const elapsed = Date.now() - started;
 
     // Landed on the client domain, signed in, with no form in between.
-    expect(new URL(page.url()).host).toBe("rotary.portal-b.test:3000");
+    expect(new URL(page.url()).host).toBe("rotary.portal-b.test:3001");
     await expectSignedIn(page);
     await expect(page.getByLabel("Email")).toHaveCount(0);
     await expect(page.getByLabel("Six-digit code")).toHaveCount(0);
@@ -174,14 +174,14 @@ test.describe("cross-domain sign-in", () => {
     await page.waitForLoadState("load");
 
     expect(page.url()).toContain("/auth/sso/failed");
-    expect(new URL(page.url()).host).toBe("northstar.portal-b.test:3000");
+    expect(new URL(page.url()).host).toBe("northstar.portal-b.test:3001");
   });
 
   test("an unregistered hostname takes no part in the handoff", async ({
     request,
   }) => {
     const response = await request.get(NORTHSTAR + "/auth/sso/start?path=%2F", {
-      headers: { host: "evil.portal-b.test:3000" },
+      headers: { host: "evil.portal-b.test:3001" },
       maxRedirects: 0,
     });
     expect([400, 404]).toContain(response.status());

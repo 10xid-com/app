@@ -11,7 +11,7 @@ import { resetSignInState, signIn } from "./helpers";
  */
 
 const CLIENT = "jane@rotary.test";
-const ROTARY = "http://rotary.portal-b.test:3000";
+const ROTARY = "http://rotary.portal-b.test:3001";
 
 test.describe("active sessions", () => {
   test.beforeEach(resetSignInState);
@@ -35,7 +35,7 @@ test.describe("active sessions", () => {
 
     await page.goto("/account/sessions");
     await expect(page.getByText("login.portal-a.test:3000")).toBeVisible();
-    await expect(page.getByText("rotary.portal-b.test:3000")).toBeVisible();
+    await expect(page.getByText("rotary.portal-b.test:3001")).toBeVisible();
   });
 
   test("signing out other devices ends them and leaves this one working", async ({

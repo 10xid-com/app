@@ -1,6 +1,10 @@
 /**
  * Every page this service has, and the iD each one answers to.
  *
+ * The sign-in pages (sign-in, sign-up, code, authenticator, recovery,
+ * sso.authorize) are 10xid-com/login's and are listed in its copy of this file.
+ * Their iDs are theirs: never reuse them here.
+ *
  * The reason this file exists rather than a list typed into a screen: a path is
  * where something lives today, and an iD is what it IS. `/dashboard` may well
  * become `/desk` — it is called a desk in conversation already — and when it
@@ -82,58 +86,6 @@ export const PAGES: PageRecord[] = [
     audience: "public",
     kind: "machinery",
     file: "app/page.tsx",
-    group: "Getting in",
-  },
-  {
-    id: "sign-in",
-    path: "/auth/login",
-    name: "Sign in",
-    purpose: "Give your email address and we post you a six-digit code. No password exists to type.",
-    audience: "public",
-    kind: "page",
-    file: "app/auth/login/page.tsx",
-    group: "Getting in",
-  },
-  {
-    id: "sign-up",
-    path: "/auth/signup",
-    name: "Accept an invitation",
-    purpose: "Where an invited person turns their invitation into an account.",
-    audience: "public",
-    kind: "page",
-    file: "app/auth/signup/page.tsx",
-    group: "Getting in",
-  },
-  {
-    id: "code",
-    path: "/auth/verify",
-    name: "Six-digit code",
-    purpose: "Type the code from the email. Proves you hold the inbox.",
-    audience: "public",
-    kind: "page",
-    file: "app/auth/verify/page.tsx",
-    group: "Getting in",
-  },
-  {
-    id: "authenticator",
-    path: "/auth/2fa",
-    name: "Authenticator",
-    purpose:
-      "The second factor. Staff reach every client's data, and an inbox is the thing most likely to be taken, so holding it is not enough on its own.",
-    audience: "public",
-    kind: "page",
-    file: "app/auth/2fa/page.tsx",
-    group: "Getting in",
-  },
-  {
-    id: "recovery",
-    path: "/auth/recovery-codes",
-    name: "Recovery codes",
-    purpose:
-      "The one-time list shown when you enrol an authenticator. It is the answer to losing the phone, and it is shown once.",
-    audience: "public",
-    kind: "page",
-    file: "app/auth/recovery-codes/page.tsx",
     group: "Getting in",
   },
 
@@ -272,18 +224,6 @@ export const PAGES: PageRecord[] = [
     audience: "public",
     kind: "machinery",
     file: "app/auth/sso/start/route.ts",
-    methods: ["GET"],
-    group: "Machinery",
-  },
-  {
-    id: "sso.authorize",
-    path: "/auth/sso/authorize",
-    name: "Handoff — authorize",
-    purpose:
-      "The login host mints a single-use ticket, hashed at rest and bound to the one host that asked for it.",
-    audience: "public",
-    kind: "machinery",
-    file: "app/auth/sso/authorize/route.ts",
     methods: ["GET"],
     group: "Machinery",
   },

@@ -1,1 +1,0 @@
-ALTER TABLE "organizations" ADD COLUMN "job_counter" integer DEFAULT 0 NOT NULL;
