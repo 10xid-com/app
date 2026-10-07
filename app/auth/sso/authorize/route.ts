@@ -58,7 +58,11 @@ export async function GET(request: NextRequest) {
   const token = secretToken(32);
   await mintTicket({
     ticketHash: hashTicket(token),
-    userId: ctx.userId,
+    // realUserId, not userId. While acting as somebody, userId is THEIR
+    // account, and a ticket for it would become a full session as them on the
+    // destination — one with no grant behind it, so no banner and no hour on
+    // it. The act-as grant belongs to this session and does not travel.
+    userId: ctx.realUserId,
     audienceHost: domain.hostname,
     returnPath: "/",
     // Tying the ticket to the session that minted it means signing out here
