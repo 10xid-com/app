@@ -137,4 +137,24 @@ test.describe("the portal on its own host", () => {
     await page.waitForURL(/\/auth\/login/);
     expect(hostOf(page.url())).toBe(LOGIN_HOST);
   });
+
+  test("the login host's session and the portal's are one device", async ({ page }) => {
+    await signIn(page, CLIENT, "/account/sessions");
+    expect(hostOf(page.url())).toBe(PORTAL_HOST);
+
+    // Listed together, as this device, and not counted as another one.
+    await expect(page.getByText(LOGIN_HOST)).toBeVisible();
+    await expect(page.getByText(PORTAL_HOST)).toBeVisible();
+    await expect(page.getByText("this device")).toHaveCount(1);
+    await expect(page.getByRole("button", { name: /Sign out \d+ other/ })).toHaveCount(0);
+
+    // "Sign out here" ends both, so the login host cannot quietly hand the
+    // browser straight back in.
+    await page.getByRole("button", { name: "Sign out here" }).click();
+    await page.waitForURL(/\/auth\/login/);
+    await page.goto(`${PORTAL}/dashboard`);
+    await page.waitForURL(/\/auth\/login/);
+    expect(hostOf(page.url())).toBe(LOGIN_HOST);
+    await expect(page.getByLabel("Email")).toBeVisible();
+  });
 });
