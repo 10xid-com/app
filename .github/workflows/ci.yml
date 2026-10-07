@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        env:
+          # Build-time placeholder only. It points at a closed local port, so the
+          # CI build cannot reach Railway, Neon, or any other database. Runtime
+          # startup still verifies DATABASE_APP_URL by connecting and checking
+          # that the role is restricted before serving traffic.
+          DATABASE_APP_URL: postgresql://ci-build:ci-build@127.0.0.1:1/ci_build
+        run: npm run build

@@ -1,0 +1,362 @@
+@import "tailwindcss";
+
+/**
+ * Theme tokens.
+ *
+ * The existing Rotary site has a real design system — a brand blue, a gold
+ * accent, an ivory ground, an ink scale, a card shadow scale — but its values
+ * are hard-coded under a `rotary` namespace, so a second client would mean a
+ * second build.
+ *
+ * Here the same token ROLES are defined as CSS variables on :root, and Tailwind
+ * generates utilities that reference the variables rather than baking the
+ * values in. A client's brand is then applied at request time by overriding a
+ * handful of variables for that hostname — one build, every client.
+ *
+ * Phase 2 wires the override to organizations.brand_primary_hex. These are the
+ * defaults every client starts from.
+ */
+
+:root {
+  --brand-primary: #26467f;
+  --brand-primary-dark: #1b3563;
+  --brand-primary-soft: #e4eaf6;
+  --brand-accent: #c9a84c;
+
+  /**
+   * The brand as a SURFACE, and the ink that belongs on it.
+   *
+   * --brand-primary changes role between the two palettes: in light it is a
+   * deep navy you set white on, in dark it is lightened so it can be read *as*
+   * ink against a dark ground. Using it as a background in both meant white on
+   * pale blue — 2.64:1, under even the 3:1 large-text floor. Naming the surface
+   * and its foreground as a pair keeps them from drifting apart again, and
+   * leaves --brand-primary free to stay a foreground colour in dark.
+   *
+   * Dark mixes the brand down into --surface-sunk rather than hard-coding a
+   * navy, so the Phase 2 override above still reaches the bar: whatever hue
+   * organizations.brand_primary_hex supplies, 18% of it over #0d1114 stays dark
+   * enough for --ink. The worst case, a pure white brand, measures 9.4:1.
+   *
+   * --surface-sunk is written FIRST in that color-mix on purpose. Lightning CSS
+   * emits an @supports fallback for browsers without color-mix, and it builds
+   * that fallback from the first colour — leading with the brand handed those
+   * browsers the pale blue bar this token exists to remove.
+   */
+  --brand-surface: var(--brand-primary);
+  --brand-surface-hover: var(--brand-primary-dark);
+  --brand-on-surface: #ffffff;
+
+  --ground: #f7f9f8;
+  --surface: #ffffff;
+  --surface-sunk: #eef1f5;
+
+  --ink: #0e1b20;
+  --ink-soft: #44545f;
+  --ink-faint: #71818c;
+
+  --line: #d8dee6;
+  --line-soft: #e7eaef;
+
+  --good: #2d7a55;
+  --warn: #b06a12;
+  --bad: #b03a28;
+
+  /* The Pin's fill, and it is GREY on purpose — "the mark is in colour, the Pin
+     is grayscale", Paolo's rule of 2026-09-19. An earlier version painted it
+     #17599b, the blue lifted out of the Mark artwork, on the reasoning that the
+     Pin should blend with the Mark's colours. That is the wrong reading: the
+     Pin is OURS on somebody else's card, and the reason it stays quiet is that
+     it must not read as part of their brand at all. A neutral grey cannot be
+     mistaken for a client's colour; a blue one can.
+
+     Neutral, not the ink scale — --ink-soft and --ink-faint both carry a slight
+     blue cast, which is right for body text sitting under a blue brand and
+     wrong for the one element whose whole job is having no hue.
+
+     #5f5f5f rather than the #404040 that was here before, because the artwork
+     changed under it. /10xid-pin.png used to cap out at 29% alpha and the fill
+     had to be near-black to show through at all; the alpha is now normalised,
+     so the same fill would have made the Pin louder than it has any business
+     being. Measured on the served CSS: the bold strokes land near 6:1 against
+     the bar, clear of the 3:1 non-text floor and far quieter than the Mark. */
+  --pin-ink: #5f5f5f;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --brand-primary: #7fa0dc;
+    --brand-primary-dark: #a9c0e9;
+    --brand-primary-soft: #1b2739;
+    --brand-accent: #e0c06a;
+
+    --brand-surface: color-mix(in srgb, var(--surface-sunk) 82%, var(--brand-primary));
+    --brand-surface-hover: color-mix(in srgb, var(--surface-sunk) 70%, var(--brand-primary));
+    --brand-on-surface: var(--ink);
+
+    --ground: #12161a;
+    --surface: #191f25;
+    --surface-sunk: #0d1114;
+
+    --ink: #e8ecf0;
+    --ink-soft: #a8b4be;
+    --ink-faint: #7b8893;
+
+    --line: #2c353e;
+    --line-soft: #222a30;
+
+    --good: #63b98d;
+    --warn: #d7a254;
+    --bad: #df8878;
+
+    /* Grey on a dark bar too, mirrored rather than recoloured: light paints a
+       darker grey over a white bar, dark paints a lighter grey over a dark
+       one. Same rule, opposite side of the contrast. Both are tuned against
+       the normalised artwork rather than against its old 29% alpha ceiling. */
+    --pin-ink: #929292;
+  }
+}
+
+:root[data-theme="dark"] {
+  --brand-primary: #7fa0dc;
+  --brand-primary-dark: #a9c0e9;
+  --brand-primary-soft: #1b2739;
+  --brand-accent: #e0c06a;
+
+  --brand-surface: color-mix(in srgb, var(--surface-sunk) 82%, var(--brand-primary));
+  --brand-surface-hover: color-mix(in srgb, var(--surface-sunk) 70%, var(--brand-primary));
+  --brand-on-surface: var(--ink);
+
+  --ground: #12161a;
+  --surface: #191f25;
+  --surface-sunk: #0d1114;
+
+  --ink: #e8ecf0;
+  --ink-soft: #a8b4be;
+  --ink-faint: #7b8893;
+
+  --line: #2c353e;
+  --line-soft: #222a30;
+
+  --good: #63b98d;
+  --warn: #d7a254;
+  --bad: #df8878;
+
+  /* Grey on a dark bar too, mirrored rather than recoloured: light paints a
+     darker grey over a white bar, dark paints a lighter grey over a dark one.
+     Same rule, opposite side of the contrast. Both are tuned against the
+     normalised artwork rather than against its old 29% alpha ceiling. */
+  --pin-ink: #929292;
+}
+
+/* `inline` makes the generated utilities reference the variables, so a
+   per-client override at runtime actually takes effect. */
+@theme inline {
+  --color-brand: var(--brand-primary);
+  --color-brand-dark: var(--brand-primary-dark);
+  --color-brand-soft: var(--brand-primary-soft);
+  --color-accent: var(--brand-accent);
+
+  --color-brand-surface: var(--brand-surface);
+  --color-brand-surface-hover: var(--brand-surface-hover);
+  --color-brand-on-surface: var(--brand-on-surface);
+
+  --color-ground: var(--ground);
+  --color-surface: var(--surface);
+  --color-sunk: var(--surface-sunk);
+
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-faint: var(--ink-faint);
+
+  --color-line: var(--line);
+  --color-line-soft: var(--line-soft);
+
+  --color-good: var(--good);
+  --color-warn: var(--warn);
+  --color-bad: var(--bad);
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+
+  --shadow-card: 0 1px 3px 0 rgb(0 0 0 / 0.08), 0 1px 2px -1px rgb(0 0 0 / 0.08);
+  --shadow-card-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.08);
+}
+
+html,
+body {
+  background: var(--ground);
+  color: var(--ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/**
+ * The sideways-scrolling nav.
+ *
+ * Six links do not fit across a phone, so the strip scrolls, and every version
+ * of this has come down to the same question: how does anybody KNOW it scrolls?
+ *
+ *   1. overflow-x-auto and nothing else. The browser drew its default bar
+ *      straight through the link text.
+ *   2. scrollbar-width: thin, with the track given its own space below the
+ *      pills. Fixed the overlap, fixed nothing else — because on iOS and on
+ *      default macOS the scrollbar is an overlay that only exists during a
+ *      scroll. At rest the strip looked like it ended at the right edge.
+ *   3. The native bar hidden and one drawn by hand under the pills — always
+ *      visible, tracking position, draggable. This worked.
+ *   4. The same hiding, but an arrow at each end of the strip INSTEAD of the
+ *      bar, dimmed when there is nothing that way. A 24px button is something
+ *      you can tap; a 3px bar is not. This worked too.
+ *   5. Where it is now: both at once, because 3 and 4 were never answering the
+ *      same half of the question. The bar is what you READ — it is the only
+ *      part that says how much of the strip you are seeing and where in it you
+ *      are, and no arrow can report that two pills remain. The arrows are what
+ *      you PRESS — a bar that reads well at 3px is still not a target. They
+ *      cost different things, which is why keeping both is affordable: the
+ *      arrows cost 56px of horizontal room out of a 262px zone at 390px, the
+ *      bar costs vertical room in a column whose height is set by the 48px
+ *      Mark and not by the nav, so the header stays 64px either way.
+ *
+ * The rule that survived all five: a scrolling region with no affordance is
+ * menu items nobody knows exist, which is the same defect as not rendering
+ * them. Hiding the native bar is only allowed BECAUSE something replaces it —
+ * so if the bar and the arrows both ever go, something else has to take their
+ * place.
+ */
+.portal-nav-scroll {
+  /*
+   * The browser's own scrollbar is hidden here, and the bar you see under the
+   * nav — plus the arrows at its ends — is drawn by the component instead.
+   * That is not decoration.
+   *
+   * On iOS, and on macOS with the default "when scrolling" setting, the
+   * scrollbar is an OVERLAY: it fades in during a scroll and fades out again
+   * a moment later. At rest — which is how a page looks when you arrive on
+   * it — there is nothing on screen saying the strip scrolls, so the links
+   * past the right edge may as well not exist. Reported from a phone: the
+   * pills "aren't working well".
+   *
+   * `scrollbar-width: thin` was the previous attempt and cannot fix this. It
+   * restyles a bar that is still only painted while a scroll is happening.
+   * Nor is this the old defect of hiding the scrollbar and offering nothing:
+   * what replaces it is always visible, tracks position, and can be dragged,
+   * and an arrow at each end of the strip can be tapped.
+   */
+  scrollbar-width: none;
+
+  /*
+   * `safe` is doing real work here and is not decoration.
+   *
+   * The links are the middle zone of the bar, so they want centring. Plain
+   * `center` cannot be used on a strip that also scrolls: when the content is
+   * wider than the box, a centred flex row overflows in BOTH directions, and
+   * the overflow off the start edge is unreachable — there is no scroll
+   * position that reveals it, so the first link or two simply cease to exist
+   * on a narrow screen. That is the same class of defect as hiding the
+   * scrollbar, and it is why this is not `justify-center`.
+   *
+   * `safe center` centres while everything fits and silently degrades to
+   * flex-start the moment it does not, which is precisely the rule wanted.
+   */
+  justify-content: safe center;
+}
+
+/* Safari and Chrome need the prefixed pseudo-element; scrollbar-width alone
+   leaves the overlay bar in place on exactly the phone this was reported from. */
+.portal-nav-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/**
+ * The Pin — the account control at the top right of the bar.
+ *
+ * A Pin is deliberately quiet. It is the one thing on the header that is about
+ * YOU rather than about the organization whose Mark sits on the left, so it has
+ * to be legible without ever pulling the eye off the Mark.
+ *
+ * The glyph is used as a MASK over a solid fill: /10xid-pin.png is a pure WHITE
+ * 10XiD glyph in a rounded square, its alpha channel is the shape, and the
+ * colour underneath is what changes between themes. Dropping the file into an
+ * <img> does not work — it is white artwork, invisible on a white bar — and
+ * filter: invert() is worse, because it has to be undone again for dark mode.
+ *
+ * WHERE THE MUTING LIVES, and this changed once already.
+ *
+ * As drawn, the file was muted in its own ALPHA: two tiers, 25% for the bold
+ * strokes and 14% for the light ones, which over the reference's near-black
+ * header reads as a soft grey because most of what you see through it is the
+ * bar behind. That muting does not survive a white bar. 25% of any colour over
+ * white cannot beat 1.9:1 — measured — so the Pin rendered as a ghost and was
+ * reported as not showing clearly. No choice of fill could have fixed it: the
+ * ceiling was in the artwork, not the CSS.
+ *
+ * So the file's alpha is now NORMALISED — the bold tier taken to fully opaque,
+ * the light tier lifted with it on a curve that keeps the two distinguishable
+ * (they land at 100% and 67%) — and the muting moved into --pin-ink, where a
+ * value can be chosen per theme and measured. Same look, one layer down.
+ *
+ * The rule that follows from this: the Pin's quietness is the FILL's job now.
+ * Do not re-mute the artwork, and if the bar's colour ever changes, retune
+ * --pin-ink rather than reaching for opacity.
+ *
+ * That colour is --pin-ink, and it is a NEUTRAL GREY. "The mark is in colour,
+ * the Pin is grayscale" is the house rule, dated 2026-09-19, and the reason
+ * behind it is not aesthetic: the Mark belongs to whoever the iD is for and
+ * arrives in their colours, while the Pin is our badge on someone else's card.
+ * A blue Pin — which is what shipped first, using the Mark's own #17599b —
+ * reads as part of the client's brand. A grey one cannot.
+ *
+ * The mask goes on this span and not on the button, because a mask clips
+ * everything the element paints — including its focus ring. Keeping them on
+ * separate elements lets the button keep a visible focus outline and a hover
+ * plate while the glyph inside stays masked.
+ *
+ * -webkit-mask is not optional. Safari still needs the prefixed property, and
+ * this is exactly the control a keyboard-and-Safari user reaches for to sign
+ * out; unprefixed alone leaves them an unmasked blue rectangle.
+ */
+.portal-pin {
+  background-color: var(--pin-ink);
+  -webkit-mask: url("/10xid-pin.png") center / contain no-repeat;
+  mask: url("/10xid-pin.png") center / contain no-repeat;
+}
+
+/**
+ * No form field smaller than 16px on a phone.
+ *
+ * WebKit zooms the whole page in when a text field is focused and its text is
+ * under 16px — a readability behaviour, not a bug. The zoom then SURVIVES the
+ * form submit and the redirect, so the page you land on is rendered zoomed and
+ * panned off to one side. Signing in looks broken, and only a pinch-out fixes
+ * it. Reported on an iPhone landing on the dashboard with the first character
+ * of every line cut off.
+ *
+ * This is every iOS browser, not just Safari: Apple requires them all to use
+ * WebKit, so Chrome and Firefox on iOS inherit it exactly. Desktop Chrome does
+ * NOT do this, which is why the whole layout measures clean at every width and
+ * the fault cannot be reproduced outside a real device.
+ *
+ * Written here as plain CSS rather than by changing the shared input class,
+ * because `text-sm` and `text-lg` are both font-size utilities and which one
+ * wins is decided by their order in the compiled stylesheet, not the order
+ * they are written in the class attribute. Editing the shared class would
+ * therefore risk silently shrinking the six-digit code field, which sets its
+ * own larger size on purpose.
+ *
+ * 640px matches Tailwind's `sm` breakpoint. Above it, pointing devices are the
+ * norm, no browser auto-zooms, and the designed sizes apply untouched.
+ */
+@media (max-width: 640px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}

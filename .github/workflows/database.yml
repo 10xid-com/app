@@ -1,0 +1,86 @@
+name: Database
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+# The database schema and its migrations belong to 10xid-com/login. This app
+# carries a copy of lib/db/schema.ts to query with, so this job checks that
+# copy against login's, builds a disposable database from login's migrations
+# and seed, and runs this app's database-backed tests against it.
+
+jobs:
+  database:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: ci_owner
+          POSTGRES_PASSWORD: ci-owner-local-only
+          POSTGRES_DB: portal_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci_owner -d portal_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+    env:
+      # Public, throwaway values usable only against this job-local PostgreSQL
+      # service. This job intentionally receives no production/provider secrets.
+      DATABASE_URL: postgresql://ci_owner:ci-owner-local-only@127.0.0.1:5432/portal_ci
+      DATABASE_APP_URL: postgresql://portal_app:ci-app-local-only@127.0.0.1:5432/portal_ci
+      PORTAL_APP_PASSWORD: ci-app-local-only
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Checkout the schema's owner (10xid-com/login)
+        uses: actions/checkout@v4
+        with:
+          repository: 10xid-com/login
+          ref: main
+          path: login
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Schema matches login's
+        run: |
+          if ! diff -u login/lib/db/schema.ts lib/db/schema.ts; then
+            echo "::error file=lib/db/schema.ts::lib/db/schema.ts differs from 10xid-com/login main. The schema is changed in login (with its migration) first, then copied here unchanged."
+            exit 1
+          fi
+
+      - name: Apply login's migrations
+        working-directory: login
+        env:
+          # Prevent deploy-only bootstrap/domain behavior in CI.
+          BOOTSTRAP_EMAIL: ""
+          BOOTSTRAP_CLIENT_EMAIL: ""
+          PORTAL_CLIENT_DOMAINS: ""
+        # Resolves drizzle-orm and pg from this app's node_modules, one level up.
+        run: node scripts/migrate.mjs
+
+      - name: Seed login's isolation fixtures
+        working-directory: login
+        run: ../node_modules/.bin/tsx scripts/seed.ts
+
+      - name: Run database-backed tests
+        # Provider engine tests inject fake fetch implementations; this job
+        # intentionally supplies no Ollama, Anthropic, OpenAI, or other LLM
+        # credentials and must not contact any live model provider.
+        run: npm test
