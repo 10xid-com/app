@@ -14,7 +14,7 @@ import { touchAuthSession } from "@/lib/db/auth-session";
 import type { Scope } from "@/lib/db";
 import { secretToken } from "@/lib/ids";
 import { csrfTokenFor } from "./csrf";
-import { SESSION_IDLE_SECONDS, type SessionRole } from "./policy";
+import { activeBusiness, SESSION_IDLE_SECONDS, type SessionRole } from "./policy";
 
 /**
  * Who is making this request.
@@ -172,15 +172,12 @@ export const resolveIdentity = cache(async function resolveIdentity(): Promise<I
   await touchSession(session.id);
   const memberships = await membershipsForUser(user.id);
 
-  /**
-   * Which business is on screen: the one client business this person belongs
-   * to, or none if they belong to several or to none. Choosing between several
-   * businesses is an open rule in the build brief. The house (Branding Centres,
-   * `internal`) is never one: membership of it carried staff access, which is
-   * off.
-   */
+  // Which business is on screen: see activeBusiness() in ./policy.ts.
   const clientBusinesses = memberships.filter((m) => m.organizationType === "client");
-  const organizationId = clientBusinesses.length === 1 ? clientBusinesses[0].organizationId : null;
+  const organizationId = activeBusiness(
+    clientBusinesses.map((m) => m.organizationId),
+    session.activeOrganizationId,
+  );
 
   const ctx: SessionContext = {
     sessionId: session.id,

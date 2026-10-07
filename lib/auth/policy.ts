@@ -186,3 +186,24 @@ export function sessionRoleFor(
 ): SessionRole {
   return memberships.some(isStaffMembership) ? "staff" : "client";
 }
+
+/**
+ * WHICH BUSINESS IS ON SCREEN.
+ *
+ * The one this session chose (the business switcher, stored on the portal
+ * session row), as long as the person is still a member of it; otherwise
+ * their only business, if they have exactly one; otherwise none, and the
+ * portal asks them to choose (/business).
+ *
+ * The choice is re-checked against live memberships on every request, so
+ * being removed from a business takes it off screen on the next click rather
+ * than when the session ends. The house is never a candidate: callers pass
+ * client businesses only.
+ */
+export function activeBusiness(
+  clientBusinessIds: readonly string[],
+  chosen: string | null,
+): string | null {
+  if (chosen && clientBusinessIds.includes(chosen)) return chosen;
+  return clientBusinessIds.length === 1 ? clientBusinessIds[0] : null;
+}

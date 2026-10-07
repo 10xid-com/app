@@ -24,7 +24,7 @@ const DENIED: Record<string, { title: string; intro: string }> = {
   no_business: {
     title: "No business selected",
     intro:
-      "Your account isn't attached to exactly one business, so there is nothing to open yet. If you work with several businesses, choosing between them isn't available yet.",
+      "Your account isn't attached to a business yet, so there is nothing to open. Ask an owner of the business to invite this address.",
   },
   not_a_member: {
     title: "You're not a member of this business",

@@ -59,10 +59,6 @@ export async function PortalShell({
    */
   organization?: { name: string; logoUrl: string | null } | null;
 }) {
-  const shown = actingOn
-    ? { name: actingOn.name, logoUrl: organization?.logoUrl ?? null }
-    : (organization ?? { name: "10XiD Portal", logoUrl: null });
-
   /**
    * The act-as banner is resolved HERE rather than passed in as a prop.
    *
@@ -79,6 +75,18 @@ export async function PortalShell({
    */
   const ctx = await getSessionContext();
   const actingAs = ctx?.actingAs ?? null;
+
+  /**
+   * The business on screen, from the session, when the page did not name
+   * one: with the business switcher a person can belong to several, and the
+   * mark is how they know which one they are in.
+   */
+  const clientBusinesses = (ctx?.memberships ?? []).filter((m) => m.organizationType === "client");
+  const onScreen = clientBusinesses.find((m) => m.organizationId === ctx?.scope.organizationId);
+  const shown = actingOn
+    ? { name: actingOn.name, logoUrl: organization?.logoUrl ?? null }
+    : (organization ??
+      (onScreen ? { name: onScreen.organizationName, logoUrl: null } : { name: "10XiD Portal", logoUrl: null }));
 
   const links = [
     // First for staff because it is where sign-in lands them.
@@ -112,6 +120,10 @@ export async function PortalShell({
             {isStaff ? (
               <a href="/staff" className={menuItemClass}>
                 Switch organization
+              </a>
+            ) : clientBusinesses.length > 1 ? (
+              <a href="/business" className={menuItemClass}>
+                Switch business
               </a>
             ) : null}
             {/*

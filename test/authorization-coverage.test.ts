@@ -25,6 +25,8 @@ const GUARDS = [
   "authorizeRequest(",
   "requireStaffAccess(",
   "requireSameOriginRequest(",
+  "requireSignedIn(",
+  "requireSignedInAction(",
 ];
 
 const EXEMPT: Record<string, string> = {

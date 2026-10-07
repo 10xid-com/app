@@ -100,10 +100,22 @@ export const PAGES: PageRecord[] = [
     path: "/access",
     name: "Access",
     purpose:
-      "Where you land when you are signed in but the portal has nothing to show you, and why: waiting for confirmation, no invitation, or a role without permissions yet.",
+      "Where you land when the portal refuses something, and why: not a member, the business is closed, or your role does not allow it.",
     audience: "member",
     kind: "page",
     file: "app/access/page.tsx",
+    group: "Getting in",
+  },
+
+  {
+    id: "business",
+    path: "/business",
+    name: "Your businesses",
+    purpose:
+      "The business switcher: every business you belong to, your role in each, and which one is open. Where you land with several businesses and none chosen.",
+    audience: "member",
+    kind: "page",
+    file: "app/business/page.tsx",
     group: "Getting in",
   },
 
