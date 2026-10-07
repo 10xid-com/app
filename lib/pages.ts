@@ -1,9 +1,15 @@
 /**
  * Every page this service has, and the iD each one answers to.
  *
- * The sign-in pages (sign-in, sign-up, code, authenticator, recovery,
- * sso.authorize) are 10xid-com/login's and are listed in its copy of this file.
- * Their iDs are theirs: never reuse them here.
+ * The sign-in pages (`login.*`, and the legacy sign-in, sign-up, code,
+ * authenticator, recovery and sso.authorize) are 10xid-com/login's and are
+ * listed in its copy of this file. Their iDs are theirs: never reuse them here.
+ *
+ * Retired here, never to be reused: `account` (the sessions screen). Sessions,
+ * the authenticator and recovery codes are managed on the login host
+ * (`login.account`). The handoff (`sso.start`, `sso.callback`, `sso.failed`)
+ * was briefly removed for WorkOS, which never went live, and is back under its
+ * own iDs.
  *
  * The reason this file exists rather than a list typed into a screen: a path is
  * where something lives today, and an iD is what it IS. `/dashboard` may well
@@ -82,10 +88,22 @@ export const PAGES: PageRecord[] = [
     path: "/",
     name: "Front door",
     purpose:
-      "Decides where you belong and sends you there. Staff to the chat, everybody else to the desk, signed out to sign-in. There is no public landing page.",
+      "Sends you to the dashboard, which decides the rest. There is no public landing page.",
     audience: "public",
     kind: "machinery",
     file: "app/page.tsx",
+    group: "Getting in",
+  },
+
+  {
+    id: "access",
+    path: "/access",
+    name: "Access",
+    purpose:
+      "Where you land when you are signed in but the portal has nothing to show you, and why: waiting for confirmation, no invitation, or a role without permissions yet.",
+    audience: "member",
+    kind: "page",
+    file: "app/access/page.tsx",
     group: "Getting in",
   },
 
@@ -147,20 +165,6 @@ export const PAGES: PageRecord[] = [
   },
 
   /* -------------------------------------------------------------- */
-  /* Your account                                                    */
-  /* -------------------------------------------------------------- */
-  {
-    id: "account",
-    path: "/account/sessions",
-    name: "Your details and devices",
-    purpose: "Where you are signed in, and how to sign a device out. Reached from the Pin.",
-    audience: "member",
-    kind: "page",
-    file: "app/account/sessions/page.tsx",
-    group: "Your account",
-  },
-
-  /* -------------------------------------------------------------- */
   /* Staff                                                           */
   /* -------------------------------------------------------------- */
   {
@@ -216,37 +220,15 @@ export const PAGES: PageRecord[] = [
   /* Machinery                                                       */
   /* -------------------------------------------------------------- */
   {
-    id: "sso.start",
-    path: "/auth/sso/start",
-    name: "Handoff — start",
+    id: "healthz",
+    path: "/healthz",
+    name: "Healthcheck",
     purpose:
-      "A client domain asks the login host whether this visitor is already signed in. Step one of three.",
+      "For Railway: 200 once the server has started, which it refuses to do with the wrong session settings or a privileged database role.",
     audience: "public",
     kind: "machinery",
-    file: "app/auth/sso/start/route.ts",
+    file: "app/healthz/route.ts",
     methods: ["GET"],
-    group: "Machinery",
-  },
-  {
-    id: "sso.callback",
-    path: "/auth/sso/callback",
-    name: "Handoff — callback",
-    purpose: "The client domain spends the ticket. Spending it destroys it.",
-    audience: "public",
-    kind: "machinery",
-    file: "app/auth/sso/callback/route.ts",
-    methods: ["GET"],
-    group: "Machinery",
-  },
-  {
-    id: "sso.failed",
-    path: "/auth/sso/failed",
-    name: "Handoff failed",
-    purpose:
-      "The only part of the handoff a person is ever meant to look at, and only when something went wrong.",
-    audience: "public",
-    kind: "page",
-    file: "app/auth/sso/failed/page.tsx",
     group: "Machinery",
   },
   {
@@ -295,6 +277,40 @@ export const PAGES: PageRecord[] = [
     kind: "machinery",
     file: "app/api/workspace/repositories/route.ts",
     methods: ["GET"],
+    group: "Machinery",
+  },
+  {
+    id: "sso.start",
+    path: "/auth/sso/start",
+    name: "Handoff — start",
+    purpose:
+      "The portal asks the login host to sign this visitor in. Step one of three; the return path stays here.",
+    audience: "public",
+    kind: "machinery",
+    file: "app/auth/sso/start/route.ts",
+    methods: ["GET"],
+    group: "Machinery",
+  },
+  {
+    id: "sso.callback",
+    path: "/auth/sso/callback",
+    name: "Handoff — callback",
+    purpose:
+      "The portal spends the ticket, once, and issues its own host-only session, ending when the sign-in does.",
+    audience: "public",
+    kind: "machinery",
+    file: "app/auth/sso/callback/route.ts",
+    methods: ["GET"],
+    group: "Machinery",
+  },
+  {
+    id: "sso.failed",
+    path: "/auth/sso/failed",
+    name: "Handoff failed",
+    purpose: "One message for every way the handoff can fail, so a failure reveals nothing.",
+    audience: "public",
+    kind: "page",
+    file: "app/auth/sso/failed/page.tsx",
     group: "Machinery",
   },
 ];

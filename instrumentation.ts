@@ -15,6 +15,21 @@ export async function register() {
   // Only the Node.js runtime can reach the database; the edge runtime cannot.
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
 
+  // The two hosts. A deployment missing one stops here rather than issuing a
+  // session cookie for the wrong host or sending people to the wrong sign-in.
+  if (process.env.NODE_ENV === "production") {
+    const { obsoleteVariables, sessionConfigProblems } = await import("./lib/auth/origin");
+    const problems = sessionConfigProblems(process.env);
+    if (problems.length > 0) {
+      throw new Error(`[startup] session settings: ${problems.join("; ")}`);
+    }
+    const obsolete = obsoleteVariables(process.env);
+    if (obsolete.length > 0) {
+      console.warn(`[startup] unused variables, remove at cutover: ${obsolete.join(", ")}`);
+    }
+    console.log("[startup] session settings verified");
+  }
+
   const { assertRestrictedRole } = await import("./lib/db/connection");
   await assertRestrictedRole();
   console.log("[startup] database role verified: not privileged, RLS applies");

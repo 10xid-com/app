@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSessionContext } from "@/lib/auth/session";
+import { authorizeRequest, STAFF_ACCESS } from "@/lib/auth/authorize";
 import { listLinkedRepositories } from "@/lib/db/repositories";
 import { githubApp } from "@/lib/repo";
 import { RepoError } from "@/lib/repo/types";
@@ -15,8 +15,12 @@ import { workspaceAccess } from "@/lib/workspace/access";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
-  const access = await workspaceAccess(await getSessionContext());
+export async function GET(request: Request) {
+  const decision = await authorizeRequest(request, STAFF_ACCESS);
+  if (!decision.allowed) {
+    return NextResponse.json({ error: "Staff access is turned off." }, { status: 403 });
+  }
+  const access = await workspaceAccess(decision.ctx);
   if (!access) return NextResponse.json({ error: "The workspace is for staff." }, { status: 403 });
 
   const app = githubApp();

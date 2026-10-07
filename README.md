@@ -1,16 +1,16 @@
 # 10XiD Portal — app
 
-The portal at **`app.10xid.com`**: the dashboard, requests and jobs, the staff workspace at
-`/chat`, clients and keys, and the team and account screens. It also serves the client
-domains (`northstar.10xconnections.com`), which are the same portal under a client's own
-address and branding.
+The portal at **`app.10xid.com`**: the dashboard, requests and jobs, and the team screen.
+It answers on that host and **no other** — client domains get nothing from it and carry no
+management cookie (Revision 2; Paolo's decision of 2026-10-07).
 
-**Sign-in is not here.** It lives in [`10xid-com/login`](https://github.com/10xid-com/login)
-at `login.10xid.com`, which also owns the database schema and its migrations. This app
-never shows a sign-in form: a visitor with no session is sent to the login host by the
-cross-domain handoff and comes back signed in (`/auth/sso/start` → login's
-`/auth/sso/authorize` → `/auth/sso/callback` here). Any other `/auth/` address is
-forwarded to the login host.
+**Sign-in happens on [`login.10xid.com`](https://github.com/10xid-com/login)** — self-hosted
+Better Auth, no provider, an authenticator app after every method — and reaches this host by
+the single-use ticket handoff (`/auth/sso/*`). The login host answers *who signed in*; this
+database answers *what they may do*, through one central authorization function
+(`lib/auth/authorize.ts`) that every protected page, server action and route handler passes
+through. The schema and migrations live in login; the cutover runbook is login's
+`docs/better-auth-cutover.md`.
 
 Both apps use **one database**. `lib/db/schema.ts` here is a copy of login's, kept
 identical by CI (`.github/workflows/database.yml`): a schema change is made in login, with
@@ -18,16 +18,28 @@ its migration, then copied here unchanged.
 
 ## What it does
 
-- **Arrive signed in** from the login host, on this host or a client's own domain, with
-  no second prompt, via a single-use ticket handoff.
-- **Accounts are by invitation**, sent from `/team`; the invited person sets the account
-  up on the login host.
-- **A client sees only their own company's jobs.** Staff see every client, and act on one
-  at a time through a time-boxed grant carrying a typed reason.
+- **Sign in on the login host**, then land here signed in: `/auth/sso/start` → login's
+  `/auth/sso/authorize` (signed in, past the authenticator, bound to an account) →
+  `/auth/sso/callback` (state cookie matches, ticket spent once). This host then issues its own
+  session: a random value in a host-only `__Host-portal_session` cookie (`Secure`, `HttpOnly`,
+  `SameSite=Lax`), only its hash stored.
+- **The session ends when the sign-in does.** Its absolute end is the sign-in's (seven days from
+  signing in, never extended), it lapses after 48 hours idle, and every request also checks the
+  sign-in behind it (`auth_session_touch`), so signing out on the login host, a password reset
+  or an operator's revocation ends it on the next request. Sessions from before this change are
+  refused: everybody signs in once more.
+- **An account is found by its sign-in identity** (`users.auth_user_id`), never by its address,
+  and only the login host ties the two (an invitation to exactly the verified address, or an
+  operator's confirmation).
+- **Six role templates** — owner, manager, editor, publisher, asset manager, viewer. Until the
+  permission matrix is written, owner holds every action and the other five hold none
+  (`lib/auth/permissions.ts`).
+- **Every state-changing request** needs the exact `https://app.10xid.com` Origin and a CSRF
+  token bound to the session (an HMAC keyed by the session cookie's secret).
+- **Staff access is off.** The Clients, Keys, Act as and `/chat` screens are still in the code
+  and refused to everybody, pending client-approved agency grants.
 - **Requests arrive as cards** on the dashboard, carrying what the sender actually wrote,
   and each can be given a Google Drive folder with the request filed into it.
-- **A client's own systems can file work** with their own API key — write-only, bound to
-  one company, revocable without touching anybody's login.
 
 ## The rule everything else serves
 
@@ -51,39 +63,21 @@ has one, live with the migrations in `10xid-com/login`.
 ## Running it locally
 
 Needs Node 22+, PostgreSQL 16, and a checkout of `10xid-com/login` next to this one
-(`../login`), because the database is built from login's migrations and nobody can sign
-in without it.
+(`../login`) for the migrations and the sign-in, running on `login.portal-a.test:3000`.
 
 ```bash
 npm install
-cp .env.example .env.local        # the same two connection strings login uses
+cp .env.example .env.local        # connection strings, PORTAL_HOST=app.portal-a.test:3001,
+                                  # PRIMARY_HOST=login.portal-a.test:3000, SESSION_COOKIE_SECURE=false
 
 # Database, from login (once, and after any schema change there):
-(cd ../login && npm install && npm run db:migrate && \
-  SEED_HOST_ROTARY=rotary.portal-b.test:3001 \
-  SEED_HOST_NORTHSTAR=northstar.portal-b.test:3001 \
-  SEED_HOST_PORTAL=app.portal-a.test:3001 npm run db:seed)
+(cd ../login && npm install && npm run db:migrate && npm run db:seed)
 
-(cd ../login && PORTAL_HOST=app.portal-a.test:3001 npm run dev)   # login, on :3000
-npm run dev -- -p 3001                                             # this app, on :3001
+npm run dev -- -p 3001
 ```
 
-Then open `http://app.portal-a.test:3001/`. Sign-in codes are not emailed in development:
-login appends them to `/tmp/portal-signin-codes.log`.
-
-### The domains
-
-```
-127.0.0.1  login.portal-a.test      # login (10xid-com/login), :3000
-127.0.0.1  app.portal-a.test        # this app, :3001
-127.0.0.1  rotary.portal-b.test     # a client domain, served by this app, :3001
-127.0.0.1  northstar.portal-b.test  # a second client, so isolation has a target, :3001
-```
-
-portal-a.test and portal-b.test are different registrable domains, as 10xid.com and
-10xconnections.com are, so the handoff is tested for real. `app` and `login` are siblings
-under one domain, as in production, and still do not share a cookie: it is `__Host-`
-prefixed, so it belongs to exactly one host.
+Then open `http://app.portal-a.test:3001/` (with `127.0.0.1 app.portal-a.test` in
+`/etc/hosts`). Any other host is answered with a 404, by design.
 
 ## Optional integrations
 
@@ -103,6 +97,9 @@ Each is **inert without configuration** rather than half-working. See `.env.exam
 > prescribed here; those are deployment choices. The repository currently also contains Anthropic
 > and OpenAI engine modes. Whether those alternatives should remain available inside `/chat` is a
 > separate architecture decision, so this clarification does not remove or rewrite them.
+
+**Turned off** with the rest of staff access on 2026-10-07: every entry point asks the central
+function for staff access, which no role carries. What follows describes it as built.
 
 `/chat` is where staff land: one client's workspace, with conversations kept per client **and per
 person** — two staff on the same client do not read each other's conversations. Postgres enforces
@@ -152,45 +149,31 @@ The GitHub stand-in (`test/e2e/mock-github.ts`) does not check signatures, so an
 
 ```bash
 npm test          # unit and database tests, as the restricted role, against real Postgres
-npm run test:e2e  # browser tests across Chrome and Firefox, normal and fresh profiles;
-                  # starts this app on :3001 and login (E2E_LOGIN_DIR, default ../login) on :3000
-npm run prove     # signs in as a real client and guesses another client's job address
 ```
 
-`npm run prove` prints a transcript rather than an assertion:
+What the suite pins for sign-in and access:
 
-```
-── the attempt: another client's job, by its exact real id ───────
-  HTTP 404 Not Found
-  contains their job title:   false
-  bytes of their data leaked: 0
+- `test/proxy.test.ts` — one host; exact Origin on state-changing requests; a signed-out page
+  goes into the handoff and keeps its path on this host; `/healthz` answers on any host.
+- `test/authorize.test.ts` — the central function's checks, one at a time, in order.
+- `test/authorization-coverage.test.ts` — reads `app/` from disk and fails if a page, route or
+  server action skips the central function, or a form lacks its CSRF field.
+- `test/auth-session.test.ts` — as the restricted role: a sign-in's liveness and hard end, its
+  revocation, and that none of the sign-in tables can be read.
 
-  Same status for a real job and an imaginary one: yes
-```
+The whole flow across both hosts in a real browser — invitation, password, emailed code,
+authenticator on every method, replayed codes and tickets, recovery codes, idle expiry,
+operator binding, tenant isolation, sign-out everywhere — is login's
+`test/e2e/better-auth.spec.ts`, which starts this app next to it.
 
-That last line matters. An endpoint that answered differently for a real job than an
-imaginary one would confirm which ids exist, and could be walked to enumerate a
-competitor's workload.
-
-## Measured, not assumed
-
-| | Chrome | Chrome (fresh) | Firefox | Firefox (fresh) |
-|---|---|---|---|---|
-| Cross-domain handoff | 506ms | 494ms | 791ms | 858ms |
-| Sign-out propagation | 257ms | 282ms | 405ms | 421ms |
-
-Sign-out ends the session on every domain in one request, because the session row is
-revoked and there is no short-lived token left alive to outlive it.
-
-**Safari is not tested**, by decision. A Linux container cannot run it, and the nearest
-engine available is not the same thing where it matters.
+The older browser suite here (`npm run test:e2e`) and `npm run prove` still sign in with the
+legacy emailed codes and need rewriting against the new sign-in before they can run again.
 
 ## Conventions worth knowing
 
-- **Next.js 16 renamed middleware to `proxy.ts`.** It does two cheap things: send a
-  cookie-less request into the handoff, and send any `/auth/` page other than the handoff
-  to the login host. It deliberately does not validate sessions — that belongs in the data
-  layer.
+- **Next.js 16 renamed middleware to `proxy.ts`.** It refuses any host but the app's, refuses
+  a state-changing request from another origin, and sends a page with no session cookie into
+  the handoff. It authorizes nothing: that is `lib/auth/authorize.ts`, called from every route.
 - **Versions are pinned exactly.** Drizzle's documentation site describes 1.0 while npm
   installs 0.45.2 with a different migration layout, so a caret produces a build that
   does not match its own documentation.
@@ -199,9 +182,9 @@ engine available is not the same thing where it matters.
   appears in a URL, since it would otherwise leak how many jobs a client has.
 - **The hostname decides branding, never permission.** What a person may read comes from
   their session. The address bar carries no authority.
-- **Sessions last until they are signed out.** Both clocks are off; the stored expiry is
-  the browser's own 400-day cookie ceiling rather than a policy. What bounds a staff
-  session is reach, not time — one client at a time, through a grant that lapses.
+- **Sessions:** seven days from signing in at most, 48 hours idle, both enforced on the server
+  (here and, for the sign-in, by Postgres). Revoking a membership takes effect on the next
+  request, because every request asks the database.
 
 ## The decision record
 

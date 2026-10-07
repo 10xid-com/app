@@ -4,7 +4,13 @@ import {
   inAuthenticationTransaction,
   inTenantTransaction,
 } from "./connection";
-import { invitations, memberships, organizations, users } from "./schema";
+import {
+  invitations,
+  memberships,
+  organizations,
+  users,
+  type MembershipRole,
+} from "./schema";
 import { isStaffMembership } from "@/lib/auth/policy";
 
 /**
@@ -23,7 +29,7 @@ import { isStaffMembership } from "@/lib/auth/policy";
 export type InvitationRow = {
   id: string;
   email: string;
-  role: "owner" | "member" | "staff";
+  role: MembershipRole;
   organizationId: string;
   organizationName: string;
   invitedByEmail: string | null;
@@ -33,13 +39,16 @@ export type InvitationRow = {
   createdAt: Date;
 };
 
-/** Invitations last a fortnight. Long enough to be acted on, not indefinite. */
-export const INVITATION_TTL_DAYS = 14;
+/**
+ * Invitations last seven days and are used once (Revision 2). Long enough to
+ * be acted on, short enough that a forgotten one is not a standing way in.
+ */
+export const INVITATION_TTL_DAYS = 7;
 
 export async function inviteToOrganization(input: {
   organizationId: string;
   email: string;
-  role: "owner" | "member" | "staff";
+  role: MembershipRole;
   invitedBy: string;
 }): Promise<{ id: string }> {
   return inTenantTransaction(input.organizationId, false, async (tx) => {
@@ -124,7 +133,14 @@ export async function acceptInvitation(input: {
   invitationId: string;
   organizationId: string;
   email: string;
-  role: "owner" | "member" | "staff";
+  role: MembershipRole;
+  /**
+   * The sign-in identity (Better Auth user) whose VERIFIED address is `email`.
+   * The account is created already bound to it (users.auth_user_id).
+   */
+  authUserId?: string;
+  /** 0021's WorkOS binding, superseded by authUserId and kept for its test. */
+  workosUserId?: string;
 }): Promise<{ userId: string } | null> {
   return inTenantTransaction(input.organizationId, false, async (tx) => {
     const claimed = await tx
@@ -177,6 +193,8 @@ export async function acceptInvitation(input: {
         email: input.email.trim().toLowerCase(),
         isStaff,
         isService: false,
+        authUserId: input.authUserId ?? null,
+        workosUserId: input.workosUserId ?? null,
       })
       .returning({ id: users.id });
 

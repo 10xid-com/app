@@ -1,69 +1,67 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { appHost, appOrigin, isStateChanging, isTrustedOrigin } from "@/lib/auth/origin";
 
 /**
- * Proxy — renamed from Middleware in Next.js 16, same job.
+ * Proxy — Next.js 16's name for middleware.
  *
- * This app is the portal. It never signs anybody in: that happens on the login
- * host (PRIMARY_HOST, served by 10xid-com/login), and this app receives its
- * session by the cross-domain handoff, exactly as a client domain does. So:
+ * Routing and cheap refusals, none of them authorization:
  *
- *   - a request with no session cookie at all is sent into the handoff instead
- *     of rendering a signed-out page;
- *   - any other /auth/ page — a link to /auth/login, say — is the login host's,
- *     and is sent there.
+ *   1. The healthcheck answers on any host (Railway's checker does not send
+ *      app.10xid.com) and says nothing but "ok".
+ *   2. One host. The portal answers on PORTAL_HOST and nowhere else; any other
+ *      Host is refused, failing closed.
+ *   3. The machine endpoint (/api/v1/*) is let through untouched. It carries
+ *      an API key, never a cookie, and is called cross-origin by design.
+ *   4. A state-changing request whose Origin is not exactly the app's is
+ *      refused before it reaches anything — the cheap half of the check the
+ *      central authorization function makes again, with the CSRF token.
+ *   5. No session cookie at all: a page goes into the handoff to the login
+ *      host and comes back; anything else is refused rather than answered
+ *      with a page.
  *
- * It deliberately does not validate the session. Next's own guidance is that
- * this layer is for optimistic checks and must not be a session-management or
- * authorisation solution — it runs before routes, without the database, and a
- * check here would be a check in the wrong place. Real enforcement happens in
- * the data access layer, with Postgres enforcing the same rule underneath, so a
- * forged or stale cookie gets past this and then gets nothing.
- *
- * In other words: this is a convenience that saves a redirect, not a gate.
+ * A cookie being PRESENT is all that is checked here. Whether it is valid —
+ * and whether the sign-in behind it still is — is decided per request by
+ * lib/auth/session.ts and lib/auth/authorize.ts.
  */
 
 const SESSION_COOKIES = ["__Host-portal_session", "portal_session"];
 
-/** The receiving end of the handoff: the only /auth/ routes this app has. */
-const HANDOFF = "/auth/sso/";
-
-/** The same rule as originFor() in lib/auth/sso, which is server-only. */
-function originFor(host: string): string {
-  const secure = process.env.SESSION_COOKIE_SECURE !== "false";
-  return `${secure ? "https" : "http"}://${host}`;
-}
-
-export function proxy(request: NextRequest) {
-  const primary = (process.env.PRIMARY_HOST ?? "").toLowerCase();
+export default async function proxy(request: NextRequest) {
+  const host = (request.headers.get("host") ?? "").toLowerCase();
+  const expectedHost = appHost();
   const { pathname, search } = request.nextUrl;
 
-  // Never interfere with the machine endpoints. They carry an API key rather
-  // than a cookie, and redirecting one would answer a POST with a 307 to an
-  // HTML page — which a caller reads as "it worked, sort of", and which is a
-  // far more confusing failure than a plain 401.
-  if (pathname.startsWith("/api/")) return NextResponse.next();
+  // 1.
+  if (pathname === "/healthz") return NextResponse.next();
 
-  // Nor with the handoff itself — doing so is how you build a redirect loop.
-  if (pathname.startsWith(HANDOFF)) return NextResponse.next();
-
-  // Every other /auth/ page lives on the login host.
-  if (pathname.startsWith("/auth/") && primary) {
-    return NextResponse.redirect(
-      new URL(`${pathname}${search}`, originFor(primary)),
-    );
+  if (!expectedHost) {
+    return new NextResponse("The portal is not configured.", { status: 500 });
   }
 
-  // A cookie being PRESENT is all that is checked. Whether it is valid is the
-  // application's business, not this layer's.
-  if (SESSION_COOKIES.some((name) => request.cookies.has(name))) {
-    return NextResponse.next();
+  // 2.
+  if (host !== expectedHost) {
+    return new NextResponse("Not found.", { status: 404 });
   }
 
-  const start = request.nextUrl.clone();
-  start.pathname = "/auth/sso/start";
-  start.search = "";
-  start.searchParams.set("path", `${pathname}${search}`);
-  return NextResponse.redirect(start);
+  // 3.
+  if (pathname.startsWith("/api/v1/")) return NextResponse.next();
+
+  // 4.
+  if (isStateChanging(request.method) && !isTrustedOrigin(request.headers.get("origin"), appOrigin())) {
+    return new NextResponse("Forbidden.", { status: 403 });
+  }
+
+  // The handoff itself is how a session is made.
+  if (pathname.startsWith("/auth/sso/")) return NextResponse.next();
+
+  // 5.
+  if (SESSION_COOKIES.some((name) => request.cookies.has(name))) return NextResponse.next();
+  if (request.method === "GET" && !pathname.startsWith("/api/")) {
+    const start = new URL("/auth/sso/start", appOrigin()!);
+    start.searchParams.set("path", `${pathname}${search}`);
+    return NextResponse.redirect(start);
+  }
+  return new NextResponse("Sign in first.", { status: 401 });
 }
 
 export const config = {

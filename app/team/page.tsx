@@ -1,14 +1,11 @@
 import type { Metadata } from "next";
 import { assignedPerPerson, jobsPerPerson } from "@/lib/db";
-import { requireSession } from "@/lib/auth/require";
-import {
-  internalOrganization,
-  liveGrantForSession,
-  organizationById,
-  teamFor,
-} from "@/lib/db/identity";
+import { requirePage } from "@/lib/auth/authorize";
+import { ROLE_LABELS, ROLE_TEMPLATES, roleAllows } from "@/lib/auth/permissions";
+import { organizationById, teamFor } from "@/lib/db/identity";
 import { listInvitations } from "@/lib/db/invitations";
 import { PortalShell } from "../portal-shell";
+import { CsrfField } from "../_components/csrf-field";
 import { inviteAction, revokeInvitationAction } from "./actions";
 
 export const metadata: Metadata = { title: "Team" };
@@ -16,10 +13,9 @@ export const metadata: Metadata = { title: "Team" };
 /**
  * Who is on your side of the exchange, and what each of them has moved.
  *
- * Which team you see follows the same rule as everything else: a client sees
- * their own colleagues, and staff see the internal team — or, while acting on a
- * client, that client's people. The organization id comes from the session,
- * never from the URL.
+ * Which team you see follows the same rule as everything else: the people of
+ * the business the session is on. The business comes from the session, never
+ * from the URL.
  */
 const ERRORS: Record<string, string> = {
   email: "That does not look like an email address.",
@@ -29,7 +25,7 @@ const ERRORS: Record<string, string> = {
 };
 
 const DONE: Record<string, string> = {
-  invited: "Invitation sent. It lapses in 14 days if unused.",
+  invited: "Invitation sent. It lapses in 7 days if unused, and works once.",
   revoked: "Invitation withdrawn.",
 };
 
@@ -38,21 +34,13 @@ export default async function TeamPage({
 }: {
   searchParams: Promise<{ error?: string; done?: string }>;
 }) {
-  const ctx = await requireSession("/team");
+  const { ctx, businessId, role } = await requirePage("business.view", {
+    returnPath: "/team",
+  });
   const params = await searchParams;
 
-  const grant = ctx.scope.isStaff
-    ? await liveGrantForSession(ctx.sessionId)
-    : null;
-  const actingOrg = grant ? await organizationById(grant.organizationId) : null;
-
-  // Staff with no client chosen look at their own team; everyone else looks at
-  // the company their session is scoped to.
-  const internal = ctx.scope.isStaff ? await internalOrganization() : null;
-  const teamOrgId = ctx.scope.organizationId ?? internal?.id ?? null;
-  const teamOrg = teamOrgId
-    ? actingOrg ?? internal ?? (await organizationById(teamOrgId))
-    : null;
+  const teamOrgId = businessId;
+  const teamOrg = await organizationById(businessId);
 
   const [members, raised, assigned, pending] = await Promise.all([
     teamOrgId ? teamFor(teamOrgId) : Promise.resolve([]),
@@ -61,16 +49,9 @@ export default async function TeamPage({
     listInvitations(ctx.scope),
   ]);
 
-  // Inviting writes into one company's data, so it needs a session scoped to
-  // one — for staff that means holding a grant. Owners may invite into their
-  // own company; members may not, because one compromised account quietly
-  // becoming several is the failure that matters here.
-  const ownHere = ctx.memberships.find(
-    (m) => m.organizationId === ctx.scope.organizationId,
-  );
-  const mayInvite =
-    ctx.scope.organizationId !== null &&
-    (ctx.scope.isStaff || ownHere?.role === "owner");
+  // Only a role carrying staff.manage may invite — today, owners. One
+  // compromised account quietly becoming several is the failure that matters.
+  const mayInvite = roleAllows(role, "staff.manage");
 
   const raisedBy = new Map(raised.map((r) => [r.userId, r]));
   const assignedTo = new Map(assigned.map((r) => [r.userId, r.assigned]));
@@ -79,9 +60,7 @@ export default async function TeamPage({
     <PortalShell
       email={ctx.email}
       isStaff={ctx.scope.isStaff}
-      actingOn={
-        actingOrg && grant ? { name: actingOrg.name, reason: grant.reason } : null
-      }
+      actingOn={null}
     >
       <h1 className="text-2xl font-semibold tracking-tight text-ink">Team</h1>
       <p className="mt-1 text-sm text-ink-soft">
@@ -119,6 +98,7 @@ export default async function TeamPage({
           className="mt-6 flex flex-wrap items-end gap-3 rounded-xl border
                      border-line bg-surface p-4 shadow-card"
         >
+          <CsrfField />
           <div className="min-w-0 flex-1">
             <label
               htmlFor="invite-email"
@@ -143,18 +123,25 @@ export default async function TeamPage({
               htmlFor="invite-role"
               className="mb-1 block text-xs font-medium text-ink-soft"
             >
-              Can invite others
+              Role
             </label>
             <select
               id="invite-role"
               name="role"
-              defaultValue="member"
+              defaultValue="viewer"
+              aria-describedby="invite-role-hint"
               className="rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink
                          focus:border-brand focus:outline-2 focus:outline-brand/30"
             >
-              <option value="member">No — member</option>
-              <option value="owner">Yes — owner</option>
+              {ROLE_TEMPLATES.map((template) => (
+                <option key={template} value={template}>
+                  {ROLE_LABELS[template]}
+                </option>
+              ))}
             </select>
+            <p id="invite-role-hint" className="mt-1 text-xs text-ink-faint">
+              Only owners have permissions for now.
+            </p>
           </div>
           <button
             type="submit"
@@ -189,6 +176,7 @@ export default async function TeamPage({
                 {mayInvite &&
                 invitation.organizationId === ctx.scope.organizationId ? (
                   <form action={revokeInvitationAction} className="flex-none">
+                    <CsrfField />
                     <input
                       type="hidden"
                       name="invitationId"

@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createJob, ScopeError, setJobStatus } from "@/lib/db";
-import { requireSession } from "@/lib/auth/require";
+import { requireAction } from "@/lib/auth/authorize";
 
 const newJobSchema = z.object({
   title: z.string().trim().min(3).max(200),
@@ -13,7 +13,7 @@ const newJobSchema = z.object({
 });
 
 export async function createJobAction(formData: FormData) {
-  const ctx = await requireSession("/jobs");
+  const { ctx } = await requireAction("jobs.create", formData, { returnPath: "/jobs" });
 
   const parsed = newJobSchema.safeParse({
     title: formData.get("title"),
@@ -58,18 +58,20 @@ const statusSchema = z.object({
 });
 
 export async function setJobStatusAction(formData: FormData) {
-  const ctx = await requireSession("/jobs");
-
   const parsed = statusSchema.safeParse({
     jobId: formData.get("jobId"),
     status: formData.get("status"),
   });
   if (!parsed.success) redirect("/jobs");
 
+  const { ctx } = await requireAction("jobs.update_status", formData, {
+    returnPath: `/jobs/${parsed.data.jobId}`,
+    resource: { type: "job", id: parsed.data.jobId },
+  });
+
   try {
-    // Note there is no ownership check written here. The job is simply not
-    // visible to a caller outside its company, so this updates nothing and
-    // returns null — the same answer as for an id that never existed.
+    // The central function has already checked the job belongs to this
+    // business; row-level security would refuse it underneath regardless.
     await setJobStatus(ctx.scope, parsed.data.jobId, parsed.data.status);
   } catch (error) {
     if (error instanceof ScopeError) redirect("/jobs?error=noclient");

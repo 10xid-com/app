@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
-import { requireSession } from "@/lib/auth/require";
+import { requireStaffAccess } from "@/lib/auth/authorize";
 import { getJob } from "@/lib/db";
 import { listClientOrganizations, liveGrantForSession } from "@/lib/db/identity";
 import {
@@ -46,7 +46,7 @@ export default async function WorkspacePage({
 }: {
   searchParams: Promise<{ c?: string; error?: string }>;
 }) {
-  const ctx = await requireSession("/chat");
+  const ctx = await requireStaffAccess("/chat");
   const access = await workspaceAccess(ctx);
   if (!access) redirect("/dashboard");
 

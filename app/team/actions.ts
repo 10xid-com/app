@@ -1,13 +1,12 @@
 "use server";
 
-import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { getSessionContext } from "@/lib/auth/session";
-import { handoffPath, refuseWhileActingAs } from "@/lib/auth/require";
+import { requireAction } from "@/lib/auth/authorize";
 import { sendInvitation } from "@/lib/auth/mailer";
-import { originFor, PRIMARY_HOST, signInUrl } from "@/lib/auth/sso";
+import { loginOrigin } from "@/lib/auth/origin";
+import { ROLE_TEMPLATES } from "@/lib/auth/permissions";
 import {
   inviteToOrganization,
   revokeInvitation,
@@ -17,48 +16,29 @@ import { organizationById } from "@/lib/db/identity";
 /**
  * Inviting somebody.
  *
- * Two rules, both of which fall out of the design rather than being restated
- * here:
+ * The business comes from the SESSION, never the form, and the central
+ * authorization function decides who may: a role carrying `staff.manage`,
+ * which today is the owner alone. A member being able to invite would mean one
+ * compromised account quietly becomes several.
  *
- *   * The company comes from the SESSION — `scope.organizationId` — never from
- *     the form. Staff must hold a grant to a client first, which is what makes
- *     "which company is this invitation for" a question with one answer.
- *   * Only an owner of that company, or staff, may do it. A member being able
- *     to invite would mean one compromised account quietly becomes several.
+ * The role is one of the six templates. Revision 2's invitation is tied to an
+ * exact address, a business and a role, works once, and lapses after 7 days.
  */
 
 const inviteSchema = z.object({
   email: z.string().trim().toLowerCase().email().max(320),
-  role: z.enum(["owner", "member"]),
+  role: z.enum(ROLE_TEMPLATES),
 });
 
-async function requireInviter() {
-  const ctx = await getSessionContext();
-  if (!ctx) redirect(signInUrl());
-  if (ctx.needsSecondFactor) redirect(handoffPath());
-  // `invitations.invited_by` is a single column too, and an invitation creates
-  // ACCESS that outlives the hour. Same reasoning as staff grants: refused
-  // rather than filed under the wrong name.
-  refuseWhileActingAs(ctx);
-
-  const organizationId = ctx.scope.organizationId;
-  if (!organizationId) {
-    // Staff surveying every client have no single company to invite into. They
-    // choose one first, which writes the grant that records which and why.
-    redirect("/staff?error=choose");
-  }
-
-  const membership = ctx.memberships.find(
-    (m) => m.organizationId === organizationId,
-  );
-  const mayInvite = ctx.scope.isStaff || membership?.role === "owner";
-  if (!mayInvite) redirect("/team?error=notowner");
-
-  return { ctx, organizationId };
+async function requireInviter(formData: FormData) {
+  const { ctx, businessId } = await requireAction("staff.manage", formData, {
+    returnPath: "/team",
+  });
+  return { ctx, organizationId: businessId };
 }
 
 export async function inviteAction(formData: FormData) {
-  const { ctx, organizationId } = await requireInviter();
+  const { ctx, organizationId } = await requireInviter(formData);
 
   const parsed = inviteSchema.safeParse({
     email: formData.get("email"),
@@ -89,9 +69,8 @@ export async function inviteAction(formData: FormData) {
       to: parsed.data.email,
       organizationName: org?.name ?? "your company",
       invitedByEmail: ctx.email,
-      // Signing up is signing in, which happens on the login host — not
-      // necessarily the host this invitation was sent from.
-      signUpUrl: `${originFor(PRIMARY_HOST || ((await headers()).get("host") ?? ""))}/auth/signup`,
+      // Accounts are created on the login host, for exactly this address.
+      signUpUrl: `${loginOrigin() ?? ""}/auth/sign-up`,
     });
   } catch (cause) {
     // The shape of the failure, never the payload or any credential.
@@ -108,13 +87,13 @@ export async function inviteAction(formData: FormData) {
 }
 
 export async function revokeInvitationAction(formData: FormData) {
-  const { organizationId } = await requireInviter();
+  const { organizationId } = await requireInviter(formData);
 
   const id = z.uuid().safeParse(formData.get("invitationId"));
   if (!id.success) redirect("/team?error=unknown");
 
-  // The company comes from the session, so this cannot be pointed at another
-  // company's invitation by editing the page. The tenant policy refuses it
+  // The business comes from the session, so this cannot be pointed at another
+  // business's invitation by editing the page. The tenant policy refuses it
   // underneath in any case.
   await revokeInvitation(organizationId, id.data);
 

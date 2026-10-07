@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 import { getSessionContext } from "@/lib/auth/session";
-import { signOutAction } from "./sign-out";
+import { signOutAction, signOutEverywhereAction } from "./sign-out";
+import { loginOrigin } from "@/lib/auth/origin";
+import { CsrfField } from "./_components/csrf-field";
 import { exitClientAction } from "./staff/actions";
 import { stopActingAsAction } from "./act-as/actions";
 import { PortalHeader, menuItemClass } from "./portal-nav";
@@ -107,11 +109,6 @@ export async function PortalShell({
         links={links}
         menu={
           <>
-            {actingAs ? null : (
-              <a href="/account/sessions" className={menuItemClass}>
-                Your details and devices
-              </a>
-            )}
             {isStaff ? (
               <a href="/staff" className={menuItemClass}>
                 Switch organization
@@ -128,9 +125,20 @@ export async function PortalShell({
             <a href="/pages" className={menuItemClass}>
               Pages
             </a>
+            {/* Sessions, authenticator and recovery codes live on the login host. */}
+            <a href={`${loginOrigin() ?? ""}/auth/account`} className={menuItemClass}>
+              Sign-in &amp; security
+            </a>
             <form action={signOutAction}>
+              <CsrfField />
               <button type="submit" className={menuItemClass}>
                 Sign out
+              </button>
+            </form>
+            <form action={signOutEverywhereAction}>
+              <CsrfField />
+              <button type="submit" className={menuItemClass}>
+                Sign out everywhere
               </button>
             </form>
           </>
@@ -169,6 +177,7 @@ export async function PortalShell({
               </span>
             </p>
             <form action={stopActingAsAction} className="flex-none">
+              <CsrfField />
               <button
                 type="submit"
                 className="rounded-md bg-white px-3 py-1.5 text-sm font-semibold
@@ -197,6 +206,7 @@ export async function PortalShell({
               <span className="text-ink-faint"> — {actingOn.reason}</span>
             </p>
             <form action={exitClientAction}>
+              <CsrfField />
               <button
                 type="submit"
                 className="rounded-md border border-line px-2.5 py-1 text-xs

@@ -1,5 +1,4 @@
-import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { Client } from "pg";
 import { startActingAs, stopActingAs } from "@/lib/auth/act-as";
@@ -596,26 +595,14 @@ describe("no permanent takeover: the guard is on every route that could be one",
    * directories are walked instead, and anything new inside them has to carry
    * the guard or fail here.
    */
-  // The authenticator and recovery-code screens are account security too, and
-  // carry the same guard, but they live with sign-in in 10xid-com/login and
-  // are walked by its copy of this test.
-  const ROOTS = ["app/account"];
+  // Since sign-in moved to the login host (Better Auth, October 2026) the
+  // account itself — address, authenticator, recovery, devices — is managed
+  // there, and the portal has no screen for any of it: the old app/account root is gone, and there is no
+  // acting as anybody (staff access is off). What stays pinned below is the
+  // dormant staff code keeping its guard, in case it is ever rebuilt.
 
-  /** Named individually: these are not account security, but they file audit
-   * rows with a single identity column, so they refuse too. */
-  const SINGLE_IDENTITY_AUDIT = [
-    "app/staff/actions.ts",
-    "app/team/actions.ts",
-    "app/staff/keys/actions.ts",
-  ];
-
-  function walk(dir: string): string[] {
-    return readdirSync(dir).flatMap((entry) => {
-      const full = join(dir, entry);
-      if (statSync(full).isDirectory()) return walk(full);
-      return /\.tsx?$/.test(entry) ? [full] : [];
-    });
-  }
+  /** Named individually: these file audit rows with a single identity column. */
+  const SINGLE_IDENTITY_AUDIT = ["app/staff/actions.ts", "app/staff/keys/actions.ts"];
 
   const guarded = (file: string) => {
     const src = readFileSync(file, "utf8");
@@ -624,10 +611,8 @@ describe("no permanent takeover: the guard is on every route that could be one",
     );
   };
 
-  test("every file under the account-security roots refuses an act-as session", () => {
-    const files = ROOTS.flatMap(walk);
-    expect(files.length).toBeGreaterThan(0);
-    expect(files.filter((f) => !guarded(f))).toEqual([]);
+  test("the portal has no account-security screen of its own: that is the login host's", () => {
+    expect(existsSync("app/account")).toBe(false);
   });
 
   test("the single-identity audit routes refuse it too", () => {
@@ -640,13 +625,14 @@ describe("no permanent takeover: the guard is on every route that could be one",
     expect(src).toContain('redirect("/act-as?error=blocked")');
   });
 
-  test("signing out ends the REAL person's sessions, never the target's", () => {
-    // Acting as Joel, `ctx.userId` IS Joel. The unchanged line would have
-    // signed him out of every device he owns because somebody else pressed a
-    // button in a window wearing his name.
+  test("signing out ends this browser's sign-in, and everywhere means the REAL person", () => {
+    // Signing out of the portal alone would leave the login host's sign-in,
+    // and the next page would hand the browser straight back in. And signing
+    // out everywhere while acting as Joel must not sign Joel out everywhere.
     const src = readFileSync("app/sign-out.ts", "utf8");
-    expect(src).toContain("signOutEverywhere(ctx.realUserId");
-    expect(src).not.toContain("signOutEverywhere(ctx.userId");
+    expect(src).toContain("revokeAuthSession(identity.ctx.authSessionId)");
+    expect(src).toContain("revokeAllSessionsForUser(identity.ctx.realUserId)");
+    expect(src).not.toContain("revokeAllSessionsForUser(identity.ctx.userId)");
   });
 
   test("the act-as action decides from the REAL identity, never the worn one", () => {
