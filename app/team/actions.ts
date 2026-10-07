@@ -7,7 +7,7 @@ import { z } from "zod";
 import { getSessionContext } from "@/lib/auth/session";
 import { refuseWhileActingAs } from "@/lib/auth/require";
 import { sendInvitation } from "@/lib/auth/mailer";
-import { originFor } from "@/lib/auth/sso";
+import { PRIMARY_HOST, originFor } from "@/lib/auth/sso";
 import {
   inviteToOrganization,
   revokeInvitation,
@@ -89,7 +89,9 @@ export async function inviteAction(formData: FormData) {
       to: parsed.data.email,
       organizationName: org?.name ?? "your company",
       invitedByEmail: ctx.email,
-      signUpUrl: `${originFor((await headers()).get("host") ?? "")}/auth/signup`,
+      // Signing up is signing in, which happens on the login host — not
+      // necessarily the host this invitation was sent from.
+      signUpUrl: `${originFor(PRIMARY_HOST || ((await headers()).get("host") ?? ""))}/auth/signup`,
     });
   } catch (cause) {
     // The shape of the failure, never the payload or any credential.
