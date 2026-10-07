@@ -60,10 +60,10 @@ export async function sendSignInCode(input: {
  * Tell somebody they have been invited.
  *
  * Carries no credential. The invitation lives in the database against this
- * address, and the sign-up screen checks it there — so this message being
- * forwarded, quoted or leaked hands nobody an account. What proves the person
- * is who the invitation names is the six-digit code that follows, which only
- * reaches this mailbox.
+ * address, and the first WorkOS sign-in with this address VERIFIED is what
+ * accepts it — so this message being forwarded, quoted or leaked hands nobody
+ * an account. Somebody signing in with a different address, even at the same
+ * company, matches nothing.
  */
 export async function sendInvitation(input: {
   to: string;
@@ -76,15 +76,14 @@ export async function sendInvitation(input: {
   const body = [
     `${input.invitedByEmail} has invited you to the 10XiD portal for ${input.organizationName}.`,
     ``,
-    `To set up your account, go to:`,
+    `To accept, sign in or create your account with this exact address at:`,
     `  ${input.signUpUrl}`,
     ``,
-    `Enter this address and we will email you a six-digit code. After that you`,
-    `will set up an authenticator app, which is how you will sign in from then`,
-    `on — there is no password.`,
+    `You will be asked to verify the address and to set up an authenticator app.`,
+    `The invitation works once and lapses after 7 days.`,
     ``,
     `If you were not expecting this, you can ignore it. The invitation grants`,
-    `nothing on its own and lapses on its own.`,
+    `nothing on its own.`,
   ].join("\n");
 
   if (!apiKey) {

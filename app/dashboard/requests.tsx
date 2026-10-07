@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { RequestCard } from "@/lib/db";
 import { createDriveFolderAction } from "./actions";
+import { CsrfField } from "../_components/csrf-field";
 
 /**
  * Requests, as cards.
@@ -179,6 +180,7 @@ function Card({
           </a>
         ) : canFile && driveConfigured ? (
           <form action={createDriveFolderAction}>
+            <CsrfField />
             <input type="hidden" name="jobId" value={request.id} />
             <button
               type="submit"

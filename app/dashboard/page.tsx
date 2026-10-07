@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { jobStats, recentJobs, recentRequests } from "@/lib/db";
-import { requireSession } from "@/lib/auth/require";
-import { liveGrantForSession, organizationById } from "@/lib/db/identity";
+import { requirePage } from "@/lib/auth/authorize";
+import { roleAllows } from "@/lib/auth/permissions";
 import { driveIsConfigured } from "@/lib/integrations/google-drive";
 import { PortalShell } from "../portal-shell";
 import { Requests } from "./requests";
@@ -101,7 +101,7 @@ export default async function DashboardPage({
 }: {
   searchParams: Promise<{ done?: string; error?: string }>;
 }) {
-  const ctx = await requireSession("/dashboard");
+  const { ctx, role } = await requirePage("jobs.read", { returnPath: "/dashboard" });
   const params = await searchParams;
   const notice = NOTICES[params.done ?? params.error ?? ""] ?? null;
 
@@ -111,10 +111,6 @@ export default async function DashboardPage({
     recentRequests(ctx.scope, 12),
   ]);
 
-  const grant = ctx.scope.isStaff
-    ? await liveGrantForSession(ctx.sessionId)
-    : null;
-  const actingOrg = grant ? await organizationById(grant.organizationId) : null;
 
   const decided = stats.completed + (stats.byStatus.find((s) => s.status === "cancelled")?.n ?? 0);
   const completionRate =
@@ -145,9 +141,7 @@ export default async function DashboardPage({
     <PortalShell
       email={ctx.email}
       isStaff={ctx.scope.isStaff}
-      actingOn={
-        actingOrg && grant ? { name: actingOrg.name, reason: grant.reason } : null
-      }
+      actingOn={null}
     >
       <h1 className="text-2xl font-semibold tracking-tight text-ink">Dashboard</h1>
       <p className="mt-1 text-sm text-ink-soft">
@@ -337,9 +331,7 @@ export default async function DashboardPage({
 
       <Requests
         requests={requests}
-        // Writing a folder onto a job needs a session scoped to one company —
-        // which for staff means holding a grant with a typed reason.
-        canFile={ctx.scope.organizationId !== null}
+        canFile={roleAllows(role, "jobs.attach_drive_folder")}
         driveConfigured={driveIsConfigured()}
       />
     </PortalShell>

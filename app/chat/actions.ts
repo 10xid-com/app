@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { getSessionContext } from "@/lib/auth/session";
+import { requireStaffAccess } from "@/lib/auth/authorize";
 import { getJobByRef } from "@/lib/db";
 import {
   addContextItem,
@@ -37,7 +37,7 @@ import { contextRef } from "@/lib/workspace/repo-tools";
  */
 
 async function requireAccess() {
-  const access = await workspaceAccess(await getSessionContext());
+  const access = await workspaceAccess(await requireStaffAccess("/chat"));
   if (!access) redirect("/dashboard");
   return access;
 }

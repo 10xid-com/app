@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { listJobs } from "@/lib/db";
-import { requireSession } from "@/lib/auth/require";
-import { liveGrantForSession, organizationById } from "@/lib/db/identity";
+import { requirePage } from "@/lib/auth/authorize";
+import { roleAllows } from "@/lib/auth/permissions";
 import { PortalShell } from "../portal-shell";
+import { CsrfField } from "../_components/csrf-field";
 import { createJobAction } from "./actions";
 
 export const metadata: Metadata = { title: "Jobs" };
@@ -30,27 +31,18 @@ export default async function JobsPage({
 }: {
   searchParams: Promise<{ error?: string }>;
 }) {
-  const ctx = await requireSession("/jobs");
+  const { ctx, role } = await requirePage("jobs.read", { returnPath: "/jobs" });
   const params = await searchParams;
 
   const jobs = await listJobs(ctx.scope);
 
-  const grant = ctx.scope.isStaff
-    ? await liveGrantForSession(ctx.sessionId)
-    : null;
-  const actingOrg = grant ? await organizationById(grant.organizationId) : null;
-
-  const canWrite = ctx.scope.organizationId !== null;
+  const canWrite = roleAllows(role, "jobs.create");
 
   return (
     <PortalShell
       email={ctx.email}
       isStaff={ctx.scope.isStaff}
-      actingOn={
-        actingOrg && grant
-          ? { name: actingOrg.name, reason: grant.reason }
-          : null
-      }
+      actingOn={null}
     >
       <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
         <div>
@@ -123,6 +115,7 @@ export default async function JobsPage({
         <h2 className="text-sm font-semibold text-ink">Send a new job</h2>
         {canWrite ? (
           <form action={createJobAction} className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto_auto_auto]">
+            <CsrfField />
             <input
               name="title"
               required

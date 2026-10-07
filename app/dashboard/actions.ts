@@ -3,11 +3,9 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { getSessionContext } from "@/lib/auth/session";
+import { requireAction } from "@/lib/auth/authorize";
 import { attachDriveFolder, getJob, listJobEvents } from "@/lib/db";
 import { createJobFolder, driveIsConfigured, uploadToFolder } from "@/lib/integrations/google-drive";
-import { signInUrl } from "@/lib/auth/sso";
-import { handoffPath } from "@/lib/auth/require";
 
 /**
  * Give a request a folder in Google Drive, and put the request in it.
@@ -19,16 +17,13 @@ import { handoffPath } from "@/lib/auth/require";
  */
 
 export async function createDriveFolderAction(formData: FormData) {
-  const ctx = await getSessionContext();
-  if (!ctx) redirect(signInUrl());
-  if (ctx.needsSecondFactor) redirect(handoffPath());
-
   const jobId = z.uuid().safeParse(formData.get("jobId"));
   if (!jobId.success) redirect("/dashboard?error=unknown");
 
-  // Staff surveying every client have no company to write into. They choose
-  // one first, which records which and why.
-  if (!ctx.scope.organizationId) redirect("/staff?error=choose");
+  const { ctx } = await requireAction("jobs.attach_drive_folder", formData, {
+    returnPath: "/dashboard",
+    resource: { type: "job", id: jobId.data },
+  });
   if (!driveIsConfigured()) redirect("/dashboard?error=drive_unconfigured");
 
   // Through the scoped helper, so a job id belonging to another client is

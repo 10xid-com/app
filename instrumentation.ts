@@ -15,6 +15,17 @@ export async function register() {
   // Only the Node.js runtime can reach the database; the edge runtime cannot.
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
 
+  // Revision 2's session settings. A deployment missing one stops here rather
+  // than issuing a session cookie that is not what was agreed.
+  if (process.env.NODE_ENV === "production") {
+    const { sessionConfigProblems } = await import("./lib/auth/origin");
+    const problems = sessionConfigProblems(process.env);
+    if (problems.length > 0) {
+      throw new Error(`[startup] WorkOS session settings: ${problems.join("; ")}`);
+    }
+    console.log("[startup] WorkOS session settings verified");
+  }
+
   const { assertRestrictedRole } = await import("./lib/db/connection");
   await assertRestrictedRole();
   console.log("[startup] database role verified: not privileged, RLS applies");

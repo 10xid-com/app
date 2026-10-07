@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
-import { requireSession } from "@/lib/auth/require";
+import { requireStaffAccess } from "@/lib/auth/authorize";
 import {
   actAsHistoryForActor,
   listActAsCandidates,
@@ -14,6 +14,7 @@ import {
 } from "@/lib/auth/policy";
 import { PortalShell } from "../portal-shell";
 import { startActingAsAction, stopActingAsAction } from "./actions";
+import { CsrfField } from "../_components/csrf-field";
 
 export const metadata: Metadata = { title: "Act as" };
 
@@ -45,7 +46,7 @@ export default async function ActAsPage({
 }: {
   searchParams: Promise<{ error?: string; done?: string }>;
 }) {
-  const ctx = await requireSession("/act-as");
+  const ctx = await requireStaffAccess("/act-as");
 
   // Only the real person's staff-ness opens this. While acting as a client the
   // session's effective scope is not staff, and this page must still be
@@ -103,6 +104,7 @@ export default async function ActAsPage({
             stop.
           </p>
           <form action={stopActingAsAction} className="mt-3">
+            <CsrfField />
             <button
               type="submit"
               className="rounded-lg bg-brand-surface px-4 py-2 text-sm font-semibold
@@ -137,6 +139,7 @@ export default async function ActAsPage({
                 action={startActingAsAction}
                 className="flex flex-wrap items-center gap-3"
               >
+                <CsrfField />
                 <input type="hidden" name="targetUserId" value={person.id} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-medium text-ink">

@@ -1,30 +1,17 @@
 "use server";
 
-import { redirect } from "next/navigation";
-import { getSessionContext, signOutEverywhere } from "@/lib/auth/session";
-import { signInUrl } from "@/lib/auth/sso";
+import { signOut } from "@workos-inc/authkit-nextjs";
+import { requireSameOriginRequest } from "@/lib/auth/authorize";
 
 /**
- * Sign out, everywhere.
+ * Sign out: the app's cookie AND the WorkOS session (Revision 2).
  *
- * Ends the session on this host and every other session the person holds, on
- * every domain, the login host's included — a cookie on another domain cannot
- * be reached from here, but every row it points at is revoked. Then on to the
- * login host's sign-in form, by full address: this app has none of its own.
+ * signOut() deletes the host-only session cookie here, then sends the browser
+ * to WorkOS's logout address for this session id, which ends the provider
+ * session too, before WorkOS returns it to the sign-out URI set in the
+ * dashboard.
  */
-export async function signOutAction() {
-  const ctx = await getSessionContext();
-  if (ctx) {
-    /**
-     * realUserId, not userId.
-     *
-     * Signing out ends every session the person at the keyboard holds. While
-     * acting as somebody else, `userId` is THEIR account — so the unchanged
-     * line would have signed the target out of every device they own, on every
-     * domain, because somebody else pressed a button in a window wearing their
-     * name. The act-as grant lives on this session and dies with it either way.
-     */
-    await signOutEverywhere(ctx.realUserId, ctx.sessionId);
-  }
-  redirect(signInUrl());
+export async function signOutAction(formData: FormData) {
+  await requireSameOriginRequest(formData);
+  await signOut();
 }

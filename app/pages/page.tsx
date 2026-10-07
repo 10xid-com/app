@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { requireSession } from "@/lib/auth/require";
-import { liveGrantForSession, organizationById } from "@/lib/db/identity";
+import { requirePage } from "@/lib/auth/authorize";
 import { GROUPS, hiddenFrom, pagesFor, type PageRecord } from "@/lib/pages";
 import { PortalShell } from "../portal-shell";
 
@@ -121,10 +120,7 @@ function Row({ page }: { page: PageRecord }) {
 }
 
 export default async function PagesDesk() {
-  const ctx = await requireSession("/pages");
-
-  const grant = await liveGrantForSession(ctx.sessionId);
-  const actingOrg = grant ? await organizationById(grant.organizationId) : null;
+  const { ctx } = await requirePage("business.view", { returnPath: "/pages" });
 
   const visible = pagesFor(ctx.scope.isStaff);
   const hidden = hiddenFrom(ctx.scope.isStaff);
@@ -133,9 +129,7 @@ export default async function PagesDesk() {
     <PortalShell
       email={ctx.email}
       isStaff={ctx.scope.isStaff}
-      actingOn={
-        actingOrg && grant ? { name: actingOrg.name, reason: grant.reason } : null
-      }
+      actingOn={null}
     >
       <h1 className="text-2xl font-semibold tracking-tight text-ink">Pages</h1>
       <p className="mt-1 max-w-prose text-sm text-ink-soft">

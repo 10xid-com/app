@@ -16,5 +16,9 @@ export default defineConfig({
     // These share one database; running them at once would have them
     // truncating each other's fixtures.
     fileParallelism: false,
+    // The WorkOS SDK imports `next/cache` without a file extension, which
+    // Node's strict ESM resolution refuses; Next's own bundler accepts it.
+    // Inlining it lets Vite resolve it the same way.
+    server: { deps: { inline: ["@workos-inc/authkit-nextjs"] } },
   },
 });

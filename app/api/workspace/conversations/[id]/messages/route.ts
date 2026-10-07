@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { getSessionContext } from "@/lib/auth/session";
+import { authorizeRequest, STAFF_ACCESS } from "@/lib/auth/authorize";
 import { workspaceAccess } from "@/lib/workspace/access";
 import { parseCommand } from "@/lib/workspace/commands";
 import { runTurn } from "@/lib/workspace/runner";
@@ -26,7 +26,11 @@ const bodySchema = z.object({
 });
 
 export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
-  const access = await workspaceAccess(await getSessionContext());
+  const decision = await authorizeRequest(request, STAFF_ACCESS);
+  if (!decision.allowed) {
+    return NextResponse.json({ error: "Staff access is turned off." }, { status: 403 });
+  }
+  const access = await workspaceAccess(decision.ctx);
   if (!access) return NextResponse.json({ error: "The workspace is for staff." }, { status: 403 });
 
   // JSON only: a cross-site form can post text/plain without a preflight.

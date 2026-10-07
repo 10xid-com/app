@@ -3,10 +3,9 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { getSessionContext } from "@/lib/auth/session";
+import { requireStaffAccess } from "@/lib/auth/authorize";
 import { refuseWhileActingAs } from "@/lib/auth/require";
 import { mintKey, revokeKey } from "@/lib/db/api-keys";
-import { signInUrl } from "@/lib/auth/sso";
 
 /**
  * Minting and revoking keys.
@@ -22,8 +21,7 @@ const mintSchema = z.object({
 });
 
 export async function mintKeyAction(formData: FormData) {
-  const ctx = await getSessionContext();
-  if (!ctx) redirect(signInUrl());
+  const ctx = await requireStaffAccess();
   // A key is a credential with no expiry of its own, and `created_by` is one
   // column. Unreachable from an act-as session anyway — acting as a client is
   // not staff, and acting as staff holds no client — but said out loud, because
@@ -54,8 +52,7 @@ export async function mintKeyAction(formData: FormData) {
 }
 
 export async function revokeKeyAction(formData: FormData) {
-  const ctx = await getSessionContext();
-  if (!ctx) redirect(signInUrl());
+  const ctx = await requireStaffAccess();
   refuseWhileActingAs(ctx);
   if (!ctx.scope.isStaff) redirect("/jobs");
   if (!ctx.scope.organizationId) redirect("/staff?error=choose");

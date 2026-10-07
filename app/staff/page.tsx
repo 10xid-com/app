@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
-import { requireSession } from "@/lib/auth/require";
+import { requireStaffAccess } from "@/lib/auth/authorize";
 import {
   listClientOrganizations,
   liveGrantForSession,
@@ -8,6 +8,7 @@ import {
 } from "@/lib/db/identity";
 import { PortalShell } from "../portal-shell";
 import { chooseClientAction } from "./actions";
+import { CsrfField } from "../_components/csrf-field";
 
 export const metadata: Metadata = { title: "Clients" };
 
@@ -31,7 +32,7 @@ export default async function StaffPage({
 }: {
   searchParams: Promise<{ error?: string }>;
 }) {
-  const ctx = await requireSession("/staff");
+  const ctx = await requireStaffAccess("/staff");
   if (!ctx.scope.isStaff) redirect("/jobs");
 
   const params = await searchParams;
@@ -75,6 +76,7 @@ export default async function StaffPage({
               action={chooseClientAction}
               className="flex flex-wrap items-center gap-3"
             >
+              <CsrfField />
               <input type="hidden" name="organizationId" value={client.id} />
               <span
                 aria-hidden

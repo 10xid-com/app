@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
-import { requireSession } from "@/lib/auth/require";
+import { requireStaffAccess } from "@/lib/auth/authorize";
 import { listKeys, type KeyRow } from "@/lib/db/api-keys";
 import { liveGrantForSession, organizationById } from "@/lib/db/identity";
 import { PortalShell } from "../../portal-shell";
 import { mintKeyAction, revokeKeyAction } from "./actions";
+import { CsrfField } from "../../_components/csrf-field";
 
 export const metadata: Metadata = { title: "Keys" };
 
@@ -75,6 +76,7 @@ function KeyTable({
                   </span>
                 ) : actingOrgId === key.organizationId ? (
                   <form action={revokeKeyAction}>
+                    <CsrfField />
                     <input type="hidden" name="keyId" value={key.id} />
                     <button
                       type="submit"
@@ -117,7 +119,7 @@ export default async function KeysPage({
 }: {
   searchParams: Promise<{ minted?: string; revoked?: string; error?: string }>;
 }) {
-  const ctx = await requireSession("/staff/keys");
+  const ctx = await requireStaffAccess("/staff/keys");
   if (!ctx.scope.isStaff) redirect("/jobs");
 
   const params = await searchParams;
@@ -184,6 +186,7 @@ export default async function KeysPage({
           className="mt-6 flex flex-wrap items-center gap-3 rounded-xl border
                      border-line bg-surface p-4 shadow-card"
         >
+          <CsrfField />
           <label htmlFor="label" className="text-sm text-ink-soft">
             New key for <strong className="text-ink">{actingOrg.name}</strong>
           </label>

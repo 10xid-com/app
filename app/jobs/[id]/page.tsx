@@ -2,9 +2,11 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getJob, listJobEvents } from "@/lib/db";
-import { requireSession } from "@/lib/auth/require";
-import { liveGrantForSession, organizationById } from "@/lib/db/identity";
+import { z } from "zod";
+import { requirePage } from "@/lib/auth/authorize";
+import { roleAllows } from "@/lib/auth/permissions";
 import { PortalShell } from "../../portal-shell";
+import { CsrfField } from "../../_components/csrf-field";
 import { setJobStatusAction } from "../actions";
 
 export const metadata: Metadata = { title: "Job" };
@@ -65,7 +67,13 @@ export default async function JobPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const ctx = await requireSession(`/jobs/${id}`);
+  // The id is input from the address bar: anything that is not a uuid cannot
+  // name a job, and is the same 404 as one that does not exist.
+  if (!z.uuid().safeParse(id).success) notFound();
+  const { ctx, role } = await requirePage("jobs.read", {
+    returnPath: `/jobs/${id}`,
+    resource: { type: "job", id },
+  });
 
   const job = await getJob(ctx.scope, id);
   if (!job) notFound();
@@ -78,21 +86,13 @@ export default async function JobPage({
   // the job is later edited — the audit table cannot be rewritten.
   const submitted = submittedDetails(events);
 
-  const grant = ctx.scope.isStaff
-    ? await liveGrantForSession(ctx.sessionId)
-    : null;
-  const actingOrg = grant ? await organizationById(grant.organizationId) : null;
-  const canWrite = ctx.scope.organizationId !== null;
+  const canWrite = roleAllows(role, "jobs.update_status");
 
   return (
     <PortalShell
       email={ctx.email}
       isStaff={ctx.scope.isStaff}
-      actingOn={
-        actingOrg && grant
-          ? { name: actingOrg.name, reason: grant.reason }
-          : null
-      }
+      actingOn={null}
     >
       <Link
         href="/jobs"
@@ -139,6 +139,7 @@ export default async function JobPage({
 
         {canWrite ? (
           <form action={setJobStatusAction} className="mt-6 flex flex-wrap items-center gap-2">
+            <CsrfField />
             <input type="hidden" name="jobId" value={job.id} />
             <label htmlFor="status" className="text-sm text-ink-soft">
               Change status
