@@ -11,6 +11,10 @@ import { activeBusiness } from "@/lib/auth/policy";
  * sends.
  */
 
+// The portal's own origin, which every state-changing request must carry.
+// CI configures no host; the value only has to agree with itself.
+process.env.PORTAL_HOST ||= "app.portal.test";
+
 class Redirect extends Error {
   constructor(readonly to: string) {
     super(`redirect ${to}`);
