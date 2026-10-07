@@ -31,9 +31,12 @@ its migration, then copied here unchanged.
 - **An account is found by its sign-in identity** (`users.auth_user_id`), never by its address,
   and only the login host ties the two (an invitation to exactly the verified address, or an
   operator's confirmation).
-- **Six role templates** — owner, manager, editor, publisher, asset manager, viewer. Until the
-  permission matrix is written, owner holds every action and the other five hold none
-  (`lib/auth/permissions.ts`).
+- **Six role templates** — owner, manager, editor, publisher, asset manager, viewer — and the
+  permission matrix that says what each may do (`lib/auth/permissions.ts`, Paolo's decisions of
+  2026-10-07). Owners and managers invite, change and remove people, but only an owner can
+  make, change or remove an owner, and a business always keeps one (enforced by login's 0024
+  trigger as well). Approving, asking for changes, cancelling, completing unapproved work, and
+  undoing any of those, is owners' and managers' alone.
 - **Every state-changing request** needs the exact `https://app.10xid.com` Origin and a CSRF
   token bound to the session (an HMAC keyed by the session cookie's secret).
 - **Staff access is off.** The Clients, Keys, Act as and `/chat` screens are still in the code

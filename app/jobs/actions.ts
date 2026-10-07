@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createJob, ScopeError, setJobStatus } from "@/lib/db";
 import { requireAction } from "@/lib/auth/authorize";
+import { JOB_STATUSES, statusChangeAction } from "@/lib/auth/permissions";
 
 const newJobSchema = z.object({
   title: z.string().trim().min(3).max(200),
@@ -45,39 +46,40 @@ export async function createJobAction(formData: FormData) {
 
 const statusSchema = z.object({
   jobId: z.uuid(),
-  status: z.enum([
-    "draft",
-    "open",
-    "in_progress",
-    "awaiting_approval",
-    "changes_requested",
-    "approved",
-    "completed",
-    "cancelled",
-  ]),
+  status: z.enum(JOB_STATUSES),
+  /** The status the person was looking at. Which move this is decides who may make it. */
+  from: z.enum(JOB_STATUSES),
 });
 
 export async function setJobStatusAction(formData: FormData) {
   const parsed = statusSchema.safeParse({
     jobId: formData.get("jobId"),
     status: formData.get("status"),
+    from: formData.get("from"),
   });
   if (!parsed.success) redirect("/jobs");
+  const { jobId, status, from } = parsed.data;
+  if (status === from) redirect(`/jobs/${jobId}`);
 
-  const { ctx } = await requireAction("jobs.update_status", formData, {
-    returnPath: `/jobs/${parsed.data.jobId}`,
-    resource: { type: "job", id: parsed.data.jobId },
+  // Approving, asking for changes, cancelling, or undoing one of those, is
+  // `jobs.approve` — owners and managers. `from` comes from the form, so the
+  // write below only applies if the job is still exactly there: claiming a
+  // different starting point cannot buy a cheaper permission.
+  const { ctx } = await requireAction(statusChangeAction(from, status), formData, {
+    returnPath: `/jobs/${jobId}`,
+    resource: { type: "job", id: jobId },
   });
 
+  let changed;
   try {
     // The central function has already checked the job belongs to this
     // business; row-level security would refuse it underneath regardless.
-    await setJobStatus(ctx.scope, parsed.data.jobId, parsed.data.status);
+    changed = await setJobStatus(ctx.scope, jobId, status, from);
   } catch (error) {
     if (error instanceof ScopeError) redirect("/jobs?error=noclient");
     throw error;
   }
 
   revalidatePath("/jobs");
-  redirect(`/jobs/${parsed.data.jobId}`);
+  redirect(changed ? `/jobs/${jobId}` : `/jobs/${jobId}?error=moved`);
 }
