@@ -48,6 +48,8 @@ export const AGENCY_ERRORS: Record<string, string> = {
 
 const ACTIVITY: Record<string, string> = {
   "agency.grant.requested": "asked for access",
+  "agency.grant.renewal_requested": "asked to renew access",
+  "agency.grant.expiry_reminded": "sent the end-date reminder to",
   "agency.grant.approved": "approved access",
   "agency.grant.declined": "declined access",
   "agency.grant.revoked": "ended access",
@@ -77,7 +79,7 @@ function Activity({ rows, grants }: { rows: AuditRow[]; grants: GrantSummary[] }
       <ul className="divide-y divide-line-soft px-4 pb-2">
         {rows.map((r) => (
           <li key={String(r.id)} className="py-1.5 text-xs text-ink-soft">
-            <span className="text-ink-faint">{when(r.createdAt)} UTC</span> · {r.actorEmail ?? "someone"}{" "}
+            <span className="text-ink-faint">{when(r.createdAt)} UTC</span> · {r.actorEmail ?? "10XiD"}{" "}
             {ACTIVITY[r.action] ?? r.action} {target(r)}
             {r.agencyGrantId && agencyOf.has(r.agencyGrantId) ? ` · ${agencyOf.get(r.agencyGrantId)}` : null}
           </li>
@@ -155,10 +157,16 @@ export function AgencySection({
       ) : null}
 
       {waiting.map((g) => (
-        <div key={g.id} className="mt-4 rounded-xl border border-warn/40 bg-surface p-4 shadow-card">
+        <div key={g.id} id={`grant-${g.id}`} className="mt-4 rounded-xl border border-warn/40 bg-surface p-4 shadow-card">
           <p className="text-sm font-semibold text-ink">
-            {g.otherName} asks for {roleName(g.role)} access for {g.durationDays} days
+            {g.otherName} {g.renewsGrantId ? "asks to renew its" : "asks for"} {roleName(g.role)} access for {g.durationDays} days
           </p>
+          {g.renewsGrantId ? (
+            <p className="mt-1 text-xs text-ink-soft">
+              A renewal is a new decision: approve it, then each person on it again. Their current access runs to its end date
+              either way.
+            </p>
+          ) : null}
           <p className="mt-1 text-sm text-ink-soft">&ldquo;{g.reason}&rdquo; · asked {day(g.requestedAt)}</p>
           {g.people.length > 0 ? (
             <ul className="mt-2 divide-y divide-line-soft">
@@ -209,7 +217,7 @@ export function AgencySection({
       ))}
 
       {live.map((g) => (
-        <div key={g.id} className="mt-4 rounded-xl border border-line bg-surface p-4 shadow-card">
+        <div key={g.id} id={`grant-${g.id}`} className="mt-4 rounded-xl border border-line bg-surface p-4 shadow-card">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <p className="text-sm font-semibold text-ink">
               {g.otherName} · {roleName(g.role)} · until {day(g.expiresAt!)}

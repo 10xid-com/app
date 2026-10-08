@@ -162,3 +162,28 @@ export async function sendAgencyNotice(input: {
     text: body,
   });
 }
+
+/**
+ * An agency-grant expiry reminder (lib/agency/reminders.ts). Unlike the
+ * notices above, a delivery failure is an error the caller sees: the
+ * reminder run records it and tries again, so it must not pass silently.
+ */
+export async function sendExpiryReminder(input: { to: string; subject: string; text: string }): Promise<void> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("RESEND_API_KEY is not set, so expiry reminders cannot be delivered.");
+    }
+    await appendFile(DEV_CODE_SINK, `${new Date().toISOString()}\t${input.to}\tREMINDER\t${input.subject}\n`, "utf8");
+    return;
+  }
+  const { Resend } = await import("resend");
+  const resend = new Resend(apiKey);
+  const { error } = await resend.emails.send({
+    from: process.env.MAIL_FROM ?? "10XiD <no-reply@10xid.com>",
+    to: input.to,
+    subject: input.subject,
+    text: input.text,
+  });
+  if (error) throw new Error(`Resend refused the reminder: ${error.message}`);
+}

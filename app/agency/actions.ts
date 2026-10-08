@@ -12,6 +12,7 @@ import {
   grantsForAgency,
   ownerEmailsOf,
   removeGrantPerson,
+  renewGrant,
   requestGrant,
   withdrawGrant,
   type GrantOutcome,
@@ -82,6 +83,22 @@ export async function requestAccessAction(formData: FormData) {
   // Asked, or no such business: the same answer, so a reference cannot be
   // probed from here.
   back(result.outcome === "not_found" ? "done" : result.outcome, "asked");
+}
+
+/**
+ * Ask to renew access ending within seven days, or ended (login's 0026): a
+ * new request the business's owner decides on, with the people approved
+ * before named again for the owner to approve one by one.
+ */
+export async function renewGrantAction(formData: FormData) {
+  const { ctx, agency } = await requireAgency(formData);
+  const grantId = id.safeParse(formData.get("grantId"));
+  if (!grantId.success) back("not_found", "");
+  const result = await renewGrant(agency.id, grantId.data, ctx.userId);
+  if (result.outcome === "done" && result.businessId) {
+    await notify(result.businessId, agency.name, "asked to renew its access");
+  }
+  back(result.outcome, "renewal");
 }
 
 export async function addAgencyPersonAction(formData: FormData) {
