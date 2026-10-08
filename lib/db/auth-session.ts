@@ -27,6 +27,19 @@ export async function touchAuthSession(authSessionId: string): Promise<Date | nu
 }
 
 /** End one sign-in session (signing out of this browser). */
+/**
+ * When the sign-in last passed the authenticator, or null if it is not live
+ * (login's 0025, auth_session_verified_at). For the 24-hour and five-minute
+ * rules in lib/auth/authorize.ts.
+ */
+export async function authSessionVerifiedAt(authSessionId: string): Promise<Date | null> {
+  const result = await db.execute<{ at: Date | string | null }>(
+    sql`select auth_session_verified_at(${authSessionId}) as at`,
+  );
+  const at = result.rows[0]?.at;
+  return at ? new Date(at) : null;
+}
+
 export async function revokeAuthSession(authSessionId: string): Promise<void> {
   await db.execute(sql`select auth_revoke_session(${authSessionId})`);
 }

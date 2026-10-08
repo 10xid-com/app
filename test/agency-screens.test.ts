@@ -8,10 +8,13 @@ import { Client } from "pg";
  * sessions, the real central authorization function, and login's 0025 rules
  * underneath. The agency asks and names its people; the business's owner
  * decides; managers can block and end; nobody can decide for a business that
- * is not theirs, and an agency cannot approve itself.
+ * is not theirs, and an agency cannot approve itself. Approving needs a fresh
+ * authenticator code, agency access a code within the day, and every decision
+ * lands on the audit record of the business it concerns.
  */
 
 process.env.PORTAL_HOST ||= "app.portal.test";
+process.env.PRIMARY_HOST ||= "login.portal.test";
 const SINK = process.env.DEV_CODE_SINK ?? "/tmp/portal-signin-codes.log";
 
 class Redirect extends Error {
@@ -39,13 +42,15 @@ vi.mock("next/headers", () => ({
 }));
 
 const { resolveIdentity, startSession } = await import("@/lib/auth/session");
-const { appOrigin } = await import("@/lib/auth/origin");
+const { appOrigin, loginOrigin } = await import("@/lib/auth/origin");
 const { closePool } = await import("@/lib/db/connection");
 const { setSessionActiveOrganization } = await import("@/lib/db/identity");
 const agencySide = await import("@/app/agency/actions");
 const businessSide = await import("@/app/team/agency-actions");
 const { default: AgencyPage } = await import("@/app/agency/page");
 const { default: TeamPage } = await import("@/app/team/page");
+const { requireAction } = await import("@/lib/auth/authorize");
+const { auditFor } = await import("@/lib/db/audit");
 
 /** Every string rendered anywhere in a server component's element tree. */
 function text(node: unknown): string {
@@ -65,7 +70,7 @@ const TAG = `as${Date.now().toString(36)}`;
 const addr = (l: string) => `${l}-${TAG}@test.invalid`;
 const org: Record<string, string> = {};
 const slug: Record<string, string> = {};
-const who: Record<string, { userId: string; token: string; sessionId: string }> = {};
+const who: Record<string, { userId: string; token: string; sessionId: string; authSessionId: string }> = {};
 const authUsers: string[] = [];
 
 async function organization(key: string) {
@@ -91,7 +96,7 @@ async function person(key: string, memberOf: [string, string][]) {
     await owner.query("insert into memberships (user_id, organization_id, role) values ($1, $2, $3)", [userId, org[o], role]);
   }
   const { token, sessionId } = await startSession({ userId, host: "app.test", authSessionId, hardEnd: new Date(Date.now() + 7 * 86_400_000) });
-  who[key] = { userId, token, sessionId };
+  who[key] = { userId, token, sessionId, authSessionId };
 }
 
 /** Signed in as `key`, with `business` open. */
@@ -147,6 +152,7 @@ afterAll(async () => {
     "delete from agency_grant_people where grant_id in (select id from agency_grants where client_organization_id = any($1::uuid[]))",
     [ids],
   );
+  await owner.query("delete from audit_events where organization_id = any($1::uuid[])", [ids]);
   await owner.query("delete from agency_grants where client_organization_id = any($1::uuid[])", [ids]);
   await owner.query("delete from sessions where user_id in (select id from users where email like $1)", [emails]);
   await owner.query("delete from memberships where organization_id = any($1::uuid[])", [ids]);
@@ -257,6 +263,43 @@ describe("the business decides", () => {
   });
 });
 
+describe("how recent the authenticator is", () => {
+  const verified = (key: string, ago: string) =>
+    owner.query(`update auth_sessions set mfa_verified_at = now() - interval '${ago}' where id = $1`, [who[key]!.authSessionId]);
+  const stepUp = (back: string) => `${loginOrigin() ?? ""}/auth/mfa/again?return=${encodeURIComponent(back)}`;
+
+  test("approving waits for a code from the last five minutes; blocking never does", async () => {
+    const g = await grantFor("rotary");
+    await verified("rotary-owner", "10 minutes");
+    await as("rotary-owner", "rotary");
+    expect(
+      await act(businessSide.decideAgencyPersonAction, { grantId: g.id, userId: who["agency-editor"]!.userId, decision: "approved" }),
+    ).toBe(stepUp("/team"));
+    expect(await act(businessSide.approveGrantAction, { grantId: g.id, role: "editor", days: "30" })).toBe(stepUp("/team"));
+    expect(await personOn(g.id, "agency-editor")).toBe("requested");
+    expect(await act(businessSide.decideAgencyPersonAction, { grantId: g.id, userId: who.worker!.userId, decision: "blocked" })).toBe(
+      "/team?agency=person_blocked",
+    );
+    await verified("rotary-owner", "0 seconds");
+    expect(
+      await act(businessSide.decideAgencyPersonAction, { grantId: g.id, userId: who.worker!.userId, decision: "approved" }),
+    ).toBe("/team?agency=person_approved");
+  });
+
+  test("agency access waits for a code from the last day; their own business does not", async () => {
+    await verified("worker", "25 hours");
+    await as("worker", "rotary");
+    await expect(TeamPage({ searchParams: Promise.resolve({}) })).rejects.toThrow(`redirect ${stepUp("/team")}`);
+    expect(await act((f) => requireAction("jobs.read", f, { returnPath: "/jobs" }), {})).toBe(stepUp("/jobs"));
+    await as("worker", "agency");
+    expect(await act((f) => requireAction("jobs.read", f, { returnPath: "/jobs" }), {})).toBe("returned");
+    await verified("worker", "23 hours");
+    await as("worker", "rotary");
+    expect(await act((f) => requireAction("jobs.read", f, { returnPath: "/jobs" }), {})).toBe("returned");
+    await verified("worker", "0 seconds");
+  });
+});
+
 describe("isolation", () => {
   test("another business cannot decide on Rotary's grant, even by its exact id", async () => {
     const g = await grantFor("rotary");
@@ -331,6 +374,60 @@ describe("ending", () => {
     const g = await grantFor("northstar");
     expect(await act(agencySide.withdrawGrantAction, { grantId: g.id })).toBe("/agency?done=withdrawn");
     expect((await grantFor("northstar")).status).toBe("revoked");
+  });
+
+  test("the record: each business sees what concerns it, and nothing of anybody else's", async () => {
+    const actions = async (key: string) => (await auditFor(org[key]!)).map((r) => r.action);
+    const rotary = await actions("rotary");
+    for (const a of [
+      "agency.grant.requested",
+      "agency.grant.approved",
+      "agency.person.named",
+      "agency.person.approved",
+      "agency.person.blocked",
+      "agency.acted",
+      "agency.grant.revoked",
+    ]) {
+      expect(rotary, a).toContain(a);
+    }
+    const agency = await actions("agency");
+    expect(agency).toContain("agency.grant.requested");
+    expect(agency).toContain("agency.person.named");
+    expect(agency).toContain("agency.grant.withdrawn");
+    // The business's own decisions stay with the business.
+    expect(agency).not.toContain("agency.grant.approved");
+    expect(agency).not.toContain("agency.person.blocked");
+    // Northstar sees its withdrawn request and nothing of Rotary's.
+    const northstar = await auditFor(org.northstar!);
+    expect(northstar.map((r) => r.action).sort()).toEqual(["agency.grant.requested", "agency.grant.withdrawn"]);
+    const rotaryGrant = (await owner.query("select id from agency_grants where client_organization_id = $1", [org.rotary])).rows[0].id;
+    expect(northstar.some((r) => r.agencyGrantId === rotaryGrant)).toBe(false);
+    // The refused attempts left nothing behind.
+    expect((await auditFor(org.plain!)).length).toBe(0);
+  });
+
+  test("the record cannot be changed or removed by the portal", async () => {
+    const app = new Client({ connectionString: process.env.DATABASE_APP_URL });
+    await app.connect();
+    try {
+      await app.query("begin");
+      await app.query("select set_config('app.org_id', $1, true)", [org.rotary]);
+      await expect(app.query("update audit_events set action = 'nothing' where organization_id = $1", [org.rotary])).rejects.toThrow();
+      await app.query("rollback");
+      await app.query("begin");
+      await app.query("select set_config('app.org_id', $1, true)", [org.rotary]);
+      await expect(app.query("delete from audit_events where organization_id = $1", [org.rotary])).rejects.toThrow();
+      await app.query("rollback");
+      // Nor can it write into another business's record.
+      await app.query("begin");
+      await app.query("select set_config('app.org_id', $1, true)", [org.northstar]);
+      await expect(
+        app.query("insert into audit_events (organization_id, action) values ($1, 'agency.grant.approved')", [org.rotary]),
+      ).rejects.toThrow();
+      await app.query("rollback");
+    } finally {
+      await app.end();
+    }
   });
 
   test("nobody from the agency was ever made a member of either business", async () => {

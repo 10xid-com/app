@@ -4,7 +4,6 @@ import { signOutAction, signOutEverywhereAction } from "./sign-out";
 import { loginOrigin } from "@/lib/auth/origin";
 import { CsrfField } from "./_components/csrf-field";
 import { exitClientAction } from "./staff/actions";
-import { stopActingAsAction } from "./act-as/actions";
 import { PortalHeader, menuItemClass } from "./portal-nav";
 import { mayUseChatBoss } from "@/lib/auth/chat-boss";
 import { openableBusinesses } from "@/lib/auth/policy";
@@ -61,22 +60,7 @@ export async function PortalShell({
    */
   organization?: { name: string; logoUrl: string | null } | null;
 }) {
-  /**
-   * The act-as banner is resolved HERE rather than passed in as a prop.
-   *
-   * Every other thing in this header is handed down by the page, and the
-   * acting-on-a-client banner above is one of them — six pages each fetch
-   * their own grant. That is survivable for a banner that says which client's
-   * rows you are reading. It is not survivable for one that says you are
-   * somebody else: a page added next month that forgot the prop would render a
-   * whole screen of another person's work with nothing on it saying so, and
-   * the whole safety of the feature is that the screen always says so.
-   *
-   * So the shell asks. It costs one already-cached session read per render and
-   * it cannot be forgotten, because there is no argument to leave out.
-   */
   const ctx = await getSessionContext();
-  const actingAs = ctx?.actingAs ?? null;
 
   /**
    * The business on screen, from the session, when the page did not name
@@ -103,7 +87,7 @@ export async function PortalShell({
       ? [{ href: "/agency", label: "Agency" }]
       : []),
     // Chat Boss: the people on its list, on the business they have open.
-    ...(!isStaff && ctx && !ctx.actingAs && ctx.scope.organizationId && mayUseChatBoss(ctx.realEmail)
+    ...(!isStaff && ctx && ctx.scope.organizationId && mayUseChatBoss(ctx.email)
       ? [{ href: "/chat", label: "Chat Boss" }]
       : []),
     ...(isStaff
@@ -112,9 +96,6 @@ export async function PortalShell({
           { href: "/staff/keys", label: "Keys" },
         ]
       : []),
-    // Reachable while acting as a client too, where `isStaff` is false — it is
-    // the way back, so it cannot be behind the thing the grant takes away.
-    ...(ctx?.realIsStaff ? [{ href: "/act-as", label: "Act as" }] : []),
   ];
 
   return (
@@ -170,53 +151,6 @@ export async function PortalShell({
       />
 
       {/*
-        WHO YOU ARE RIGHT NOW.
-
-        Loud on purpose, and louder than the client banner below it. Paolo runs
-        two browser profiles side by side as two different people; the failure
-        this is sized against is not "which client is this" but "which WINDOW is
-        this", and typing a reply to a client into the client's own account is
-        not a mistake that announces itself afterwards. So: full-width, the
-        strongest colour in the palette rather than a tint of it, the person's
-        name at the top of the type scale, and an exit that is a real button
-        sitting next to it.
-
-        role="status" rather than role="alert": it is a standing condition, and
-        an assertive live region would interrupt a screen reader on every
-        single navigation for an hour.
-      */}
-      {actingAs ? (
-        <div className="border-b-2 border-bad bg-bad text-white" role="status">
-          <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3 px-4 py-3">
-            <p className="min-w-0 text-base font-semibold leading-tight">
-              <span className="uppercase tracking-wide opacity-90">
-                You are acting as{" "}
-              </span>
-              <span className="text-lg font-bold">
-                {actingAs.fullName ?? actingAs.email}
-              </span>
-              <span className="block truncate text-xs font-normal opacity-90">
-                {actingAs.email} — {actingAs.reason} — until{" "}
-                {actingAs.expiresAt.toISOString().slice(11, 16)} UTC
-              </span>
-            </p>
-            <form action={stopActingAsAction} className="flex-none">
-              <CsrfField />
-              <button
-                type="submit"
-                className="rounded-md bg-white px-3 py-1.5 text-sm font-semibold
-                           text-bad transition-opacity hover:opacity-90
-                           focus-visible:outline-2 focus-visible:outline-offset-2
-                           focus-visible:outline-white"
-              >
-                Stop acting as {actingAs.fullName ?? actingAs.email}
-              </button>
-            </form>
-          </div>
-        </div>
-      ) : null}
-
-      {/*
         The acting-as banner is not decoration. Staff reach every client's data,
         and the single most likely mistake is forgetting which client you are
         looking at and editing the wrong one. It states the client and the
@@ -242,6 +176,20 @@ export async function PortalShell({
               </button>
             </form>
           </div>
+        </div>
+      ) : null}
+
+      {/*
+        Working in somebody else's business through agency access: always said,
+        on every page, with the agency, the role and the end date, so nobody
+        forgets whose records these are.
+      */}
+      {onScreen?.via ? (
+        <div className="border-b border-brand/30 bg-brand/5" role="status">
+          <p className="mx-auto max-w-5xl px-4 py-2 text-sm text-ink">
+            Working in <span className="font-semibold">{onScreen.organizationName}</span> for{" "}
+            {onScreen.via.agencyName} · {onScreen.role} · until {onScreen.via.expiresAt.toISOString().slice(0, 10)}
+          </p>
         </div>
       ) : null}
 

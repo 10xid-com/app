@@ -103,14 +103,10 @@ async function as(label: string, orgId = org) {
     email: addr(label),
     fullName: null,
     role: "client",
-    scope: { userId, email: addr(label), isStaff: false, organizationId: orgId, actingAs: null },
+    scope: { userId, email: addr(label), isStaff: false, organizationId: orgId },
     memberships,
     absoluteExpiresAt: new Date(Date.now() + 86_400_000),
     needsSecondFactor: false,
-    realUserId: userId,
-    realEmail: addr(label),
-    realIsStaff: false,
-    actingAs: null,
   };
   signedIn.current = () => ({ state: "active", sessionId: ctx.sessionId, csrfToken: csrfTokenFor(SECRET), ctx });
 }

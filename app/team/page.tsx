@@ -12,6 +12,7 @@ import {
 import { organizationById, teamFor } from "@/lib/db/identity";
 import { listInvitations } from "@/lib/db/invitations";
 import { grantsForBusiness } from "@/lib/db/agency";
+import { auditFor } from "@/lib/db/audit";
 import { AGENCY_ERRORS, AGENCY_NOTICES, AgencySection } from "./agency-section";
 import { PortalShell } from "../portal-shell";
 import { CsrfField } from "../_components/csrf-field";
@@ -78,7 +79,9 @@ export default async function TeamPage({
   ]);
   // Agency access: owners and managers see it (never through a grant); only
   // owners decide on it (grants.approve).
-  const agencyGrants = mayInvite ? await grantsForBusiness(businessId) : [];
+  const [agencyGrants, agencyActivity] = mayInvite
+    ? await Promise.all([grantsForBusiness(businessId), auditFor(businessId, 30)])
+    : [[], []];
   const mayDecideAgency = allows(role, "grants.approve", via);
 
   const raisedBy = new Map(raised.map((r) => [r.userId, r]));
@@ -370,7 +373,7 @@ export default async function TeamPage({
         counts jobs currently pointed at them. All three are scoped to the
         company this session is acting on.
       </p>
-      {mayInvite ? <AgencySection grants={agencyGrants} mayDecide={mayDecideAgency} /> : null}
+      {mayInvite ? <AgencySection grants={agencyGrants} activity={agencyActivity} mayDecide={mayDecideAgency} /> : null}
     </PortalShell>
   );
 }

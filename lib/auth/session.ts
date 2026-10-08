@@ -59,9 +59,8 @@ export type Identity =
 /**
  * The signed-in person, in the shape the portal's pages have always read.
  *
- * The staff and act-as fields are kept, fixed at "no", because the screens
- * that read them are still in the code, turned off rather than deleted (see
- * ./authorize.ts). Nothing can set them.
+ * There is no acting as anybody: somebody working in another business does
+ * it as themselves, through an agency grant (`agencyAccess`).
  */
 export type SessionContext = {
   /** The portal session (`sessions.id`). */
@@ -81,20 +80,6 @@ export type SessionContext = {
   absoluteExpiresAt: Date;
   /** Always false: the login host requires the authenticator before any handoff. */
   needsSecondFactor: false;
-  realUserId: string;
-  realEmail: string;
-  /** Always false: staff access is off. */
-  realIsStaff: false;
-  /** Always null: there is no acting as anybody. */
-  actingAs: {
-    grantId: string;
-    userId: string;
-    email: string;
-    fullName: string | null;
-    reason: string;
-    startedAt: Date;
-    expiresAt: Date;
-  } | null;
 };
 
 /**
@@ -197,15 +182,11 @@ export const resolveIdentity = cache(async function resolveIdentity(): Promise<I
     email: user.email,
     fullName: user.fullName,
     role: "client",
-    scope: { userId: user.id, email: user.email, isStaff: false, organizationId, actingAs: null },
+    scope: { userId: user.id, email: user.email, isStaff: false, organizationId },
     memberships,
     agencyAccess,
     absoluteExpiresAt: new Date(Math.min(session.absoluteExpiresAt.getTime(), hardEnd.getTime())),
     needsSecondFactor: false,
-    realUserId: user.id,
-    realEmail: user.email,
-    realIsStaff: false,
-    actingAs: null,
   };
   return { state: "active", sessionId: session.id, csrfToken: csrfTokenFor(token), ctx };
 });

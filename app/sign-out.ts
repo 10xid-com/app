@@ -34,7 +34,7 @@ export async function signOutEverywhereAction(formData: FormData) {
     await revokeAuthUserSessions(identity.ctx.authUserId);
     // The REAL person, never one being acted as (there is no acting as
     // anybody now, but this is where it would matter).
-    await revokeAllSessionsForUser(identity.ctx.realUserId);
+    await revokeAllSessionsForUser(identity.ctx.userId);
   }
   await clearSessionCookie();
   redirect(`${loginOrigin() ?? ""}/auth/sign-in?notice=signed-out-everywhere`);

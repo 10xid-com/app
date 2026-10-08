@@ -21,6 +21,11 @@ import {
  * person or ending a grant is `staff.manage` — owners and managers, never
  * through agency access. Every write names the session's business; login's
  * 0025 rules check the decider holds the role again, in the database.
+ *
+ * Anything that opens the business — approving a grant, approving or
+ * unblocking a person — needs the authenticator within five minutes
+ * (FRESHNESS_SECONDS.decision). Declining, blocking and ending never do:
+ * closing access is not made harder.
  */
 
 const AGENCY_ROLES = ROLE_TEMPLATES.filter((r) => r !== "owner") as [string, ...string[]];
@@ -32,7 +37,7 @@ function back(outcome: GrantOutcome, done: string): never {
 }
 
 export async function approveGrantAction(formData: FormData) {
-  const { ctx, businessId } = await requireAction("grants.approve", formData, { returnPath: "/team" });
+  const { ctx, businessId } = await requireAction("grants.approve", formData, { returnPath: "/team", fresh: "decision" });
   const parsed = z
     .object({ grantId: id, role: z.enum(AGENCY_ROLES), days: z.coerce.number().int().min(1).max(365) })
     .safeParse({ grantId: formData.get("grantId"), role: formData.get("role"), days: formData.get("days") });
@@ -61,7 +66,7 @@ export async function decideAgencyPersonAction(formData: FormData) {
   const { ctx, businessId } = await requireAction(
     decision.data === "approved" ? "grants.approve" : "staff.manage",
     formData,
-    { returnPath: "/team" },
+    decision.data === "approved" ? { returnPath: "/team", fresh: "decision" } : { returnPath: "/team" },
   );
   const parsed = z.object({ grantId: id, userId: id }).safeParse({
     grantId: formData.get("grantId"),

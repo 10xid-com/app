@@ -10,7 +10,6 @@ import {
   setSessionActiveOrganization,
 } from "@/lib/db/identity";
 import { requireStaffAccess } from "@/lib/auth/authorize";
-import { refuseWhileActingAs } from "@/lib/auth/require";
 import { STAFF_GRANT_SECONDS } from "@/lib/auth/policy";
 
 /**
@@ -40,19 +39,6 @@ const chooseSchema = z.object({
 
 export async function chooseClientAction(formData: FormData) {
   const ctx = await requireStaffAccess();
-
-  /**
-   * Not while being somebody else.
-   *
-   * `staff_grants` has ONE identity column, `staff_user_id`. A grant written
-   * from inside an act-as session would name the person being appeared as, and
-   * the audit line that exists to say "Paolo opened Rotary at 14:02 because —"
-   * would say Joel did. There is nowhere in that row to put the truth, so the
-   * answer is not to write it: opening a client waits until you are yourself.
-   * `job_events` took the other route and gained columns for both people; this
-   * table has not, and quietly misfiling one is worse than a refusal.
-   */
-  refuseWhileActingAs(ctx);
 
   // Staff-ness comes from the session, which took it from the account record.
   // It is never read from the form, so tampering with the form achieves nothing.
@@ -89,8 +75,6 @@ export async function chooseClientAction(formData: FormData) {
 
 export async function exitClientAction(formData?: FormData) {
   const ctx = await requireStaffAccess();
-  // Nor may somebody else give up a grant that is not theirs.
-  refuseWhileActingAs(ctx);
 
   // The grant row is kept — it is the audit record of what was opened and why —
   // but its window is closed now. Clearing the session pointer alone would not

@@ -1,7 +1,8 @@
 import "server-only";
 import { and, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
-import { db } from "./connection";
+import { db, type Transaction } from "./connection";
+import { type AuditEntry, writeAudit } from "./audit";
 import { agencyGrantPeople, agencyGrants, memberships, organizations, users } from "./schema";
 
 /**
@@ -107,9 +108,17 @@ function refusal(error: unknown): GrantOutcome | null {
   return null;
 }
 
-async function attempt(fn: () => Promise<number>): Promise<GrantOutcome> {
+/**
+ * One change and its audit entries, in one transaction: the entries are
+ * written only if the change touched a row, and roll back with it.
+ */
+async function attempt(fn: (tx: Transaction) => Promise<number>, audit: AuditEntry[]): Promise<GrantOutcome> {
   try {
-    return (await fn()) > 0 ? "done" : "not_found";
+    return await db.transaction(async (tx) => {
+      if ((await fn(tx)) === 0) return "not_found";
+      await writeAudit(tx, audit);
+      return "done";
+    });
   } catch (error) {
     const r = refusal(error);
     if (r) return r;
@@ -192,7 +201,8 @@ export async function requestGrant(input: {
     .limit(1);
   if (!business || business.id === input.agencyId) return { outcome: "not_found" };
   try {
-    const [row] = await db
+    const row = await db.transaction(async (tx) => {
+      const [inserted] = await tx
       .insert(agencyGrants)
       .values({
         clientOrganizationId: business.id,
@@ -203,6 +213,13 @@ export async function requestGrant(input: {
         requestedBy: input.requestedBy,
       })
       .returning({ id: agencyGrants.id });
+      const entry = { actorUserId: input.requestedBy, agencyGrantId: inserted.id, action: "agency.grant.requested", target: input.role };
+      await writeAudit(tx, [
+        { ...entry, organizationId: input.agencyId },
+        { ...entry, organizationId: business.id },
+      ]);
+      return inserted;
+    });
     return { outcome: "done", grantId: row.id, businessId: business.id };
   } catch (error) {
     const r = refusal(error);
@@ -213,17 +230,33 @@ export async function requestGrant(input: {
 
 /** Name one of the agency's own people on one of its open grants. */
 export async function addGrantPerson(agencyId: string, grantId: string, userId: string, addedBy: string): Promise<GrantOutcome> {
-  const [g] = await db
-    .select({ id: agencyGrants.id })
-    .from(agencyGrants)
-    .where(and(eq(agencyGrants.id, grantId), eq(agencyGrants.agencyOrganizationId, agencyId)))
-    .limit(1);
+  const g = await grantOwnedBy("agency", agencyId, grantId);
   if (!g) return "not_found";
-  return attempt(async () => {
-    const rows = await db.insert(agencyGrantPeople).values({ grantId, userId, addedBy }).returning({ id: agencyGrantPeople.id });
-    return rows.length;
-  });
+  return attempt(
+    async (tx) => {
+      const rows = await tx.insert(agencyGrantPeople).values({ grantId, userId, addedBy }).returning({ id: agencyGrantPeople.id });
+      return rows.length;
+    },
+    bothSides(g, { actorUserId: addedBy, agencyGrantId: grantId, action: "agency.person.named", target: userId }),
+  );
 }
+
+/** The grant, if it belongs to that organization on that side. */
+async function grantOwnedBy(side: "client" | "agency", organizationId: string, grantId: string) {
+  const owned = side === "client" ? agencyGrants.clientOrganizationId : agencyGrants.agencyOrganizationId;
+  const [g] = await db
+    .select({ id: agencyGrants.id, clientId: agencyGrants.clientOrganizationId, agencyId: agencyGrants.agencyOrganizationId })
+    .from(agencyGrants)
+    .where(and(eq(agencyGrants.id, grantId), eq(owned, organizationId)))
+    .limit(1);
+  return g ?? null;
+}
+
+type Unplaced = Omit<AuditEntry, "organizationId">;
+const bothSides = (g: { clientId: string; agencyId: string }, e: Unplaced): AuditEntry[] => [
+  { ...e, organizationId: g.agencyId },
+  { ...e, organizationId: g.clientId },
+];
 
 /** Take a person off one of the agency's grants. */
 export async function removeGrantPerson(agencyId: string, grantId: string, userId: string, by: string): Promise<GrantOutcome> {
@@ -232,14 +265,19 @@ export async function removeGrantPerson(agencyId: string, grantId: string, userI
 
 /** Withdraw a request, or end access the agency holds. */
 export async function withdrawGrant(agencyId: string, grantId: string, by: string): Promise<GrantOutcome> {
-  return attempt(async () => {
-    const rows = await db
-      .update(agencyGrants)
-      .set({ status: "revoked", revokedBy: by })
-      .where(and(eq(agencyGrants.id, grantId), eq(agencyGrants.agencyOrganizationId, agencyId)))
-      .returning({ id: agencyGrants.id });
-    return rows.length;
-  });
+  const g = await grantOwnedBy("agency", agencyId, grantId);
+  if (!g) return "not_found";
+  return attempt(
+    async (tx) => {
+      const rows = await tx
+        .update(agencyGrants)
+        .set({ status: "revoked", revokedBy: by })
+        .where(and(eq(agencyGrants.id, grantId), eq(agencyGrants.agencyOrganizationId, agencyId)))
+        .returning({ id: agencyGrants.id });
+      return rows.length;
+    },
+    bothSides(g, { actorUserId: by, agencyGrantId: grantId, action: "agency.grant.withdrawn" }),
+  );
 }
 
 /* ---- The business's side ---- */
@@ -251,41 +289,50 @@ export async function approveGrant(
   role: string,
   days: number,
 ): Promise<GrantOutcome> {
-  return attempt(async () => {
-    const rows = await db
-      .update(agencyGrants)
-      .set({
-        status: "active",
-        decidedBy: by,
-        role: role as typeof agencyGrants.$inferInsert.role,
-        expiresAt: sql`now() + make_interval(days => ${days})`,
-      })
-      .where(and(eq(agencyGrants.id, grantId), eq(agencyGrants.clientOrganizationId, businessId), eq(agencyGrants.status, "requested")))
-      .returning({ id: agencyGrants.id });
-    return rows.length;
-  });
+  return attempt(
+    async (tx) => {
+      const rows = await tx
+        .update(agencyGrants)
+        .set({
+          status: "active",
+          decidedBy: by,
+          role: role as typeof agencyGrants.$inferInsert.role,
+          expiresAt: sql`now() + make_interval(days => ${days})`,
+        })
+        .where(and(eq(agencyGrants.id, grantId), eq(agencyGrants.clientOrganizationId, businessId), eq(agencyGrants.status, "requested")))
+        .returning({ id: agencyGrants.id });
+      return rows.length;
+    },
+    [{ organizationId: businessId, actorUserId: by, agencyGrantId: grantId, action: "agency.grant.approved", target: `${role}, ${days} days` }],
+  );
 }
 
 export async function declineGrant(businessId: string, grantId: string, by: string): Promise<GrantOutcome> {
-  return attempt(async () => {
-    const rows = await db
-      .update(agencyGrants)
-      .set({ status: "declined", decidedBy: by })
-      .where(and(eq(agencyGrants.id, grantId), eq(agencyGrants.clientOrganizationId, businessId), eq(agencyGrants.status, "requested")))
-      .returning({ id: agencyGrants.id });
-    return rows.length;
-  });
+  return attempt(
+    async (tx) => {
+      const rows = await tx
+        .update(agencyGrants)
+        .set({ status: "declined", decidedBy: by })
+        .where(and(eq(agencyGrants.id, grantId), eq(agencyGrants.clientOrganizationId, businessId), eq(agencyGrants.status, "requested")))
+        .returning({ id: agencyGrants.id });
+      return rows.length;
+    },
+    [{ organizationId: businessId, actorUserId: by, agencyGrantId: grantId, action: "agency.grant.declined" }],
+  );
 }
 
 export async function revokeGrant(businessId: string, grantId: string, by: string): Promise<GrantOutcome> {
-  return attempt(async () => {
-    const rows = await db
-      .update(agencyGrants)
-      .set({ status: "revoked", revokedBy: by })
-      .where(and(eq(agencyGrants.id, grantId), eq(agencyGrants.clientOrganizationId, businessId)))
-      .returning({ id: agencyGrants.id });
-    return rows.length;
-  });
+  return attempt(
+    async (tx) => {
+      const rows = await tx
+        .update(agencyGrants)
+        .set({ status: "revoked", revokedBy: by })
+        .where(and(eq(agencyGrants.id, grantId), eq(agencyGrants.clientOrganizationId, businessId)))
+        .returning({ id: agencyGrants.id });
+      return rows.length;
+    },
+    [{ organizationId: businessId, actorUserId: by, agencyGrantId: grantId, action: "agency.grant.revoked" }],
+  );
 }
 
 export type PersonDecision = "approved" | "declined" | "blocked" | "removed";
@@ -307,21 +354,21 @@ async function setPersonStatus(
   status: PersonDecision,
   by: string,
 ): Promise<GrantOutcome> {
-  const owned = where.side === "client" ? agencyGrants.clientOrganizationId : agencyGrants.agencyOrganizationId;
-  const [g] = await db
-    .select({ id: agencyGrants.id })
-    .from(agencyGrants)
-    .where(and(eq(agencyGrants.id, grantId), eq(owned, where.organizationId)))
-    .limit(1);
+  const g = await grantOwnedBy(where.side, where.organizationId, grantId);
   if (!g) return "not_found";
-  return attempt(async () => {
-    const rows = await db
-      .update(agencyGrantPeople)
-      .set({ status, decidedBy: by })
-      .where(and(eq(agencyGrantPeople.grantId, grantId), eq(agencyGrantPeople.userId, userId)))
-      .returning({ id: agencyGrantPeople.id });
-    return rows.length;
-  });
+  const entry = { actorUserId: by, agencyGrantId: grantId, action: `agency.person.${status}`, target: userId };
+  return attempt(
+    async (tx) => {
+      const rows = await tx
+        .update(agencyGrantPeople)
+        .set({ status, decidedBy: by })
+        .where(and(eq(agencyGrantPeople.grantId, grantId), eq(agencyGrantPeople.userId, userId)))
+        .returning({ id: agencyGrantPeople.id });
+      return rows.length;
+    },
+    // The business's decisions in the business; the agency taking somebody off, in both.
+    where.side === "client" ? [{ ...entry, organizationId: g.clientId }] : bothSides(g, entry),
+  );
 }
 
 /** The agency's members who could be named on a grant (people, not integrations). */
