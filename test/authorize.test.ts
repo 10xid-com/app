@@ -11,9 +11,16 @@ import { isTrustedOrigin } from "@/lib/auth/origin";
 import { safePath } from "@/lib/auth/paths";
 import {
   BUSINESS_ACTIONS,
-  ROLE_PERMISSIONS,
+  canAssignRole,
+  canManageMember,
+  JOB_STATUSES,
   ROLE_TEMPLATES,
   roleAllows,
+  statusChangeAction,
+  statusesFor,
+  type BusinessAction,
+  type JobStatus,
+  type RoleTemplate,
 } from "@/lib/auth/permissions";
 
 /**
@@ -155,10 +162,18 @@ describe("the order of checks", () => {
   });
 
   test("10. a role whose template does not carry the action", async () => {
-    for (const role of ["manager", "editor", "publisher", "asset_manager", "viewer", "member", "staff"]) {
+    for (const role of ["member", "staff"]) {
       const d = deps({ identity: async () => active(ctx(role)) });
       expect(await reason({ action: "jobs.read" }, d), role).toBe("role_lacks_action");
     }
+    const viewer = deps({ identity: async () => active(ctx("viewer")) });
+    expect(await reason({ action: "jobs.read" }, viewer)).toBe("allowed");
+    expect(await reason({ action: "jobs.create", mutation: mutation() }, viewer)).toBe("role_lacks_action");
+    const editor = deps({ identity: async () => active(ctx("editor")) });
+    expect(await reason({ action: "jobs.approve", mutation: mutation() }, editor)).toBe("role_lacks_action");
+    const manager = deps({ identity: async () => active(ctx("manager")) });
+    expect(await reason({ action: "jobs.approve", mutation: mutation() }, manager)).toBe("allowed");
+    expect(await reason({ action: "billing.manage", mutation: mutation() }, manager)).toBe("role_lacks_action");
   });
 
   test("11. a resource that does not belong to the business", async () => {
@@ -175,22 +190,70 @@ describe("the order of checks", () => {
   });
 });
 
-describe("the permission matrix (until it is written)", () => {
+/**
+ * The matrix as decided on 2026-10-07, written out in full and independently
+ * of lib/auth/permissions.ts: every role against every action, so a change to
+ * either side that the other does not share fails here, allowed and denied
+ * alike.
+ */
+const O = "owner", M = "manager", E = "editor", P = "publisher", A = "asset_manager", V = "viewer";
+const EXPECTED: Record<BusinessAction, readonly RoleTemplate[]> = {
+  "business.view": [O, M, E, P, A, V],
+  "jobs.read": [O, M, E, P, A, V],
+  "jobs.create": [O, M, E, P, A],
+  "jobs.update_status": [O, M, E, P],
+  "jobs.approve": [O, M],
+  "jobs.attach_drive_folder": [O, M, A],
+  "staff.manage": [O, M],
+  "pages.edit": [O, M, E, P],
+  "pages.publish": [O, M, P],
+  "vault.read": [O, M, E, P, A, V],
+  "vault.write": [O, M, E, P, A],
+  "vault.share": [O, M, A],
+  "social.compose": [O, M, E, P],
+  "social.publish": [O, M, P],
+  "social.connect": [O, M],
+  "domains.manage": [O],
+  "grants.approve": [O],
+  "billing.manage": [O],
+  "ownership.transfer": [O],
+};
+
+describe("the permission matrix", () => {
   test("the six role templates of Revision 2", () => {
     expect([...ROLE_TEMPLATES]).toEqual(["owner", "manager", "editor", "publisher", "asset_manager", "viewer"]);
   });
 
-  test("owner holds every action; the other five hold none", () => {
-    for (const action of BUSINESS_ACTIONS) expect(roleAllows("owner", action)).toBe(true);
-    for (const role of ROLE_TEMPLATES.filter((r) => r !== "owner")) {
-      expect(ROLE_PERMISSIONS[role].size, role).toBe(0);
+  test("the expected table names every action, and nothing else", () => {
+    expect(Object.keys(EXPECTED).sort()).toEqual([...BUSINESS_ACTIONS].sort());
+  });
+
+  test.each(BUSINESS_ACTIONS.map((a) => [a]))("%s: exactly the expected roles, every other role refused", (action) => {
+    for (const role of ROLE_TEMPLATES) {
+      expect(roleAllows(role, action), `${role} ${action}`).toBe(EXPECTED[action].includes(role));
     }
+  });
+
+  test("allowed and refused through the central function, for every role and action", async () => {
+    for (const role of ROLE_TEMPLATES) {
+      const d = deps({ identity: async () => active(ctx(role)) });
+      for (const action of BUSINESS_ACTIONS) {
+        expect(await reason({ action }, d), `${role} ${action}`).toBe(
+          EXPECTED[action].includes(role) ? "allowed" : "role_lacks_action",
+        );
+      }
+    }
+  });
+
+  test("owner holds every action", () => {
+    for (const action of BUSINESS_ACTIONS) expect(roleAllows("owner", action)).toBe(true);
   });
 
   test("the roles from before the templates hold nothing", () => {
     for (const action of BUSINESS_ACTIONS) {
       expect(roleAllows("member", action)).toBe(false);
       expect(roleAllows("staff", action)).toBe(false);
+      expect(roleAllows("nonsense", action)).toBe(false);
     }
   });
 
@@ -198,6 +261,84 @@ describe("the permission matrix (until it is written)", () => {
     for (const role of ROLE_TEMPLATES) {
       expect(roleAllows(role, "ownership.transfer")).toBe(role === "owner");
       expect(roleAllows(role, "grants.approve")).toBe(role === "owner");
+    }
+  });
+});
+
+describe("who may give, change or take away which role", () => {
+  test("an owner may give any role, and manage anybody", () => {
+    for (const target of ROLE_TEMPLATES) {
+      expect(canAssignRole("owner", target), target).toBe(true);
+      expect(canManageMember("owner", target), target).toBe(true);
+    }
+  });
+
+  test("a manager may give and manage every role but owner", () => {
+    for (const target of ROLE_TEMPLATES) {
+      expect(canAssignRole("manager", target), target).toBe(target !== "owner");
+      expect(canManageMember("manager", target), target).toBe(target !== "owner");
+    }
+    // Legacy roles are not owners: a manager may tidy them up, never give them.
+    expect(canManageMember("manager", "member")).toBe(true);
+    expect(canAssignRole("manager", "member")).toBe(false);
+    expect(canAssignRole("owner", "staff")).toBe(false);
+  });
+
+  test("nobody else may give or manage any role", () => {
+    for (const actor of ["editor", "publisher", "asset_manager", "viewer", "member", "staff"]) {
+      for (const target of [...ROLE_TEMPLATES, "member"]) {
+        expect(canAssignRole(actor, target), `${actor} → ${target}`).toBe(false);
+        expect(canManageMember(actor, target), `${actor} → ${target}`).toBe(false);
+      }
+    }
+  });
+});
+
+describe("which job status changes are decisions", () => {
+  const cases: [JobStatus, JobStatus, "jobs.update_status" | "jobs.approve"][] = [
+    // Moving work along.
+    ["draft", "open", "jobs.update_status"],
+    ["open", "in_progress", "jobs.update_status"],
+    ["in_progress", "awaiting_approval", "jobs.update_status"],
+    ["awaiting_approval", "in_progress", "jobs.update_status"],
+    ["changes_requested", "in_progress", "jobs.update_status"],
+    ["approved", "completed", "jobs.update_status"],
+    // Making a decision.
+    ["awaiting_approval", "approved", "jobs.approve"],
+    ["awaiting_approval", "changes_requested", "jobs.approve"],
+    ["open", "cancelled", "jobs.approve"],
+    ["in_progress", "approved", "jobs.approve"],
+    // Undoing one.
+    ["approved", "in_progress", "jobs.approve"],
+    ["approved", "awaiting_approval", "jobs.approve"],
+    ["cancelled", "open", "jobs.approve"],
+    ["completed", "in_progress", "jobs.approve"],
+    // Completing work nobody approved.
+    ["awaiting_approval", "completed", "jobs.approve"],
+    ["in_progress", "completed", "jobs.approve"],
+  ];
+
+  test.each(cases)("%s → %s needs %s", (from, to, action) => {
+    expect(statusChangeAction(from, to)).toBe(action);
+  });
+
+  test("an editor and a publisher may move work along but never decide", () => {
+    for (const role of ["editor", "publisher"]) {
+      expect(statusesFor(role, "awaiting_approval")).toEqual(["draft", "open", "in_progress", "awaiting_approval"]);
+      expect(statusesFor(role, "approved")).toEqual(["approved", "completed"]);
+      expect(statusesFor(role, "cancelled")).toEqual(["cancelled"]);
+    }
+  });
+
+  test("owners and managers may make every move", () => {
+    for (const role of ["owner", "manager"]) {
+      for (const from of JOB_STATUSES) expect(statusesFor(role, from)).toEqual([...JOB_STATUSES]);
+    }
+  });
+
+  test("an asset manager and a viewer may make none", () => {
+    for (const role of ["asset_manager", "viewer"]) {
+      for (const from of JOB_STATUSES) expect(statusesFor(role, from)).toEqual([from]);
     }
   });
 });

@@ -190,14 +190,19 @@ export async function setJobStatus(
   scope: Scope,
   jobId: string,
   status: JobRow["status"],
+  from: JobRow["status"],
 ): Promise<JobRow | null> {
   const organizationId = requireWritableOrg(scope);
 
   return inTenantTransaction(organizationId, false, async (tx) => {
+    // Locked, and compared with the status the person was looking at: which
+    // moves are allowed depends on where the job is (approving, or undoing an
+    // approval, is a manager's), so a change made against a status that has
+    // since moved on is not applied.
     const before = (
-      await tx.select().from(jobs).where(eq(jobs.id, jobId)).limit(1)
+      await tx.select().from(jobs).where(eq(jobs.id, jobId)).limit(1).for("update")
     )[0];
-    if (!before) return null;
+    if (!before || before.status !== from) return null;
 
     const [after] = await tx
       .update(jobs)

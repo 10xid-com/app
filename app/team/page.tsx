@@ -1,12 +1,24 @@
 import type { Metadata } from "next";
 import { assignedPerPerson, jobsPerPerson } from "@/lib/db";
 import { requirePage } from "@/lib/auth/authorize";
-import { ROLE_LABELS, ROLE_TEMPLATES, roleAllows } from "@/lib/auth/permissions";
+import {
+  canAssignRole,
+  canManageMember,
+  isRoleTemplate,
+  ROLE_LABELS,
+  ROLE_TEMPLATES,
+  roleAllows,
+} from "@/lib/auth/permissions";
 import { organizationById, teamFor } from "@/lib/db/identity";
 import { listInvitations } from "@/lib/db/invitations";
 import { PortalShell } from "../portal-shell";
 import { CsrfField } from "../_components/csrf-field";
-import { inviteAction, revokeInvitationAction } from "./actions";
+import {
+  changeRoleAction,
+  inviteAction,
+  removeMemberAction,
+  revokeInvitationAction,
+} from "./actions";
 
 export const metadata: Metadata = { title: "Team" };
 
@@ -19,7 +31,10 @@ export const metadata: Metadata = { title: "Team" };
  */
 const ERRORS: Record<string, string> = {
   email: "That does not look like an email address.",
-  notowner: "Only an owner of this company can invite people.",
+  owner_only: "Only an owner can invite an owner, or change or remove one.",
+  last_owner: "A company always keeps at least one owner. Make somebody else an owner first.",
+  no_member: "That person is no longer on this team.",
+  moved: "Their role changed while you were looking, so nothing was done. Here is the team as it is now.",
   unknown: "That invitation no longer exists.",
   mail: "The invitation was created, but the email did not send. Tell them to go to the sign-up screen with this address.",
 };
@@ -27,6 +42,8 @@ const ERRORS: Record<string, string> = {
 const DONE: Record<string, string> = {
   invited: "Invitation sent. It lapses in 7 days if unused, and works once.",
   revoked: "Invitation withdrawn.",
+  changed: "Role changed. It applies from their next click.",
+  removed: "Removed. They lose access to this company from their next click.",
 };
 
 export default async function TeamPage({
@@ -42,16 +59,18 @@ export default async function TeamPage({
   const teamOrgId = businessId;
   const teamOrg = await organizationById(businessId);
 
+  // Only a role carrying staff.manage may invite — owners and managers — and
+  // only they see who has been invited: an invitation names an address and a
+  // role before the person has agreed to anything.
+  const mayInvite = roleAllows(role, "staff.manage");
+  const assignable = ROLE_TEMPLATES.filter((template) => canAssignRole(role, template));
+
   const [members, raised, assigned, pending] = await Promise.all([
     teamOrgId ? teamFor(teamOrgId) : Promise.resolve([]),
     jobsPerPerson(ctx.scope),
     assignedPerPerson(ctx.scope),
-    listInvitations(ctx.scope),
+    mayInvite ? listInvitations(ctx.scope) : Promise.resolve([]),
   ]);
-
-  // Only a role carrying staff.manage may invite — today, owners. One
-  // compromised account quietly becoming several is the failure that matters.
-  const mayInvite = roleAllows(role, "staff.manage");
 
   const raisedBy = new Map(raised.map((r) => [r.userId, r]));
   const assignedTo = new Map(assigned.map((r) => [r.userId, r.assigned]));
@@ -133,14 +152,16 @@ export default async function TeamPage({
               className="rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink
                          focus:border-brand focus:outline-2 focus:outline-brand/30"
             >
-              {ROLE_TEMPLATES.map((template) => (
+              {assignable.map((template) => (
                 <option key={template} value={template}>
                   {ROLE_LABELS[template]}
                 </option>
               ))}
             </select>
             <p id="invite-role-hint" className="mt-1 text-xs text-ink-faint">
-              Only owners have permissions for now.
+              {role === "owner"
+                ? "Owners and managers can invite; only an owner can invite an owner."
+                : "Only an owner can invite an owner."}
             </p>
           </div>
           <button
@@ -173,7 +194,7 @@ export default async function TeamPage({
                     {new Date(invitation.expiresAt).toISOString().slice(0, 10)}
                   </p>
                 </div>
-                {mayInvite &&
+                {canManageMember(role, invitation.role) &&
                 invitation.organizationId === ctx.scope.organizationId ? (
                   <form action={revokeInvitationAction} className="flex-none">
                     <CsrfField />
@@ -246,8 +267,55 @@ export default async function TeamPage({
                       ) : null}
                     </p>
                     <p className="mt-0.5 truncate text-xs text-ink-faint">
-                      {person.isService ? "key" : person.email} · {person.role}
+                      {person.isService ? "key" : person.email} ·{" "}
+                      {isRoleTemplate(person.role) ? ROLE_LABELS[person.role] : person.role}
                     </p>
+                    {!person.isService && canManageMember(role, person.role) ? (
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <form action={changeRoleAction} className="flex items-center gap-1.5">
+                          <CsrfField />
+                          <input type="hidden" name="userId" value={person.userId} />
+                          <label htmlFor={`role-${person.userId}`} className="sr-only">
+                            Role for {person.fullName ?? person.email}
+                          </label>
+                          <select
+                            id={`role-${person.userId}`}
+                            name="role"
+                            defaultValue={isRoleTemplate(person.role) ? person.role : "viewer"}
+                            className="rounded-md border border-line bg-surface px-2 py-1 text-xs text-ink
+                                       focus:border-brand focus:outline-2 focus:outline-brand/30"
+                          >
+                            {assignable.map((template) => (
+                              <option key={template} value={template}>
+                                {ROLE_LABELS[template]}
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            type="submit"
+                            className="rounded-md border border-line px-2.5 py-1 text-xs
+                                       font-medium text-ink-soft transition-colors hover:bg-sunk
+                                       focus-visible:outline-2 focus-visible:outline-offset-2
+                                       focus-visible:outline-brand"
+                          >
+                            Change role
+                          </button>
+                        </form>
+                        <form action={removeMemberAction}>
+                          <CsrfField />
+                          <input type="hidden" name="userId" value={person.userId} />
+                          <button
+                            type="submit"
+                            className="rounded-md border border-line px-2.5 py-1 text-xs
+                                       font-medium text-bad transition-colors hover:bg-bad/5
+                                       focus-visible:outline-2 focus-visible:outline-offset-2
+                                       focus-visible:outline-brand"
+                          >
+                            {person.userId === ctx.userId ? "Leave" : "Remove"}
+                          </button>
+                        </form>
+                      </div>
+                    ) : null}
                   </div>
 
                   <span className="text-right text-sm tabular-nums text-ink">

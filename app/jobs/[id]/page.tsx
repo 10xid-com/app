@@ -4,22 +4,12 @@ import { notFound } from "next/navigation";
 import { getJob, listJobEvents } from "@/lib/db";
 import { z } from "zod";
 import { requirePage } from "@/lib/auth/authorize";
-import { roleAllows } from "@/lib/auth/permissions";
+import { statusesFor } from "@/lib/auth/permissions";
 import { PortalShell } from "../../portal-shell";
 import { CsrfField } from "../../_components/csrf-field";
 import { setJobStatusAction } from "../actions";
 
 export const metadata: Metadata = { title: "Job" };
-
-const STATUSES = [
-  "open",
-  "in_progress",
-  "awaiting_approval",
-  "changes_requested",
-  "approved",
-  "completed",
-  "cancelled",
-] as const;
 
 /**
  * One job, addressed by the id in the URL.
@@ -63,10 +53,13 @@ function submittedDetails(
 
 export default async function JobPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ error?: string }>;
 }) {
   const { id } = await params;
+  const { error } = await searchParams;
   // The id is input from the address bar: anything that is not a uuid cannot
   // name a job, and is the same 404 as one that does not exist.
   if (!z.uuid().safeParse(id).success) notFound();
@@ -86,7 +79,11 @@ export default async function JobPage({
   // the job is later edited — the audit table cannot be rewritten.
   const submitted = submittedDetails(events);
 
-  const canWrite = roleAllows(role, "jobs.update_status");
+  // Only the moves this role may make from where the job is now: a decision
+  // (approve, ask for changes, cancel, or undo one) is an owner's or a
+  // manager's. The action checks the same rule again on submit.
+  const statuses = statusesFor(role, job.status).filter((s) => s !== "draft" || s === job.status);
+  const canWrite = statuses.some((s) => s !== job.status);
 
   return (
     <PortalShell
@@ -137,10 +134,21 @@ export default async function JobPage({
           </div>
         </dl>
 
+        {error === "moved" ? (
+          <p
+            role="alert"
+            className="mt-6 rounded-lg border border-bad/30 bg-bad/5 px-3 py-2 text-sm text-bad"
+          >
+            Somebody changed this job&rsquo;s status while you were looking at it, so
+            your change was not made. It is shown as it is now.
+          </p>
+        ) : null}
+
         {canWrite ? (
           <form action={setJobStatusAction} className="mt-6 flex flex-wrap items-center gap-2">
             <CsrfField />
             <input type="hidden" name="jobId" value={job.id} />
+            <input type="hidden" name="from" value={job.status} />
             <label htmlFor="status" className="text-sm text-ink-soft">
               Change status
             </label>
@@ -151,7 +159,7 @@ export default async function JobPage({
               className="rounded-lg border border-line bg-surface px-3 py-1.5 text-sm text-ink
                          focus:border-brand focus:outline-2 focus:outline-brand/30"
             >
-              {STATUSES.map((s) => (
+              {statuses.map((s) => (
                 <option key={s} value={s}>
                   {s.replace(/_/g, " ")}
                 </option>
