@@ -5,6 +5,7 @@ import type { WireReceipt } from "@/lib/workspace/wire";
 import { addJobContextAction, removeContextAction } from "./actions";
 import { RepoBrowser } from "./repo-browser";
 import type { UiRun, WorkspaceData } from "./types";
+import { CsrfInput } from "./csrf";
 
 /**
  * Right: what the model actually saw.
@@ -154,6 +155,7 @@ function Context({ data }: { data: WorkspaceData }) {
             <li key={c.id} className="flex items-start justify-between gap-2 rounded-md border border-brand/30 bg-brand-soft/40 px-2.5 py-1.5">
               <span className="break-words text-[13px] text-ink">{c.label}</span>
               <form action={removeContextAction}>
+                <CsrfInput />
                 <input type="hidden" name="conversationId" value={data.conversation!.id} />
                 <input type="hidden" name="itemId" value={c.id} />
                 <button type="submit" className="text-xs text-ink-faint hover:text-bad" aria-label={`Remove ${c.label}`}>
@@ -168,6 +170,7 @@ function Context({ data }: { data: WorkspaceData }) {
         <p className="mt-3 text-xs text-ink-faint">Open a client to add its jobs.</p>
       ) : (
         <form action={addJobContextAction} className="mt-3 flex gap-2">
+          <CsrfInput />
           <input type="hidden" name="conversationId" value={data.conversation.id} />
           <label className="sr-only" htmlFor="ctx-job">
             Job reference

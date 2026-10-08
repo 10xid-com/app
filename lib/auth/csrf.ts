@@ -12,8 +12,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
  * (it is only ever rendered into the portal's own HTML).
  */
 
-export const CSRF_FIELD = "csrf";
-export const CSRF_HEADER = "x-csrf-token";
+export { CSRF_FIELD, CSRF_HEADER } from "./csrf-names";
 
 export function csrfTokenFor(sessionToken: string): string {
   return createHmac("sha256", sessionToken).update("10xid portal csrf v1").digest("base64url");

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { authorizeRequest, STAFF_ACCESS } from "@/lib/auth/authorize";
+import { authorizeChatBossRequest } from "@/lib/auth/authorize";
 import { getLinkedRepository } from "@/lib/db/repositories";
 import { getConversation } from "@/lib/db/workspace";
 import { readerFor } from "@/lib/repo";
@@ -12,7 +12,7 @@ import { bindRepository } from "@/lib/workspace/bind";
  * What the workspace's file browser shows: the conversation's repository at
  * its branch — branches, one folder at a time, search, and changed files.
  *
- * Read-only, staff only, and bound like the model's tools: the repository and
+ * Read-only, Chat Boss only, and bound like the model's tools: the repository and
  * branch come from the conversation row, never from the request. The browser
  * names only a conversation, a path and search words, and every path passes
  * the same policy as the model's reads (secrets are listed, never opened).
@@ -21,12 +21,12 @@ import { bindRepository } from "@/lib/workspace/bind";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request, ctx: { params: Promise<{ id: string }> }) {
-  const decision = await authorizeRequest(request, STAFF_ACCESS);
+  const decision = await authorizeChatBossRequest(request);
   if (!decision.allowed) {
-    return NextResponse.json({ error: "Staff access is turned off." }, { status: 403 });
+    return NextResponse.json({ error: "Chat Boss is not available to you here." }, { status: 403 });
   }
   const access = await workspaceAccess(decision.ctx);
-  if (!access) return NextResponse.json({ error: "The workspace is for staff." }, { status: 403 });
+  if (!access) return NextResponse.json({ error: "Chat Boss is not available to you here." }, { status: 403 });
 
   const { id } = await ctx.params;
   const conversation = await getConversation(access.owner, id);

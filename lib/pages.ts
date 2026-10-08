@@ -209,13 +209,13 @@ export const PAGES: PageRecord[] = [
   {
     id: "chat",
     path: "/chat",
-    name: "Workspace",
+    name: "Chat Boss",
     purpose:
-      "One client's workspace: conversations with Claude or OpenAI in Ask or Plan mode, grounded in that client's records, with a receipt for what every answer saw. Where staff land after signing in.",
-    audience: "staff",
+      "Conversations in Ask or Plan mode, grounded in the open business's records, with a receipt for what every answer saw. Only for the people on the Chat Boss list, and only on a business they belong to.",
+    audience: "member",
     kind: "page",
     file: "app/chat/page.tsx",
-    group: "Staff",
+    group: "The work",
   },
   {
     id: "keys",

@@ -8,6 +8,7 @@ import { appOrigin, isTrustedOrigin } from "./origin";
 import { type BusinessAction, roleAllows } from "./permissions";
 import { resolveIdentity, type Identity, type SessionContext } from "./session";
 import { safePath } from "./paths";
+import { mayUseChatBoss } from "./chat-boss";
 
 /**
  * THE CENTRAL AUTHORIZATION FUNCTION.
@@ -286,6 +287,38 @@ export async function requireSignedInAction(formData: FormData, returnPath: stri
     throw new Error("This request did not come from the portal.");
   }
   return identity.ctx;
+}
+
+/* ------------------------------------------------------------------ */
+/* Chat Boss (/chat): named people, on a business they belong to.     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * For a Chat Boss page. The business-scoped check first — a live session, a
+ * business open, membership of it, a role that reads its jobs — then the
+ * person must be on the Chat Boss list (./chat-boss.ts). Anybody else gets
+ * the same 404 as a page that does not exist.
+ */
+export async function requireChatBossPage(returnPath: string): Promise<Granted> {
+  const granted = await requirePage("jobs.read", { returnPath });
+  if (!mayUseChatBoss(granted.ctx.realEmail) || granted.ctx.actingAs) notFound();
+  return granted;
+}
+
+/** For a Chat Boss server action: Origin and CSRF, then the same as the page. */
+export async function requireChatBossAction(formData: FormData): Promise<Granted> {
+  const granted = await requireAction("jobs.read", formData, { returnPath: "/chat" });
+  if (!mayUseChatBoss(granted.ctx.realEmail) || granted.ctx.actingAs) notFound();
+  return granted;
+}
+
+/** For a Chat Boss route handler; a state-changing method carries the CSRF header. */
+export async function authorizeChatBossRequest(request: Request): Promise<Decision> {
+  const decision = await authorizeRequest(request, "jobs.read");
+  if (decision.allowed && (!mayUseChatBoss(decision.ctx.realEmail) || decision.ctx.actingAs)) {
+    return { allowed: false, reason: "role_lacks_action", identity: { state: "signed_out" } };
+  }
+  return decision;
 }
 
 /**

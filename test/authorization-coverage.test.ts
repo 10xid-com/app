@@ -27,6 +27,9 @@ const GUARDS = [
   "requireSameOriginRequest(",
   "requireSignedIn(",
   "requireSignedInAction(",
+  "requireChatBossPage(",
+  "requireChatBossAction(",
+  "authorizeChatBossRequest(",
 ];
 
 const EXEMPT: Record<string, string> = {
@@ -122,15 +125,17 @@ describe("every form posting to a server action carries the CSRF token", () => {
   const withForms = files.filter((f) => f.path.endsWith(".tsx") && /<form\b[^>]*\baction=\{/.test(f.source));
 
   test.each(withForms.map((f) => [f.path, f.source]))("%s", (path, source) => {
-    // Client components cannot render the server-side field, and every server
-    // action they post to is a staff action, refused before any token is read.
-    if (/^\s*["']use client["']/.test(source)) {
-      expect(path.startsWith("app/chat/"), `${path}: a client-side form outside the staff workspace`).toBe(true);
-      return;
+    // Client components cannot render the server-side field. Chat Boss's are
+    // the only ones, and they carry the token the page handed them instead
+    // (app/chat/csrf.tsx).
+    const client = /^\s*["']use client["']/.test(source);
+    if (client) {
+      expect(path.startsWith("app/chat/"), `${path}: a client-side form outside Chat Boss`).toBe(true);
     }
+    const field = client ? "<CsrfInput />" : "<CsrfField />";
     const forms = [...source.matchAll(/<form\b[^>]*\baction=\{[\s\S]*?<\/form>/g)].map((m) => m[0]);
     for (const form of forms) {
-      expect(form.includes("<CsrfField />"), `${path}: ${form.slice(0, 80)}…`).toBe(true);
+      expect(form.includes(field), `${path}: ${form.slice(0, 80)}…`).toBe(true);
     }
   });
 });

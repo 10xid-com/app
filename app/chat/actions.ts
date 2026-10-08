@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { requireStaffAccess } from "@/lib/auth/authorize";
+import { requireChatBossAction } from "@/lib/auth/authorize";
 import { getJobByRef } from "@/lib/db";
 import {
   addContextItem,
@@ -30,22 +30,23 @@ import { bindRepository } from "@/lib/workspace/bind";
 import { contextRef } from "@/lib/workspace/repo-tools";
 
 /**
- * The workspace's writes. Each one re-derives who is asking from the session
- * and the client from the live grant; nothing in a form names a client or a
- * person. A conversation id from a form is checked by the database against
+ * Chat Boss's writes. Each one passes the central authorization function for
+ * the business the session has open (Origin, CSRF, membership, role) and the
+ * Chat Boss list; nothing in a form names a business or a person. A conversation id from a form is checked by the database against
  * both, so an id copied from another client's screen changes nothing.
  */
 
-async function requireAccess() {
-  const access = await workspaceAccess(await requireStaffAccess("/chat"));
+async function requireAccess(formData: FormData) {
+  const { ctx } = await requireChatBossAction(formData);
+  const access = await workspaceAccess(ctx);
   if (!access) redirect("/dashboard");
   return access;
 }
 
 const id = z.uuid();
 
-export async function newConversationAction() {
-  const access = await requireAccess();
+export async function newConversationAction(formData: FormData) {
+  const access = await requireAccess(formData);
   const options = modeOptions(await withheldEngineModes(access.owner));
   const conversation = await createConversation(access.owner, {
     title: "New conversation",
@@ -56,7 +57,7 @@ export async function newConversationAction() {
 }
 
 export async function setModeAction(formData: FormData) {
-  const access = await requireAccess();
+  const access = await requireAccess(formData);
   const conversationId = id.parse(formData.get("conversationId"));
   // Build is not an option here: the database refuses it as well.
   const mode = z.enum(["ask", "plan"]).parse(formData.get("mode"));
@@ -65,7 +66,7 @@ export async function setModeAction(formData: FormData) {
 }
 
 export async function setEngineAction(formData: FormData) {
-  const access = await requireAccess();
+  const access = await requireAccess(formData);
   const conversationId = id.parse(formData.get("conversationId"));
   const engineMode = String(formData.get("engineMode") ?? "");
   const option = modeOptions(await withheldEngineModes(access.owner)).find((o) => o.id === engineMode);
@@ -75,7 +76,7 @@ export async function setEngineAction(formData: FormData) {
 }
 
 export async function addJobContextAction(formData: FormData) {
-  const access = await requireAccess();
+  const access = await requireAccess(formData);
   const conversationId = id.parse(formData.get("conversationId"));
   const ref = String(formData.get("ref") ?? "").trim();
   if (!(await getConversation(access.owner, conversationId))) redirect("/chat");
@@ -87,7 +88,7 @@ export async function addJobContextAction(formData: FormData) {
 }
 
 export async function removeContextAction(formData: FormData) {
-  const access = await requireAccess();
+  const access = await requireAccess(formData);
   const conversationId = id.parse(formData.get("conversationId"));
   const itemId = id.parse(formData.get("itemId"));
   await removeContextItem(access.owner, conversationId, itemId);
@@ -95,7 +96,7 @@ export async function removeContextAction(formData: FormData) {
 }
 
 export async function archiveConversationAction(formData: FormData) {
-  const access = await requireAccess();
+  const access = await requireAccess(formData);
   const conversationId = id.parse(formData.get("conversationId"));
   await archiveConversation(access.owner, conversationId);
   redirect("/chat");
@@ -107,7 +108,7 @@ export async function archiveConversationAction(formData: FormData) {
  * from GitHub's own answer, never from the form.
  */
 export async function linkRepositoryAction(formData: FormData) {
-  const access = await requireAccess();
+  const access = await requireAccess(formData);
   const back = backTo(formData);
   const externalId = Number(formData.get("externalId"));
   const app = githubApp();
@@ -130,7 +131,7 @@ export async function linkRepositoryAction(formData: FormData) {
 }
 
 export async function unlinkRepositoryAction(formData: FormData) {
-  const access = await requireAccess();
+  const access = await requireAccess(formData);
   await unlinkRepository(access.owner, id.parse(formData.get("repositoryId")));
   revalidatePath("/chat");
   redirect(backTo(formData));
@@ -138,7 +139,7 @@ export async function unlinkRepositoryAction(formData: FormData) {
 
 /** Point the conversation at a linked repository and one of its branches, or at none. */
 export async function setRepositoryAction(formData: FormData) {
-  const access = await requireAccess();
+  const access = await requireAccess(formData);
   const conversationId = id.parse(formData.get("conversationId"));
   const back = `/chat?c=${conversationId}`;
   const repositoryId = String(formData.get("repositoryId") ?? "");
@@ -164,7 +165,7 @@ export async function setRepositoryAction(formData: FormData) {
 
 /** Add a file or folder of the conversation's repository to its context. */
 export async function addRepoContextAction(formData: FormData) {
-  const access = await requireAccess();
+  const access = await requireAccess(formData);
   const conversationId = id.parse(formData.get("conversationId"));
   const back = `/chat?c=${conversationId}`;
   const kind = z.enum(["file", "folder"]).parse(formData.get("kind"));
