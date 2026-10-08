@@ -72,6 +72,8 @@ export async function listConversations(owner: WorkspaceOwner, limit = 50) {
         title: conversations.title,
         mode: conversations.mode,
         engineMode: conversations.engineMode,
+        repositoryId: conversations.repositoryId,
+        branch: conversations.branch,
         updatedAt: conversations.updatedAt,
       })
       .from(conversations)

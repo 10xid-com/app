@@ -19,6 +19,8 @@ import {
   AlreadyLinkedError,
   getLinkedRepository,
   linkRepository,
+  listLinkedRepositories,
+  type RepositoryRow,
   setConversationRepository,
   unlinkRepository,
 } from "@/lib/db/repositories";
@@ -166,18 +168,100 @@ export async function setRepositoryAction(formData: FormData) {
   }
   const row = await getLinkedRepository(access.owner, repositoryId);
   if (!row) redirect(`${back}&error=repo`);
-  const requested = String(formData.get("branch") ?? "") || row.defaultBranch;
-  const branch = checkBranch(requested);
-  if (!branch.ok) redirect(`${back}&error=branch`);
-  // The branch must exist now; a typo would otherwise fail on the next message.
-  const reader = readerFor(row);
-  if (reader && branch.branch !== row.defaultBranch) {
-    const branches = await reader.listBranches().catch(() => [] as string[]);
-    if (!branches.includes(branch.branch)) redirect(`${back}&error=branch`);
-  }
-  await setConversationRepository(access.owner, conversationId, row.id, branch.branch);
+  const branch = await branchFor(row, String(formData.get("branch") ?? ""));
+  if (!branch) redirect(`${back}&error=branch`);
+  await setConversationRepository(access.owner, conversationId, row.id, branch);
   revalidatePath("/chat");
 }
+
+/**
+ * The branch asked for, or the repository's default; null when it is not a
+ * branch name, or does not exist now (a typo would otherwise fail on the next
+ * message).
+ */
+async function branchFor(row: RepositoryRow, requested: string): Promise<string | null> {
+  const checked = checkBranch(requested || row.defaultBranch);
+  if (!checked.ok) return null;
+  const reader = readerFor(row);
+  if (reader && checked.branch !== row.defaultBranch) {
+    const branches = await reader.listBranches().catch(() => [] as string[]);
+    if (!branches.includes(checked.branch)) return null;
+  }
+  return checked.branch;
+}
+
+export type PanelRepositoryResult = { ok: true } | { ok: false; error: string };
+
+/**
+ * The Chat Boss panel's "+ GitHub repository": put a repository on the
+ * conversation without leaving the page, the way Claude Code adds one to a
+ * session. One step, whichever the person picked:
+ *
+ *   - a repository already linked to this business (`repositoryId`), or
+ *   - one the GitHub App can see but nobody has linked yet (`externalId`),
+ *     which is linked to this business first, exactly as the workspace's
+ *     "Link" does: installation, owner and name come from GitHub's answer.
+ *
+ * Neither names a branch and the default is used, unless `branch` asks for
+ * another. With neither, the conversation is taken off its repository.
+ *
+ * It answers instead of redirecting, so the panel stays on the page it is
+ * beside and says what went wrong in place.
+ */
+export async function panelRepositoryAction(formData: FormData): Promise<PanelRepositoryResult> {
+  const access = await requireAccess(formData);
+  const conversationId = id.safeParse(formData.get("conversationId"));
+  if (!conversationId.success) return { ok: false, error: "That conversation does not exist here." };
+
+  const repositoryId = String(formData.get("repositoryId") ?? "");
+  const externalId = Number(formData.get("externalId") ?? 0);
+  let row: RepositoryRow | null = null;
+
+  if (repositoryId) {
+    row = await getLinkedRepository(access.owner, repositoryId);
+  } else if (externalId) {
+    const app = githubApp();
+    if (!app) return { ok: false, error: "The GitHub App is not set up on this server." };
+    if (!Number.isSafeInteger(externalId) || externalId <= 0) return { ok: false, error: NOT_AVAILABLE };
+    // Picked from a list fetched a moment ago: it may have been linked since.
+    row = (await listLinkedRepositories(access.owner)).find((r) => r.externalId === externalId) ?? null;
+    if (!row) {
+      let found;
+      try {
+        found = (await app.listAccessibleRepositories()).find((r) => r.externalId === externalId);
+      } catch (err) {
+        if (!(err instanceof RepoError)) throw err;
+        return { ok: false, error: "GitHub could not be reached. Try again in a moment." };
+      }
+      if (!found) return { ok: false, error: NOT_AVAILABLE };
+      try {
+        row = await linkRepository(access.owner, found);
+      } catch (err) {
+        if (err instanceof AlreadyLinkedError) {
+          return { ok: false, error: "That repository is already linked to another business. Unlink it there first." };
+        }
+        throw err;
+      }
+    }
+  } else {
+    if (!(await setConversationRepository(access.owner, conversationId.data, null, null))) {
+      return { ok: false, error: "That conversation does not exist here." };
+    }
+    revalidatePath("/", "layout");
+    return { ok: true };
+  }
+
+  if (!row) return { ok: false, error: NOT_AVAILABLE };
+  const branch = await branchFor(row, String(formData.get("branch") ?? ""));
+  if (!branch) return { ok: false, error: "That branch does not exist in the repository." };
+  if (!(await setConversationRepository(access.owner, conversationId.data, row.id, branch))) {
+    return { ok: false, error: "That conversation does not exist here." };
+  }
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
+const NOT_AVAILABLE = "That repository is not available. Check the GitHub App can see it.";
 
 /** Add a file or folder of the conversation's repository to its context. */
 export async function addRepoContextAction(formData: FormData) {
