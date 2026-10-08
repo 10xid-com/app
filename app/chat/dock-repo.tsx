@@ -86,8 +86,11 @@ export function RepoPicker({ repos, businessName, onClose }: { repos: DockReposi
   const linked = repos.linked.filter((r) => matches(r.name));
   const more = (available ?? []).filter((r) => !r.linkedHere && !linkedIds.has(r.externalId) && matches(r.name));
 
+  // Enter picks the first match that can be picked: the one already in use is
+  // shown but skipped, or Enter would reset it to its default branch.
   function pickFirst() {
-    if (linked[0]) set({ repositoryId: linked[0].id }, onClose);
+    const first = linked.find((r) => r.id !== repos.current?.id);
+    if (first) set({ repositoryId: first.id }, onClose);
     else if (more[0]) set({ externalId: String(more[0].externalId) }, onClose);
   }
 

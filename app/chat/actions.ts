@@ -211,7 +211,11 @@ export type PanelRepositoryResult = { ok: true } | { ok: false; error: string };
 export async function panelRepositoryAction(formData: FormData): Promise<PanelRepositoryResult> {
   const access = await requireAccess(formData);
   const conversationId = id.safeParse(formData.get("conversationId"));
-  if (!conversationId.success) return { ok: false, error: "That conversation does not exist here." };
+  // Before anything is linked: a stale panel must not leave a repository
+  // linked to the business with no conversation using it.
+  if (!conversationId.success || !(await getConversation(access.owner, conversationId.data))) {
+    return { ok: false, error: "That conversation does not exist here." };
+  }
 
   const repositoryId = String(formData.get("repositoryId") ?? "");
   const externalId = Number(formData.get("externalId") ?? 0);
