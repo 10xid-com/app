@@ -192,6 +192,7 @@ export async function requirePage(
   if (decision.allowed) return decision;
   if (decision.reason === "signed_out") redirect(signInPath(options.returnPath));
   if (decision.reason === "resource_not_found") notFound();
+  if (decision.reason === "no_business") redirect(BUSINESS_CHOOSER);
   redirect(`/access?reason=${decision.reason}`);
 }
 
@@ -216,6 +217,7 @@ export async function requireAction(
     throw new Error("This request did not come from the portal.");
   }
   if (decision.reason === "signed_out") redirect(signInPath(options.returnPath));
+  if (decision.reason === "no_business") redirect(BUSINESS_CHOOSER);
   redirect(`/access?reason=${decision.reason}`);
 }
 
@@ -249,6 +251,41 @@ export async function requireSameOriginRequest(formData: FormData): Promise<void
   if (!isValidCsrfToken(formData.get(CSRF_FIELD), identity.csrfToken)) {
     throw new Error("This request did not come from the portal.");
   }
+}
+
+/**
+ * Where somebody with no business on screen is sent: the business switcher,
+ * which lists the businesses they belong to (or says they belong to none).
+ */
+export const BUSINESS_CHOOSER = "/business";
+
+/**
+ * For the one kind of page that is about the PERSON rather than a business:
+ * choosing which business to open. A live portal session is the whole
+ * requirement; anything shown must be the person's own (their memberships).
+ */
+export async function requireSignedIn(returnPath: string): Promise<SessionContext> {
+  const identity = await resolveIdentity();
+  if (identity.state === "signed_out") redirect(signInPath(returnPath));
+  return identity.ctx;
+}
+
+/**
+ * For a server action of the same kind: the Origin and CSRF checks, then a
+ * live session. A forged request is an error, as in requireAction; signed out
+ * goes to sign-in.
+ */
+export async function requireSignedInAction(formData: FormData, returnPath: string): Promise<SessionContext> {
+  const h = await headers();
+  if (!isTrustedOrigin(h.get("origin"), appOrigin())) {
+    throw new Error("This request did not come from the portal.");
+  }
+  const identity = await resolveIdentity();
+  if (identity.state === "signed_out") redirect(signInPath(returnPath));
+  if (!isValidCsrfToken(formData.get(CSRF_FIELD), identity.csrfToken)) {
+    throw new Error("This request did not come from the portal.");
+  }
+  return identity.ctx;
 }
 
 /**

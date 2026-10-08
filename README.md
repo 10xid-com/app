@@ -37,6 +37,9 @@ its migration, then copied here unchanged.
   make, change or remove an owner, and a business always keeps one (enforced by login's 0024
   trigger as well). Approving, asking for changes, cancelling, completing unapproved work, and
   undoing any of those, is owners' and managers' alone.
+- **A business switcher** (`/business`): somebody in several businesses chooses which one is open,
+  per portal session, and can switch from the account menu. The choice is re-checked against their
+  live memberships on every request; with one business it simply opens.
 - **Every state-changing request** needs the exact `https://app.10xid.com` Origin and a CSRF
   token bound to the session (an HMAC keyed by the session cookie's secret).
 - **Staff access is off.** The Clients, Keys, Act as and `/chat` screens are still in the code
