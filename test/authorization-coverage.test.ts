@@ -40,6 +40,8 @@ const EXEMPT: Record<string, string> = {
   "app/auth/sso/failed/page.tsx": "One static message for every handoff failure. Reads nothing.",
   "app/healthz/route.ts": "Railway's healthcheck: answers 200 once startup has passed, and says nothing else.",
   "app/access/page.tsx": "Describes the person's own sign-in state after a refusal; shows no business data.",
+  "app/api/v1/cron/agency-reminders/route.ts":
+    "The scheduler's endpoint: a bearer secret (CRON_SECRET, compared in constant time), not a session; a 404 until it is set. It acts on no business a request names: it tells grants' own owners, once each, that agency access is ending, and answers with counts only.",
   "app/api/v1/jobs/route.ts":
     "The machine endpoint: an API key, not a session, bound to one business and write-only. No keys can be minted while staff access is off.",
 };

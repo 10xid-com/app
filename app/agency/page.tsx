@@ -9,6 +9,7 @@ import { CsrfField } from "../_components/csrf-field";
 import {
   addAgencyPersonAction,
   removeAgencyPersonAction,
+  renewGrantAction,
   requestAccessAction,
   withdrawGrantAction,
 } from "./actions";
@@ -29,10 +30,13 @@ const NOTICES: Record<string, string> = {
   named: "Named. They can open the business once its owner approves them.",
   removed: "Taken off.",
   withdrawn: "Withdrawn.",
+  renewal:
+    "Asked to renew, with your people named again. Nothing changes until the business's owner approves the renewal and each person; your current access runs to its end date.",
 };
 const ERRORS: Record<string, string> = {
   refused: "That was refused: check the reference, the role, the days (at most 365) and the reason (at least 8 characters).",
-  already_open: "You already have an open request or grant with that business, or that person is already named.",
+  already_open:
+    "You already have a request waiting with that business, access with more than seven days to run (renewal opens in its last seven days), or that person is already named.",
   not_found: "That is no longer open.",
 };
 
@@ -115,9 +119,12 @@ export default async function AgencyPage({
         {grants.map((g) => {
           const live = g.live;
           const open = g.status === "requested" || live;
+          const waiting = grants.some((o) => o.status === "requested" && o.otherOrganizationId === g.otherOrganizationId);
           const state =
             g.status === "requested"
-              ? "waiting for the business"
+              ? g.renewsGrantId
+                ? "renewal, waiting for the business"
+                : "waiting for the business"
               : live
                 ? `in force until ${day(g.expiresAt!)}`
                 : g.status === "active"
@@ -125,11 +132,20 @@ export default async function AgencyPage({
                   : g.status;
           const named = new Set(g.people.filter((p) => p.status !== "removed" && p.status !== "declined").map((p) => p.userId));
           return (
-            <li key={g.id} className="rounded-xl border border-line bg-surface p-4 shadow-card">
+            <li key={g.id} id={`grant-${g.id}`} className="rounded-xl border border-line bg-surface p-4 shadow-card">
               <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <p className="text-sm font-semibold text-ink">
                   {g.otherName} · {roleName(g.role)} · {state}
                 </p>
+                {g.renewable && !waiting ? (
+                  <form action={renewGrantAction}>
+                    <CsrfField />
+                    <input type="hidden" name="grantId" value={g.id} />
+                    <button type="submit" className={small}>
+                      Ask to renew
+                    </button>
+                  </form>
+                ) : null}
                 {open ? (
                   <form action={withdrawGrantAction}>
                     <CsrfField />
