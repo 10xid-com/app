@@ -14,7 +14,8 @@ import { touchAuthSession } from "@/lib/db/auth-session";
 import type { Scope } from "@/lib/db";
 import { secretToken } from "@/lib/ids";
 import { csrfTokenFor } from "./csrf";
-import { activeBusiness, SESSION_IDLE_SECONDS, type SessionRole } from "./policy";
+import { activeBusiness, openableBusinesses, SESSION_IDLE_SECONDS, type SessionRole } from "./policy";
+import { liveAgencyAccessFor, type AgencyAccess } from "@/lib/db/agency";
 
 /**
  * Who is making this request.
@@ -75,6 +76,8 @@ export type SessionContext = {
   role: SessionRole;
   scope: Scope;
   memberships: Awaited<ReturnType<typeof membershipsForUser>>;
+  /** Client businesses open to this person through live agency grants (lib/db/agency.ts). */
+  agencyAccess: AgencyAccess[];
   absoluteExpiresAt: Date;
   /** Always false: the login host requires the authenticator before any handoff. */
   needsSecondFactor: false;
@@ -104,8 +107,11 @@ export async function startSession(input: {
   authSessionId: string;
   hardEnd: Date;
 }): Promise<{ token: string; sessionId: string }> {
-  const memberships = await membershipsForUser(input.userId);
-  const clientBusinesses = memberships.filter((m) => m.organizationType === "client");
+  const [memberships, agencyAccess] = await Promise.all([
+    membershipsForUser(input.userId),
+    liveAgencyAccessFor(input.userId),
+  ]);
+  const openable = openableBusinesses(memberships, agencyAccess);
   const token = secretToken(32);
   const session = await insertSession({
     userId: input.userId,
@@ -114,7 +120,7 @@ export async function startSession(input: {
     idleSeconds: SESSION_IDLE_SECONDS,
     absoluteExpiresAt: input.hardEnd,
     roleAtCreation: "client",
-    activeOrganizationId: clientBusinesses.length === 1 ? clientBusinesses[0].organizationId : null,
+    activeOrganizationId: openable.length === 1 ? openable[0].organizationId : null,
     // The login host required the authenticator before minting the ticket.
     secondFactorAt: new Date(),
     sourceAuthSessionId: input.authSessionId,
@@ -170,12 +176,16 @@ export const resolveIdentity = cache(async function resolveIdentity(): Promise<I
   if (!hardEnd) return end();
 
   await touchSession(session.id);
-  const memberships = await membershipsForUser(user.id);
+  const [memberships, agencyAccess] = await Promise.all([
+    membershipsForUser(user.id),
+    liveAgencyAccessFor(user.id),
+  ]);
 
-  // Which business is on screen: see activeBusiness() in ./policy.ts.
-  const clientBusinesses = memberships.filter((m) => m.organizationType === "client");
+  // Which business is on screen: see activeBusiness() in ./policy.ts. A
+  // business reached through an agency grant counts as much as a membership,
+  // and stops counting the moment the grant does.
   const organizationId = activeBusiness(
-    clientBusinesses.map((m) => m.organizationId),
+    openableBusinesses(memberships, agencyAccess).map((b) => b.organizationId),
     session.activeOrganizationId,
   );
 
@@ -189,6 +199,7 @@ export const resolveIdentity = cache(async function resolveIdentity(): Promise<I
     role: "client",
     scope: { userId: user.id, email: user.email, isStaff: false, organizationId, actingAs: null },
     memberships,
+    agencyAccess,
     absoluteExpiresAt: new Date(Math.min(session.absoluteExpiresAt.getTime(), hardEnd.getTime())),
     needsSecondFactor: false,
     realUserId: user.id,

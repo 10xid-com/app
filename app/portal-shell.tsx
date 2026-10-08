@@ -7,6 +7,7 @@ import { exitClientAction } from "./staff/actions";
 import { stopActingAsAction } from "./act-as/actions";
 import { PortalHeader, menuItemClass } from "./portal-nav";
 import { mayUseChatBoss } from "@/lib/auth/chat-boss";
+import { openableBusinesses } from "@/lib/auth/policy";
 
 /**
  * The frame every signed-in screen sits in.
@@ -82,7 +83,7 @@ export async function PortalShell({
    * one: with the business switcher a person can belong to several, and the
    * mark is how they know which one they are in.
    */
-  const clientBusinesses = (ctx?.memberships ?? []).filter((m) => m.organizationType === "client");
+  const clientBusinesses = ctx ? openableBusinesses(ctx.memberships, ctx.agencyAccess) : [];
   const onScreen = clientBusinesses.find((m) => m.organizationId === ctx?.scope.organizationId);
   const shown = actingOn
     ? { name: actingOn.name, logoUrl: organization?.logoUrl ?? null }

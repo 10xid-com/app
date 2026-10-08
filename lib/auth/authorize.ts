@@ -5,7 +5,7 @@ import { getJob } from "@/lib/db";
 import { organizationById } from "@/lib/db/identity";
 import { CSRF_FIELD, CSRF_HEADER, isValidCsrfToken } from "./csrf";
 import { appOrigin, isTrustedOrigin } from "./origin";
-import { type BusinessAction, roleAllows } from "./permissions";
+import { type BusinessAction, allows } from "./permissions";
 import { resolveIdentity, type Identity, type SessionContext } from "./session";
 import { safePath } from "./paths";
 import { mayUseChatBoss } from "./chat-boss";
@@ -31,8 +31,13 @@ import { mayUseChatBoss } from "./chat-boss";
  *   6. the action is a business action, not staff access         staff_access_off
  *   7. a business is named                                       no_business
  *   8. it exists, is a client business, and is not deleted       business_unavailable
- *   9. the person holds a direct membership in it                not_a_member
- *  10. their role template carries the action                    role_lacks_action
+ *   9. the person holds a direct membership in it, or a live     not_a_member
+ *      agency grant into it (approved, in date, on it by name,
+ *      not blocked, still in the agency)
+ *  10. their role template carries the action — and through a    role_lacks_action
+ *      grant, never the actions agency access cannot carry
+ *      (AGENCY_NEVER: managing people, grants, billing, domains,
+ *      ownership)
  *  11. the resource, if one is named, belongs to that business   resource_not_found
  *
  * Underneath, Postgres row-level security enforces tenant isolation again on
@@ -69,8 +74,11 @@ export type DenyReason =
   | "role_lacks_action"
   | "resource_not_found";
 
+/** How the person holds the business: null for a membership, else the agency grant. */
+export type Via = { grantId: string; agencyName: string; expiresAt: Date } | null;
+
 export type Decision =
-  | { allowed: true; ctx: SessionContext; businessId: string; role: string }
+  | { allowed: true; ctx: SessionContext; businessId: string; role: string; via: Via }
   | { allowed: false; reason: DenyReason; identity: Identity };
 
 export type AuthorizationRequest = {
@@ -150,12 +158,16 @@ export async function authorize(
     return deny("business_unavailable", identity);
   }
 
-  // 9. A direct membership. Agency and freelancer routes do not exist yet.
+  // 9. A direct membership, else a live agency grant (lib/db/agency.ts).
+  // Freelancer routes do not exist yet.
   const membership = ctx.memberships.find((m) => m.organizationId === businessId);
-  if (!membership) return deny("not_a_member", identity);
+  const grant = membership ? undefined : (ctx.agencyAccess ?? []).find((a) => a.organizationId === businessId);
+  if (!membership && !grant) return deny("not_a_member", identity);
+  const role = membership ? membership.role : grant!.role;
+  const via: Via = grant ? { grantId: grant.grantId, agencyName: grant.agencyName, expiresAt: grant.expiresAt } : null;
 
   // 10.
-  if (!roleAllows(membership.role, action)) return deny("role_lacks_action", identity);
+  if (!allows(role, action, via)) return deny("role_lacks_action", identity);
 
   // 11.
   if (request.resource && !(await deps.resourceInBusiness(ctx, businessId, request.resource))) {
@@ -166,7 +178,8 @@ export async function authorize(
     allowed: true,
     ctx: { ...ctx, scope: { ...ctx.scope, organizationId: businessId } },
     businessId,
-    role: membership.role,
+    role,
+    via,
   };
 }
 
@@ -174,7 +187,7 @@ export async function authorize(
 /* The three ways in: a page, a server action, a route handler.        */
 /* ------------------------------------------------------------------ */
 
-export type Granted = { ctx: SessionContext; businessId: string; role: string };
+export type Granted = { ctx: SessionContext; businessId: string; role: string; via: Via };
 
 /**
  * For a page. Signed out goes to sign-in and back; a missing resource is a

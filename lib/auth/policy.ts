@@ -207,3 +207,38 @@ export function activeBusiness(
   if (chosen && clientBusinessIds.includes(chosen)) return chosen;
   return clientBusinessIds.length === 1 ? clientBusinessIds[0] : null;
 }
+
+/**
+ * EVERY BUSINESS A PERSON MAY OPEN: their client memberships, then the
+ * businesses their live agency grants reach (lib/db/agency.ts). A direct
+ * membership wins over a grant into the same business — membership is what
+ * the business itself decided, a grant only borrows.
+ */
+export type OpenableBusiness = {
+  organizationId: string;
+  organizationName: string;
+  role: string;
+  /** Set when this business is open to them only through an agency grant. */
+  via: { grantId: string; agencyName: string; expiresAt: Date } | null;
+};
+
+export function openableBusinesses(
+  memberships: readonly { organizationId: string; organizationName: string; organizationType: string; role: string }[],
+  agencyAccess: readonly { grantId: string; organizationId: string; organizationName: string; agencyName: string; role: string; expiresAt: Date }[],
+): OpenableBusiness[] {
+  const out: OpenableBusiness[] = memberships
+    .filter((m) => m.organizationType === "client")
+    .map((m) => ({ organizationId: m.organizationId, organizationName: m.organizationName, role: m.role, via: null }));
+  const direct = new Set(out.map((b) => b.organizationId));
+  for (const a of agencyAccess) {
+    if (direct.has(a.organizationId)) continue;
+    direct.add(a.organizationId);
+    out.push({
+      organizationId: a.organizationId,
+      organizationName: a.organizationName,
+      role: a.role,
+      via: { grantId: a.grantId, agencyName: a.agencyName, expiresAt: a.expiresAt },
+    });
+  }
+  return out;
+}

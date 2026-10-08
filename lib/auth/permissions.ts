@@ -223,3 +223,34 @@ export function statusChangeAction(
 export function statusesFor(role: string, from: JobStatus): JobStatus[] {
   return JOB_STATUSES.filter((to) => to === from || roleAllows(role, statusChangeAction(from, to)));
 }
+
+/* ------------------------------------------------------------------ */
+/* Agency access: what a grant can never carry.                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Actions agency access never includes, whatever role the grant carries.
+ *
+ * An agency person borrows a role for a fixed time; they must never be able
+ * to make that borrowing permanent or wider. So nobody reaching a business
+ * through a grant may manage its people (inviting would mint memberships),
+ * approve grants (including more access for themselves), move money or
+ * domains, or transfer ownership. Paolo's decision of 2026-10-08.
+ */
+export const AGENCY_NEVER: ReadonlySet<BusinessAction> = new Set([
+  "staff.manage",
+  "grants.approve",
+  "billing.manage",
+  "domains.manage",
+  "ownership.transfer",
+]);
+
+/** Does this role carry this action when it is held through an agency grant? */
+export function agencyAllows(role: string, action: BusinessAction): boolean {
+  return roleAllows(role, action) && !AGENCY_NEVER.has(action);
+}
+
+/** The one check for a role, however it is held. */
+export function allows(role: string, action: BusinessAction, via: unknown): boolean {
+  return via ? agencyAllows(role, action) : roleAllows(role, action);
+}

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { requireSignedIn } from "@/lib/auth/authorize";
 import { ROLE_LABELS, isRoleTemplate } from "@/lib/auth/permissions";
+import { openableBusinesses } from "@/lib/auth/policy";
 import { PortalShell } from "../portal-shell";
 import { CsrfField } from "../_components/csrf-field";
 import { switchBusinessAction } from "./actions";
@@ -14,7 +15,8 @@ export const metadata: Metadata = { title: "Your businesses" };
  * each, and the one on screen marked. Somebody with several businesses and
  * none chosen is sent here by every page; somebody with one never needs it.
  *
- * It shows only the person's own memberships — no business data — which is
+ * It shows only the person's own memberships and agency grants — no business
+ * data — which is
  * why it needs a signed-in session and not a business (requireSignedIn).
  */
 export default async function BusinessPage({
@@ -25,9 +27,9 @@ export default async function BusinessPage({
   const ctx = await requireSignedIn("/business");
   const { error } = await searchParams;
 
-  const businesses = ctx.memberships
-    .filter((m) => m.organizationType === "client")
-    .sort((a, b) => a.organizationName.localeCompare(b.organizationName));
+  const businesses = openableBusinesses(ctx.memberships, ctx.agencyAccess).sort((a, b) =>
+    a.organizationName.localeCompare(b.organizationName),
+  );
   const current = ctx.scope.organizationId;
 
   return (
@@ -67,6 +69,9 @@ export default async function BusinessPage({
                   </p>
                   <p className="mt-0.5 text-xs text-ink-faint">
                     {isRoleTemplate(b.role) ? ROLE_LABELS[b.role] : b.role}
+                    {b.via
+                      ? ` · via ${b.via.agencyName}, until ${b.via.expiresAt.toISOString().slice(0, 10)}`
+                      : null}
                   </p>
                 </div>
                 {open ? null : (
