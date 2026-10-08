@@ -1,5 +1,6 @@
 import { ROLE_LABELS, ROLE_TEMPLATES, isRoleTemplate } from "@/lib/auth/permissions";
 import type { GrantSummary } from "@/lib/db/agency";
+import type { AuditRow } from "@/lib/db/audit";
 import { CsrfField } from "../_components/csrf-field";
 import {
   approveGrantAction,
@@ -45,6 +46,40 @@ export const AGENCY_ERRORS: Record<string, string> = {
   already_open: "There is already an open grant for that agency.",
 };
 
+const ACTIVITY: Record<string, string> = {
+  "agency.grant.requested": "asked for access",
+  "agency.grant.approved": "approved access",
+  "agency.grant.declined": "declined access",
+  "agency.grant.revoked": "ended access",
+  "agency.grant.withdrawn": "withdrew access",
+  "agency.person.named": "named",
+  "agency.person.approved": "approved",
+  "agency.person.declined": "declined",
+  "agency.person.blocked": "blocked",
+  "agency.person.removed": "took off",
+  "agency.acted": "through agency access:",
+};
+
+function Activity({ rows, grants }: { rows: AuditRow[]; grants: GrantSummary[] }) {
+  const emails = new Map(grants.flatMap((g) => g.people.map((p) => [p.userId, p.email] as const)));
+  const agencyOf = new Map(grants.map((g) => [g.id, g.otherName] as const));
+  const when = (d: Date) => d.toISOString().slice(0, 16).replace("T", " ");
+  return (
+    <details className="mt-4 rounded-xl border border-line bg-surface">
+      <summary className="cursor-pointer px-4 py-2 text-xs font-medium text-ink-soft">Agency activity</summary>
+      <ul className="divide-y divide-line-soft px-4 pb-2">
+        {rows.map((r) => (
+          <li key={String(r.id)} className="py-1.5 text-xs text-ink-soft">
+            <span className="text-ink-faint">{when(r.createdAt)} UTC</span> · {r.actorEmail ?? "someone"}{" "}
+            {ACTIVITY[r.action] ?? r.action} {r.target ? (emails.get(r.target) ?? r.target) : null}
+            {r.agencyGrantId && agencyOf.has(r.agencyGrantId) ? ` · ${agencyOf.get(r.agencyGrantId)}` : null}
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
 function Person({
   grant,
   person,
@@ -83,7 +118,16 @@ function Person({
   );
 }
 
-export function AgencySection({ grants, mayDecide }: { grants: GrantSummary[]; mayDecide: boolean }) {
+export function AgencySection({
+  grants,
+  activity,
+  mayDecide,
+}: {
+  grants: GrantSummary[];
+  activity: AuditRow[];
+  mayDecide: boolean;
+}) {
+  const agencyActivity = activity.filter((r) => r.action.startsWith("agency."));
   const waiting = grants.filter((g) => g.status === "requested");
   const live = grants.filter((g) => g.live);
   const closed = grants.filter((g) => !waiting.includes(g) && !live.includes(g)).slice(0, 10);
@@ -193,6 +237,8 @@ export function AgencySection({ grants, mayDecide }: { grants: GrantSummary[]; m
           </ul>
         </details>
       ) : null}
+
+      {agencyActivity.length > 0 ? <Activity rows={agencyActivity} grants={grants} /> : null}
     </section>
   );
 }

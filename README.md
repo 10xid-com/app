@@ -42,8 +42,15 @@ its migration, then copied here unchanged.
   live memberships on every request; with one business it simply opens.
 - **Every state-changing request** needs the exact `https://app.10xid.com` Origin and a CSRF
   token bound to the session (an HMAC keyed by the session cookie's secret).
-- **Staff access is off.** The Clients, Keys, Act as and `/chat` screens are still in the code
-  and refused to everybody, pending client-approved agency grants.
+- **Agency access** replaces Act as. An agency (Branding Centres, to begin with) asks a business
+  for access at a role below owner, for at most a year (90 days by default), and names its people;
+  the business's owner approves the access and each person. Agency people never become members,
+  never manage people, grants, billing, domains or ownership, need the authenticator within the
+  last day, and lose access when blocked, ended or expired. Approving needs the authenticator
+  within five minutes. Every decision, and everything state-changing done through agency
+  access, goes on the business's audit record.
+- **Staff access is off.** The Clients and Keys screens are still in the code and refused to
+  everybody.
 - **Requests arrive as cards** on the dashboard, carrying what the sender actually wrote,
   and each can be given a Google Drive folder with the request filed into it.
 

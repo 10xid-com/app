@@ -4,10 +4,13 @@ import { notFound, redirect } from "next/navigation";
 import { getJob } from "@/lib/db";
 import { organizationById } from "@/lib/db/identity";
 import { CSRF_FIELD, CSRF_HEADER, isValidCsrfToken } from "./csrf";
-import { appOrigin, isTrustedOrigin } from "./origin";
+import { appOrigin, isTrustedOrigin, loginOrigin } from "./origin";
 import { type BusinessAction, allows } from "./permissions";
 import { resolveIdentity, type Identity, type SessionContext } from "./session";
 import { safePath } from "./paths";
+import { FRESHNESS_SECONDS, type Freshness } from "./policy";
+import { authSessionVerifiedAt } from "@/lib/db/auth-session";
+import { recordAudit } from "@/lib/db/audit";
 import { mayUseChatBoss } from "./chat-boss";
 
 /**
@@ -39,6 +42,9 @@ import { mayUseChatBoss } from "./chat-boss";
  *      (AGENCY_NEVER: managing people, grants, billing, domains,
  *      ownership)
  *  11. the resource, if one is named, belongs to that business   resource_not_found
+ *  12. the authenticator is recent enough: within 24 hours for    stale_authenticator
+ *      anything through agency access; within five minutes for
+ *      a request that asks for it (approving agency access)
  *
  * Underneath, Postgres row-level security enforces tenant isolation again on
  * every query, so a mistake here still cannot read across businesses.
@@ -52,9 +58,9 @@ import { mayUseChatBoss } from "./chat-boss";
 /**
  * Staff access, under its one name.
  *
- * Turned off on 2026-10-07: Branding Centres is to reach clients only through
- * client-approved agency grants, which are not built yet. The staff screens
- * (Clients, Keys, Act as, the /chat workspace) are still in the code and ask
+ * Turned off on 2026-10-07: Branding Centres reaches clients only through
+ * client-approved agency grants (lib/db/agency.ts), which replaced Act as.
+ * The remaining staff screens (Clients, Keys) are still in the code and ask
  * for this action; no role carries it, so they are refused.
  */
 export const STAFF_ACCESS = "platform.staff" as const;
@@ -72,7 +78,8 @@ export type DenyReason =
   | "business_unavailable"
   | "not_a_member"
   | "role_lacks_action"
-  | "resource_not_found";
+  | "resource_not_found"
+  | "stale_authenticator";
 
 /** How the person holds the business: null for a membership, else the agency grant. */
 export type Via = { grantId: string; agencyName: string; expiresAt: Date } | null;
@@ -88,6 +95,8 @@ export type AuthorizationRequest = {
   resource?: Resource;
   /** Present for a state-changing request: what it carried. */
   mutation?: { origin: string | null; csrfToken: unknown };
+  /** The authenticator must be this recent (./policy.ts FRESHNESS_SECONDS). */
+  fresh?: Freshness;
 };
 
 /** The lookups the decision needs, injectable so the order can be tested without a database. */
@@ -96,6 +105,8 @@ export type AuthorizationDeps = {
   business: (id: string) => Promise<{ type: string; deletedAt: Date | null } | null>;
   resourceInBusiness: (ctx: SessionContext, businessId: string, resource: Resource) => Promise<boolean>;
   expectedOrigin: () => string | null;
+  /** When the sign-in behind the session last passed the authenticator. */
+  verifiedAt: (ctx: SessionContext) => Promise<Date | null>;
 };
 
 const defaultDeps: AuthorizationDeps = {
@@ -113,6 +124,7 @@ const defaultDeps: AuthorizationDeps = {
     }
   },
   expectedOrigin: appOrigin,
+  verifiedAt: (ctx) => authSessionVerifiedAt(ctx.authSessionId),
 };
 
 export async function authorize(
@@ -174,6 +186,16 @@ export async function authorize(
     return deny("resource_not_found", identity);
   }
 
+  // 12. The strictest window that applies.
+  const window = Math.min(
+    request.fresh ? FRESHNESS_SECONDS[request.fresh] : Infinity,
+    via ? FRESHNESS_SECONDS.agency : Infinity,
+  );
+  if (window !== Infinity) {
+    const at = await deps.verifiedAt(ctx);
+    if (!at || Date.now() - at.getTime() > window * 1000) return deny("stale_authenticator", identity);
+  }
+
   return {
     allowed: true,
     ctx: { ...ctx, scope: { ...ctx.scope, organizationId: businessId } },
@@ -207,6 +229,7 @@ export async function requirePage(
   if (decision.reason === "signed_out") redirect(signInPath(options.returnPath));
   if (decision.reason === "resource_not_found") notFound();
   if (decision.reason === "no_business") redirect(BUSINESS_CHOOSER);
+  if (decision.reason === "stale_authenticator") redirect(stepUpPath(options.returnPath));
   redirect(`/access?reason=${decision.reason}`);
 }
 
@@ -218,20 +241,25 @@ export async function requirePage(
 export async function requireAction(
   action: Action,
   formData: FormData,
-  options: { returnPath: string; resource?: Resource } = { returnPath: "/" },
+  options: { returnPath: string; resource?: Resource; fresh?: Freshness } = { returnPath: "/" },
 ): Promise<Granted> {
   const h = await headers();
   const decision = await authorize({
     action,
     resource: options.resource,
     mutation: { origin: h.get("origin"), csrfToken: formData.get(CSRF_FIELD) },
+    fresh: options.fresh,
   });
-  if (decision.allowed) return decision;
+  if (decision.allowed) {
+    await recordAgencyAct(decision, action);
+    return decision;
+  }
   if (decision.reason === "bad_origin" || decision.reason === "bad_csrf") {
     throw new Error("This request did not come from the portal.");
   }
   if (decision.reason === "signed_out") redirect(signInPath(options.returnPath));
   if (decision.reason === "no_business") redirect(BUSINESS_CHOOSER);
+  if (decision.reason === "stale_authenticator") redirect(stepUpPath(options.returnPath));
   redirect(`/access?reason=${decision.reason}`);
 }
 
@@ -247,7 +275,26 @@ export async function authorizeRequest(
   const mutation = ["GET", "HEAD", "OPTIONS"].includes(request.method.toUpperCase())
     ? undefined
     : { origin: request.headers.get("origin"), csrfToken: request.headers.get(CSRF_HEADER) };
-  return authorize({ action, resource: options.resource, mutation });
+  const decision = await authorize({ action, resource: options.resource, mutation });
+  if (decision.allowed && mutation) await recordAgencyAct(decision, action);
+  return decision;
+}
+
+/**
+ * Anything state-changing done through agency access goes on the business's
+ * audit record, with the person and the grant, before it happens.
+ */
+async function recordAgencyAct(granted: Granted, action: Action): Promise<void> {
+  if (!granted.via) return;
+  await recordAudit([
+    {
+      organizationId: granted.businessId,
+      actorUserId: granted.ctx.userId,
+      agencyGrantId: granted.via.grantId,
+      action: "agency.acted",
+      target: action,
+    },
+  ]);
 }
 
 /**
@@ -314,29 +361,28 @@ export async function requireSignedInAction(formData: FormData, returnPath: stri
  */
 export async function requireChatBossPage(returnPath: string): Promise<Granted> {
   const granted = await requirePage("jobs.read", { returnPath });
-  if (!mayUseChatBoss(granted.ctx.realEmail) || granted.ctx.actingAs) notFound();
+  if (!mayUseChatBoss(granted.ctx.email)) notFound();
   return granted;
 }
 
 /** For a Chat Boss server action: Origin and CSRF, then the same as the page. */
 export async function requireChatBossAction(formData: FormData): Promise<Granted> {
   const granted = await requireAction("jobs.read", formData, { returnPath: "/chat" });
-  if (!mayUseChatBoss(granted.ctx.realEmail) || granted.ctx.actingAs) notFound();
+  if (!mayUseChatBoss(granted.ctx.email)) notFound();
   return granted;
 }
 
 /** For a Chat Boss route handler; a state-changing method carries the CSRF header. */
 export async function authorizeChatBossRequest(request: Request): Promise<Decision> {
   const decision = await authorizeRequest(request, "jobs.read");
-  if (decision.allowed && (!mayUseChatBoss(decision.ctx.realEmail) || decision.ctx.actingAs)) {
+  if (decision.allowed && !mayUseChatBoss(decision.ctx.email)) {
     return { allowed: false, reason: "role_lacks_action", identity: { state: "signed_out" } };
   }
   return decision;
 }
 
 /**
- * The single entry of every staff screen: Clients, Keys, Act as and the /chat
- * workspace. It asks the central function for STAFF_ACCESS, which no role
+ * The single entry of every staff screen: Clients and Keys. It asks the central function for STAFF_ACCESS, which no role
  * carries, so it always refuses while staff access is off — the screens stay
  * in the code, and nothing reaches them.
  */
@@ -345,6 +391,17 @@ export async function requireStaffAccess(returnPath = "/"): Promise<SessionConte
   if (decision.allowed) return decision.ctx;
   if (decision.reason === "signed_out") redirect(signInPath(returnPath));
   redirect(`/access?reason=${decision.reason}`);
+}
+
+/**
+ * To the login host's "confirm it is you" (/auth/mfa/again): a fresh
+ * authenticator code, then back here through the handoff to returnPath. With
+ * no login host configured, the access page says what is needed instead.
+ */
+export function stepUpPath(returnPath: string): string {
+  const login = loginOrigin();
+  if (!login) return "/access?reason=stale_authenticator";
+  return `${login}/auth/mfa/again?return=${encodeURIComponent(safePath(returnPath))}`;
 }
 
 /** Into the handoff: the login host signs the person in, then sends them back to returnPath. */

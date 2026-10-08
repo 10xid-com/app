@@ -58,7 +58,6 @@ function ctx(role = "owner", organizationId: string | null = BUSINESS): SessionC
       email: "owner@example.com",
       isStaff: false,
       organizationId,
-      actingAs: null,
     },
     memberships: organizationId
       ? [
@@ -75,10 +74,6 @@ function ctx(role = "owner", organizationId: string | null = BUSINESS): SessionC
     agencyAccess: [],
     absoluteExpiresAt: new Date(Date.now() + 86_400_000),
     needsSecondFactor: false,
-    realUserId: "33333333-3333-4333-8333-333333333333",
-    realEmail: "owner@example.com",
-    realIsStaff: false,
-    actingAs: null,
   };
 }
 
@@ -92,6 +87,7 @@ function deps(overrides: Partial<AuthorizationDeps> = {}): AuthorizationDeps {
     business: async () => ({ type: "client", deletedAt: null }),
     resourceInBusiness: async () => true,
     expectedOrigin: () => ORIGIN,
+    verifiedAt: async () => new Date(),
     ...overrides,
   };
 }
@@ -396,6 +392,53 @@ describe("agency access", () => {
     const d = viaGrant("viewer", { member: "owner" });
     const decision = await authorize({ action: "staff.manage", mutation: mutation() }, d);
     expect(decision).toMatchObject({ allowed: true, role: "owner", via: null });
+  });
+});
+
+describe("12. how recent the authenticator is", () => {
+  const AGENCY = "55555555-5555-4555-8555-555555555555";
+  const ago = (seconds: number) => async () => new Date(Date.now() - seconds * 1000);
+  function agencyDeps(verifiedAt: AuthorizationDeps["verifiedAt"]) {
+    const c = ctx("owner", AGENCY);
+    c.scope.organizationId = BUSINESS;
+    c.agencyAccess = [
+      {
+        grantId: "44444444-4444-4444-8444-444444444444",
+        organizationId: BUSINESS,
+        organizationName: "Rotary",
+        organizationSlug: "rotary",
+        agencyOrganizationId: AGENCY,
+        agencyName: "Branding Centres",
+        role: "editor",
+        expiresAt: new Date(Date.now() + 86_400_000),
+      },
+    ];
+    return deps({ identity: async () => active(c), verifiedAt });
+  }
+
+  test("agency access: within the last day, or not at all", async () => {
+    expect(await reason({ action: "jobs.read" }, agencyDeps(ago(23 * 3600)))).toBe("allowed");
+    expect(await reason({ action: "jobs.read" }, agencyDeps(ago(24 * 3600 + 60)))).toBe("stale_authenticator");
+    expect(await reason({ action: "jobs.read" }, agencyDeps(async () => null))).toBe("stale_authenticator");
+  });
+
+  test("a member of the business is not held to the day", async () => {
+    let asked = false;
+    const d = deps({ verifiedAt: async () => ((asked = true), null) });
+    expect(await reason({ action: "jobs.read" }, d)).toBe("allowed");
+    expect(asked).toBe(false);
+  });
+
+  test("a decision on agency access: within five minutes, for members too", async () => {
+    const request = { action: "grants.approve" as const, mutation: mutation(), fresh: "decision" as const };
+    expect(await reason(request, deps({ verifiedAt: ago(4 * 60) }))).toBe("allowed");
+    expect(await reason(request, deps({ verifiedAt: ago(6 * 60) }))).toBe("stale_authenticator");
+    expect(await reason(request, deps({ verifiedAt: async () => null }))).toBe("stale_authenticator");
+  });
+
+  test("it comes after the role: a stale viewer still hears it lacks the action", async () => {
+    const d = deps({ identity: async () => active(ctx("viewer")), verifiedAt: async () => null });
+    expect(await reason({ action: "grants.approve", mutation: mutation(), fresh: "decision" }, d)).toBe("role_lacks_action");
   });
 });
 

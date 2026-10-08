@@ -23,7 +23,7 @@ export type WorkspaceAccess = {
 };
 
 export async function workspaceAccess(ctx: SessionContext | null): Promise<WorkspaceAccess | null> {
-  if (!ctx || ctx.needsSecondFactor || ctx.actingAs || !mayUseChatBoss(ctx.realEmail)) return null;
+  if (!ctx || ctx.needsSecondFactor || !mayUseChatBoss(ctx.email)) return null;
   const organizationId = ctx.scope.organizationId;
   if (!organizationId) return null;
 
@@ -31,7 +31,7 @@ export async function workspaceAccess(ctx: SessionContext | null): Promise<Works
   if (!org || org.type !== "client" || org.deletedAt) return null;
 
   return {
-    owner: { organizationId, userId: ctx.realUserId },
+    owner: { organizationId, userId: ctx.userId },
     scope: { ...ctx.scope, organizationId, isStaff: false },
     client: { id: org.id, name: org.name, isHouse: false },
   };

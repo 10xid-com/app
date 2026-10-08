@@ -202,22 +202,6 @@ export const PAGES: PageRecord[] = [
     group: "Staff",
   },
   {
-    id: "act-as",
-    path: "/act-as",
-    name: "Act as",
-    purpose:
-      "Be somebody else for an hour, to see Flow from their side. Reason required, named across every screen, and never able to change their address, enrol an authenticator or read their recovery codes.",
-    // Not "staff", and the difference is load-bearing. While acting as a
-    // client the session's effective role IS client, and this page is the way
-    // back — hiding it from the audience it is currently wearing would leave
-    // the exit reachable only from a banner. The page itself refuses anybody
-    // whose REAL session is not staff.
-    audience: "member",
-    kind: "page",
-    file: "app/act-as/page.tsx",
-    group: "Staff",
-  },
-  {
     id: "chat",
     path: "/chat",
     name: "Chat Boss",

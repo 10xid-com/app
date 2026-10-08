@@ -39,6 +39,11 @@ const DENIED: Record<string, { title: string; intro: string }> = {
     intro:
       "Your role in this business doesn't allow it. If you need it, ask an owner or a manager of the business to change your role.",
   },
+  stale_authenticator: {
+    title: "Confirm it is you",
+    intro:
+      "This needs a recent code from your authenticator app: within the last day for agency access, within five minutes to approve it. Sign in again to continue.",
+  },
   staff_access_off: {
     title: "Staff access is turned off",
     intro:

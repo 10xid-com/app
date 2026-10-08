@@ -42,6 +42,25 @@ export const SESSION_POLICY: Record<
   staff: { idleSeconds: SESSION_IDLE_SECONDS, absoluteSeconds: SESSION_ABSOLUTE_SECONDS },
 };
 
+/**
+ * How recent the authenticator must be (login's /auth/mfa/again refreshes it):
+ *
+ *   agency      to use agency access at all — another business's records,
+ *               through a grant — the authenticator within the last day;
+ *   decision    to open a business to an agency (approve a grant, approve
+ *               or unblock a person) — within the last five minutes, typed
+ *               for the decision. Declining, blocking and ending access
+ *               never wait on it.
+ *
+ * Paolo's decisions of 2026-10-08.
+ */
+export const FRESHNESS_SECONDS = {
+  agency: 24 * 60 * 60,
+  decision: 5 * 60,
+} as const;
+
+export type Freshness = keyof typeof FRESHNESS_SECONDS;
+
 /** Sign-in codes are short-lived and few. */
 export const SIGN_IN_CODE = {
   ttlSeconds: 10 * 60,
@@ -68,22 +87,6 @@ export const SSO_TICKET_TTL_SECONDS = 30;
 export const STAFF_GRANT_SECONDS = 30 * 60;
 
 /**
- * Acting as somebody else: one hour, then it stops.
- *
- * Twice the staff-to-client grant above, and for a different reason. Opening a
- * client is a look at a list; being somebody is doing their work, and half an
- * hour is short enough that the clock, rather than the task, decides when you
- * stop. An hour is long enough to walk a whole job through Flow from one
- * person's side and short enough that a browser left open over lunch is not
- * still somebody else at three o'clock.
- *
- * It is not extended in place. Renewal writes a NEW grant, with its own reason
- * and its own hour, so the record says "he was Joel again at 15:40, because —"
- * rather than showing one row that quietly grew.
- */
-export const ACT_AS_GRANT_SECONDS = 60 * 60;
-
-/**
  * The floor on a typed reason, shared with the staff-to-client grant.
  *
  * Eight characters does not make a reason good. It makes "." impossible, which
@@ -93,26 +96,6 @@ export const ACT_AS_GRANT_SECONDS = 60 * 60;
  */
 export const GRANT_REASON_MIN = 8;
 export const GRANT_REASON_MAX = 200;
-
-/**
- * The capability that permits acting as a STAFF account.
- *
- * Acting as a client is bounded by what that client can see: one company, their
- * own jobs. Acting as a colleague who is themselves staff is not bounded by
- * anything, so it is the one target that needs more than a staff session.
- *
- * It is a CAPABILITY rather than a hard-coded rule because "Paolo may act as
- * anyone, staff included, until further notice" is exactly a permission row:
- * granted deliberately, revocable in one statement, visible in the same table
- * as everything else somebody may do. A constant in the source that named him
- * would need a deploy to withdraw, which is not what "until further notice"
- * means.
- *
- * Checked against the REAL actor, in an INTERNAL organization — the house, not
- * a client. A client company must not be able to hand out power over staff by
- * granting a capability inside its own walls.
- */
-export const ACT_AS_STAFF_CAPABILITY = "user.act_as.staff";
 
 /**
  * What one API key may file, per hour.
@@ -176,10 +159,7 @@ export function isStaffMembership(m: RoleDerivationMembership): boolean {
 /**
  * The session role somebody's memberships add up to.
  *
- * Used by startSession() when a session is created and by getSessionContext()
- * when an act-as grant makes the effective person somebody else. The same
- * function in both places on purpose: two copies of an authentication rule is
- * one copy that eventually gets fixed alone.
+ * Used by startSession() when a session is created.
  */
 export function sessionRoleFor(
   memberships: readonly RoleDerivationMembership[],

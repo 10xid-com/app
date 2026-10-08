@@ -174,6 +174,7 @@ afterAll(async () => {
     "delete from agency_grant_people where grant_id in (select id from agency_grants where client_organization_id = any($1::uuid[]))",
     [ids],
   );
+  await owner.query("delete from audit_events where organization_id = any($1::uuid[])", [ids]);
   await owner.query("delete from agency_grants where client_organization_id = any($1::uuid[])", [ids]);
   await owner.query("delete from sessions where user_id in (select id from users where email like $1)", [emails]);
   await owner.query("delete from memberships where organization_id = any($1::uuid[])", [ids]);

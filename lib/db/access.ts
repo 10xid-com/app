@@ -245,8 +245,8 @@ export async function can(
 /**
  * May this person do this thing in ANY of these organizations?
  *
- * Some capabilities are held in a place rather than over a thing. "May act as
- * a staff account" is one: it belongs to the house, so the question is whether
+ * Some capabilities are held in a place rather than over a thing — one that
+ * belongs to the house, say — so the question is whether
  * the person holds it in any INTERNAL organization they are a member of, and
  * the caller supplies that list rather than this deciding what "the house"
  * means.
