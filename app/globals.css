@@ -198,88 +198,11 @@ body {
 }
 
 /**
- * The sideways-scrolling nav.
+ * The Pin — 10XiD's own badge, at the top of the navigation.
  *
- * Six links do not fit across a phone, so the strip scrolls, and every version
- * of this has come down to the same question: how does anybody KNOW it scrolls?
- *
- *   1. overflow-x-auto and nothing else. The browser drew its default bar
- *      straight through the link text.
- *   2. scrollbar-width: thin, with the track given its own space below the
- *      pills. Fixed the overlap, fixed nothing else — because on iOS and on
- *      default macOS the scrollbar is an overlay that only exists during a
- *      scroll. At rest the strip looked like it ended at the right edge.
- *   3. The native bar hidden and one drawn by hand under the pills — always
- *      visible, tracking position, draggable. This worked.
- *   4. The same hiding, but an arrow at each end of the strip INSTEAD of the
- *      bar, dimmed when there is nothing that way. A 24px button is something
- *      you can tap; a 3px bar is not. This worked too.
- *   5. Where it is now: both at once, because 3 and 4 were never answering the
- *      same half of the question. The bar is what you READ — it is the only
- *      part that says how much of the strip you are seeing and where in it you
- *      are, and no arrow can report that two pills remain. The arrows are what
- *      you PRESS — a bar that reads well at 3px is still not a target. They
- *      cost different things, which is why keeping both is affordable: the
- *      arrows cost 56px of horizontal room out of a 262px zone at 390px, the
- *      bar costs vertical room in a column whose height is set by the 48px
- *      Mark and not by the nav, so the header stays 64px either way.
- *
- * The rule that survived all five: a scrolling region with no affordance is
- * menu items nobody knows exist, which is the same defect as not rendering
- * them. Hiding the native bar is only allowed BECAUSE something replaces it —
- * so if the bar and the arrows both ever go, something else has to take their
- * place.
- */
-.portal-nav-scroll {
-  /*
-   * The browser's own scrollbar is hidden here, and the bar you see under the
-   * nav — plus the arrows at its ends — is drawn by the component instead.
-   * That is not decoration.
-   *
-   * On iOS, and on macOS with the default "when scrolling" setting, the
-   * scrollbar is an OVERLAY: it fades in during a scroll and fades out again
-   * a moment later. At rest — which is how a page looks when you arrive on
-   * it — there is nothing on screen saying the strip scrolls, so the links
-   * past the right edge may as well not exist. Reported from a phone: the
-   * pills "aren't working well".
-   *
-   * `scrollbar-width: thin` was the previous attempt and cannot fix this. It
-   * restyles a bar that is still only painted while a scroll is happening.
-   * Nor is this the old defect of hiding the scrollbar and offering nothing:
-   * what replaces it is always visible, tracks position, and can be dragged,
-   * and an arrow at each end of the strip can be tapped.
-   */
-  scrollbar-width: none;
-
-  /*
-   * `safe` is doing real work here and is not decoration.
-   *
-   * The links are the middle zone of the bar, so they want centring. Plain
-   * `center` cannot be used on a strip that also scrolls: when the content is
-   * wider than the box, a centred flex row overflows in BOTH directions, and
-   * the overflow off the start edge is unreachable — there is no scroll
-   * position that reveals it, so the first link or two simply cease to exist
-   * on a narrow screen. That is the same class of defect as hiding the
-   * scrollbar, and it is why this is not `justify-center`.
-   *
-   * `safe center` centres while everything fits and silently degrades to
-   * flex-start the moment it does not, which is precisely the rule wanted.
-   */
-  justify-content: safe center;
-}
-
-/* Safari and Chrome need the prefixed pseudo-element; scrollbar-width alone
-   leaves the overlay bar in place on exactly the phone this was reported from. */
-.portal-nav-scroll::-webkit-scrollbar {
-  display: none;
-}
-
-/**
- * The Pin — the account control at the top right of the bar.
- *
- * A Pin is deliberately quiet. It is the one thing on the header that is about
- * YOU rather than about the organization whose Mark sits on the left, so it has
- * to be legible without ever pulling the eye off the Mark.
+ * A Pin is deliberately quiet. It is the platform, not the organization whose
+ * Mark sits at the foot of the navigation, so it has to be legible without ever
+ * pulling the eye off the Mark.
  *
  * The glyph is used as a MASK over a solid fill: /10xid-pin.png is a pure WHITE
  * 10XiD glyph in a rounded square, its alpha channel is the shape, and the
@@ -313,14 +236,11 @@ body {
  * A blue Pin — which is what shipped first, using the Mark's own #17599b —
  * reads as part of the client's brand. A grey one cannot.
  *
- * The mask goes on this span and not on the button, because a mask clips
- * everything the element paints — including its focus ring. Keeping them on
- * separate elements lets the button keep a visible focus outline and a hover
- * plate while the glyph inside stays masked.
+ * The mask goes on a span and never on a link or button, because a mask clips
+ * everything the element paints — including its focus ring.
  *
- * -webkit-mask is not optional. Safari still needs the prefixed property, and
- * this is exactly the control a keyboard-and-Safari user reaches for to sign
- * out; unprefixed alone leaves them an unmasked blue rectangle.
+ * -webkit-mask is not optional. Safari still needs the prefixed property;
+ * unprefixed alone leaves an unmasked rectangle.
  */
 .portal-pin {
   background-color: var(--pin-ink);

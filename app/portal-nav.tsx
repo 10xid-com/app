@@ -1,299 +1,442 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Icon } from "./_components/icons";
+import type { NavLink } from "./_components/sections";
 
 /**
- * The header's behaviour, split out because it needs the browser.
+ * The frame's behaviour, split out because it needs the browser.
  *
- * Two things live here that a server component cannot do: the bar hides as you
- * read down and comes back the moment you head up, and the account menu opens.
- * Everything the menu ACTS on is still a server action passed in as children —
- * signing out does not become a client concern just because the menu that holds
- * it is one.
+ * Three columns, from Paolo's sketch of 2026-10-08: the navigation on the
+ * left, the page in the middle, Chat Boss on the right. Either side column
+ * folds away, and the choice is remembered (a cookie the server reads, so a
+ * folded column is drawn folded rather than flashing open first).
+ *
+ * Below 1024px the navigation is a drawer, and below 1280px so is Chat Boss:
+ * three columns do not fit a laptop with the page still readable, and the page
+ * is the thing a person came for. Drawers always start closed, whatever the
+ * cookie says; it is about the wide layout.
+ *
+ * Everything the account menu ACTS on is still a server action passed in as
+ * children — signing out does not become a client concern just because the
+ * menu that holds it is one.
  */
 
-/**
- * Hide going down, reappear going up.
- *
- * Not a scroll position test — "am I past 100px" leaves the bar covering the
- * top of the page the whole way down. It is a DIRECTION test, so the bar is
- * gone while you are reading and back as soon as you reach for it.
- *
- * The 6px threshold is deliberate. Without it, the rubber-band overscroll on
- * iOS and a trackpad's settling jitter both flicker the bar several times a
- * second, which is worse than never hiding it at all.
- *
- * Always visible at the very top, so the first thing anybody sees on a fresh
- * page is the navigation rather than an empty strip.
- */
-function useHideOnScrollDown() {
-  const [visible, setVisible] = useState(true);
-  const lastY = useRef(0);
+export type NavGroup = {
+  /** A heading over the group, linking somewhere when `href` is given. */
+  title?: { label: string; href: string };
+  links: NavLink[];
+};
 
-  useEffect(() => {
-    lastY.current = window.scrollY;
+const NAV_COOKIE = "portal_nav";
+const CHAT_COOKIE = "portal_chat";
+const WIDE_NAV = "(min-width: 1024px)";
+const WIDE_CHAT = "(min-width: 1280px)";
 
-    const onScroll = () => {
-      const y = window.scrollY;
-      const delta = y - lastY.current;
-      if (Math.abs(delta) < 6) return;
-      setVisible(delta < 0 || y < 64);
-      lastY.current = y;
-    };
-
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
-  }, []);
-
-  return visible;
+/** A layout preference, not a secret: readable by the page, a year long. */
+function remember(name: string, open: boolean) {
+  const secure = window.location.protocol === "https:" ? "; Secure" : "";
+  document.cookie = `${name}=${open ? "open" : "closed"}; Path=/; Max-Age=31536000; SameSite=Lax${secure}`;
 }
 
-/**
- * Watch a scrolling strip: say whether it can go further either way, say how
- * much of it you are looking at and where, and offer both ways of moving it.
- *
- * Needed because the browser will not tell anyone. On iOS, and on macOS at its
- * default setting, the scrollbar is an OVERLAY: it fades in during a scroll and
- * fades out again. At rest — which is how a page looks when you arrive on it —
- * nothing on screen says the strip scrolls, so the links past the right edge
- * may as well not be rendered. `scrollbar-width: thin` cannot fix that; it
- * restyles a bar that is still only painted while a scroll is happening.
- *
- * Two answers to that have been tried one after the other, and the header now
- * carries BOTH, so this hook feeds both. A bar drawn by hand under the pills
- * says where you are and how much more there is. An arrow at each end gives you
- * something to tap, which a 3px bar never really did. Neither says the other's
- * thing: an arrow cannot report that two pills remain, and a bar cannot be
- * pressed.
- *
- * What comes back:
- *   overflowing     is there anything past an edge at all — when not, neither
- *                   affordance is rendered, because a control that does nothing
- *                   is worse than no control
- *   size, start     the thumb's width and offset, as FRACTIONS of the track
- *   atStart, atEnd  whether the arrow at that end can still do anything; an
- *                   arrow you press with nothing happening is worse than none
- *   page            move one screenful, less a margin
- *   onPointerDown   drag the thumb, or tap the track to jump there
- *
- * size and start are fractions rather than pixels so the caller can lay the
- * thumb out in percentages and never re-measure on a resize. That is also what
- * lets the track run the full width of the nav zone, arrows included, while
- * still reporting the strip's own proportions.
- *
- * The ref comes back as its own value rather than a key on the returned object:
- * react-hooks/refs treats any object holding a `ref` property as a ref itself,
- * and then reads every other field off it as an access to `.current` during
- * render. A tuple keeps the flags plainly flags and the numbers plainly numbers.
- */
-function useScrollStrip(
-  deps: unknown,
-): [
-  React.RefObject<HTMLElement | null>,
-  {
-    overflowing: boolean;
-    size: number;
-    start: number;
-    atStart: boolean;
-    atEnd: boolean;
-    page: (direction: 1 | -1) => void;
-    onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => void;
-  },
-] {
-  const ref = useRef<HTMLElement>(null);
-  const [strip, setStrip] = useState({
-    overflowing: false,
-    size: 1,
-    start: 0,
-    atStart: true,
-    atEnd: false,
-  });
+const wide = (query: string) => window.matchMedia(query).matches;
 
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
+/** For Chat Boss's own close button, which lives inside the panel it closes. */
+const ChatPanelContext = createContext<{ close: () => void }>({ close: () => {} });
+export const useChatPanel = () => useContext(ChatPanelContext);
 
-    const measure = () => {
-      const { scrollWidth, clientWidth, scrollLeft } = el;
-      const hidden = scrollWidth - clientWidth;
-
-      // A fraction of a pixel of overflow is a rounding artefact, not content.
-      if (hidden <= 1) {
-        setStrip({
-          overflowing: false,
-          size: 1,
-          start: 0,
-          atStart: true,
-          atEnd: false,
-        });
-        return;
-      }
-
-      /*
-       * The thumb is as wide a share of the track as the visible strip is of
-       * the whole strip — but never narrower than an eighth, or with enough
-       * links it becomes a speck nobody can see or grab.
-       *
-       * Once that floor is in play the thumb no longer travels the full track,
-       * so its position is the scroll PROGRESS (0 to 1) across whatever travel
-       * is left. Using scrollLeft/scrollWidth instead would run the thumb off
-       * the end of the track at the last link.
-       */
-      const size = Math.max(clientWidth / scrollWidth, 0.125);
-      const progress = scrollLeft / hidden;
-
-      /*
-       * Both end comparisons carry a 1px tolerance, because scrollLeft is
-       * fractional on a scaled display and an exact test leaves the last
-       * arrow enabled at the end of the strip, doing nothing.
-       */
-      setStrip({
-        overflowing: true,
-        size,
-        start: progress * (1 - size),
-        atStart: scrollLeft <= 1,
-        atEnd: scrollLeft >= hidden - 1,
-      });
-    };
-
-    measure();
-    el.addEventListener("scroll", measure, { passive: true });
-
-    // Catches the bar getting narrower, and the links changing with it.
-    const observer = new ResizeObserver(measure);
-    observer.observe(el);
-    for (const child of Array.from(el.children)) observer.observe(child);
-
-    return () => {
-      el.removeEventListener("scroll", measure);
-      observer.disconnect();
-    };
-  }, [deps]);
-
-  /**
-   * Move one screenful, less a margin.
-   *
-   * 80% rather than 100% on purpose: a full-width jump lands with every pill
-   * on screen unfamiliar, and you lose your place. Leaving a fifth behind
-   * keeps one pill you have already read in view as an anchor.
-   */
-  const page = (direction: 1 | -1) => {
-    const el = ref.current;
-    if (!el) return;
-    const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    el.scrollBy({
-      left: direction * el.clientWidth * 0.8,
-      behavior: still ? "auto" : "smooth",
-    });
-  };
-
-  /**
-   * Drag the thumb, or tap anywhere on the track to jump there.
-   *
-   * Pointer events rather than mouse events, so a finger and a trackpad take
-   * the same path, and pointer capture so the drag survives the pointer
-   * leaving a 3px-tall target — which it will, immediately.
-   *
-   * The track is measured from the element the pointer landed on rather than
-   * from the strip, which matters now that the two are different widths: the
-   * track spans the arrows as well, so a tap is a fraction of the TRACK mapped
-   * onto the strip's own scrollWidth.
-   */
-  const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    const el = ref.current;
-    if (!el) return;
-
-    const rect = event.currentTarget.getBoundingClientRect();
-    const hidden = el.scrollWidth - el.clientWidth;
-
-    const scrollTo = (clientX: number) => {
-      // Centre the visible strip on the pointer, which is what makes a tap on
-      // the track land where the eye expects rather than one strip-width off.
-      const fraction = (clientX - rect.left) / rect.width;
-      el.scrollLeft = Math.min(hidden, Math.max(0, fraction * el.scrollWidth - el.clientWidth / 2));
-    };
-
-    event.currentTarget.setPointerCapture(event.pointerId);
-    scrollTo(event.clientX);
-
-    const onMove = (e: PointerEvent) => scrollTo(e.clientX);
-    const onUp = () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-  };
-
-  return [ref, { ...strip, page, onPointerDown }];
+function isActive(pathname: string, href: string) {
+  return pathname === href || pathname.startsWith(`${href}/`);
 }
 
-/**
- * One of the two arrows.
- *
- * aria-hidden and out of the tab order, deliberately. This is a POINTER
- * affordance: a keyboard user tabs through the pills and the browser scrolls
- * each one into view on focus, which works whether these exist or not. Putting
- * them in the tab order would add two stops in front of the navigation on
- * every page, to reach something keyboard users do not need.
- *
- * Dimmed rather than removed at the ends of the strip. Removing it would take
- * its width out of the row and shift every pill sideways mid-scroll, which
- * reads as the bar twitching.
- */
-function NavArrow({
-  direction,
-  disabled,
-  onClick,
-}: {
-  direction: "left" | "right";
-  disabled: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      aria-hidden
-      tabIndex={-1}
-      disabled={disabled}
-      onClick={onClick}
-      className="grid h-7 w-6 flex-none place-items-center rounded-md
-                 text-ink-faint transition-colors hover:bg-sunk hover:text-ink
-                 disabled:pointer-events-none disabled:opacity-25"
-    >
-      <svg
-        viewBox="0 0 16 16"
-        aria-hidden
-        className="h-4 w-4"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <path d={direction === "left" ? "M10 3 5 8l5 5" : "M6 3l5 5-5 5"} />
-      </svg>
-    </button>
-  );
-}
-
-export function PortalHeader({
+export function PortalFrame({
   organizationName,
   organizationLogoUrl,
   email,
-  links,
+  groups,
+  menu,
+  banners,
+  chat,
+  navOpenInitially,
+  chatOpenInitially,
+  wide: wideMain,
+  children,
+}: {
+  organizationName: string;
+  organizationLogoUrl: string | null;
+  email: string;
+  groups: { main: NavGroup[]; foot: NavLink[] };
+  /** Sign out, and anything else that needs a server action. */
+  menu: ReactNode;
+  /** Acting-as and agency notices: above the page, on every page. */
+  banners: ReactNode;
+  /** The Chat Boss panel, or null where the page itself is Chat Boss. */
+  chat: ReactNode | null;
+  navOpenInitially: boolean;
+  chatOpenInitially: boolean;
+  /** The page fills the column edge to edge (the workspace) instead of a reading column. */
+  wide: boolean;
+  children: ReactNode;
+}) {
+  const pathname = usePathname();
+  const [navOpen, setNavOpen] = useState(navOpenInitially);
+  const [navDrawer, setNavDrawer] = useState(false);
+  const [chatOpen, setChatOpen] = useState(chatOpenInitially);
+  const [chatDrawer, setChatDrawer] = useState(false);
+
+  // What the top bar names: the deepest link this page sits under. A group's
+  // own heading comes first, so /channels reads "Channels" rather than its
+  // "Add channel" row.
+  const current = useMemo(() => {
+    const titles = groups.main.flatMap((g) =>
+      g.title ? [{ href: g.title.href, label: g.title.label, icon: "channels" as const }] : [],
+    );
+    return [...titles, ...groups.main.flatMap((g) => g.links), ...groups.foot]
+      .filter((l) => isActive(pathname, l.href))
+      .sort((a, b) => b.href.length - a.href.length)[0];
+  }, [groups, pathname]);
+
+  // Escape closes whichever drawer is open; the wide columns stay as they are.
+  useEffect(() => {
+    if (!navDrawer && !chatDrawer) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      setNavDrawer(false);
+      setChatDrawer(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [navDrawer, chatDrawer]);
+
+  const showNav = () => {
+    if (wide(WIDE_NAV)) {
+      setNavOpen(true);
+      remember(NAV_COOKIE, true);
+    } else setNavDrawer(true);
+  };
+  const hideNav = () => {
+    if (wide(WIDE_NAV)) {
+      setNavOpen(false);
+      remember(NAV_COOKIE, false);
+    }
+    setNavDrawer(false);
+  };
+  const openChat = () => {
+    if (wide(WIDE_CHAT)) {
+      setChatOpen(true);
+      remember(CHAT_COOKIE, true);
+    } else setChatDrawer(true);
+  };
+  // Memoised so the panel's context does not change on every render of the frame.
+  const chatPanel = useMemo(
+    () => ({
+      close: () => {
+        if (wide(WIDE_CHAT)) {
+          setChatOpen(false);
+          remember(CHAT_COOKIE, false);
+        }
+        setChatDrawer(false);
+      },
+    }),
+    [],
+  );
+
+  return (
+    <div className="flex h-dvh overflow-hidden bg-ground">
+      {/* LEFT — the navigation. A column when wide and open, a drawer below 1024px. */}
+      <aside
+        aria-label="Navigation"
+        className={`${navDrawer ? "fixed inset-y-0 left-0 z-50 flex w-72 max-w-[85vw] shadow-card-lg" : "hidden"}
+                    ${navOpen ? "lg:static lg:z-auto lg:flex lg:w-60 lg:max-w-none lg:shadow-none" : "lg:hidden"}
+                    flex-none flex-col border-r border-line-soft bg-sunk`}
+      >
+        <Sidebar
+          groups={groups}
+          pathname={pathname}
+          organizationName={organizationName}
+          organizationLogoUrl={organizationLogoUrl}
+          email={email}
+          menu={menu}
+          onHide={hideNav}
+          onNavigate={() => setNavDrawer(false)}
+        />
+      </aside>
+
+      {/* CENTRE — the page. */}
+      <div className="relative flex min-w-0 flex-1 flex-col">
+        <div className="flex h-14 flex-none items-center gap-2 border-b border-line-soft bg-ground px-3 sm:px-4">
+          <button
+            type="button"
+            onClick={showNav}
+            aria-label="Show navigation"
+            aria-expanded={navDrawer}
+            className={`${navOpen ? "lg:hidden" : ""} grid h-9 w-9 flex-none place-items-center rounded-lg
+                        text-ink-soft transition-colors hover:bg-sunk hover:text-ink
+                        focus-visible:outline-2 focus-visible:outline-brand`}
+          >
+            <Icon name="sidebar-left" />
+          </button>
+          {/* The Mark again on a narrow screen, where the sidebar that carries it is folded away. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={organizationLogoUrl ?? "/10xid-mark.png"}
+            alt=""
+            className="h-7 w-7 flex-none rounded-[3px] object-contain lg:hidden"
+          />
+          <p className="flex min-w-0 flex-1 items-center gap-2 text-[15px] font-[600] text-ink">
+            {current ? <Icon name={current.icon} className="hidden h-[18px] w-[18px] text-ink-soft sm:block" /> : null}
+            <span className="truncate">{current?.label ?? organizationName}</span>
+          </p>
+          <Link
+            href="/channels/id"
+            className="flex flex-none items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5
+                       text-[13px] font-[560] text-ink shadow-card transition-colors hover:bg-sunk"
+          >
+            <Icon name="eye" className="h-4 w-4" />
+            Preview iD
+          </Link>
+        </div>
+
+        {banners}
+
+        <main className="min-h-0 flex-1 overflow-y-auto">
+          <div className={wideMain ? "h-full" : "mx-auto max-w-5xl px-4 pb-28 pt-8"}>{children}</div>
+        </main>
+
+        {/*
+          "Work with Chat Boss": the way back to the panel once it is folded
+          away, floating over the bottom of the page where the sketch put it.
+          Gone whenever the panel itself is showing.
+        */}
+        {chat ? (
+          <button
+            type="button"
+            onClick={openChat}
+            className={`${chatOpen ? "xl:hidden" : ""} ${chatDrawer ? "hidden" : ""}
+                        absolute bottom-5 left-1/2 z-30 flex -translate-x-1/2 items-center gap-2.5 whitespace-nowrap
+                        rounded-full border border-line bg-surface py-2 pl-4 pr-2 text-[14px] font-[600] text-ink
+                        shadow-card-lg transition-colors hover:bg-sunk
+                        focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand`}
+          >
+            Work with Chat Boss
+            <span className="grid h-7 w-7 place-items-center rounded-full bg-brand-surface text-brand-on-surface">
+              <Icon name="sidebar-right" className="h-4 w-4" />
+            </span>
+          </button>
+        ) : null}
+      </div>
+
+      {/* RIGHT — Chat Boss. A column when wide and open, a drawer below 1280px. */}
+      {chat ? (
+        <aside
+          aria-label="Chat Boss"
+          className={`${chatDrawer ? "fixed inset-y-0 right-0 z-50 flex w-full max-w-[420px] shadow-card-lg" : "hidden"}
+                      ${chatOpen ? "xl:static xl:z-auto xl:flex xl:w-[380px] xl:max-w-none xl:shadow-none" : "xl:hidden"}
+                      flex-none flex-col border-l border-line-soft bg-surface`}
+        >
+          <ChatPanelContext.Provider value={chatPanel}>{chat}</ChatPanelContext.Provider>
+        </aside>
+      ) : null}
+
+      {navDrawer || chatDrawer ? (
+        <button
+          type="button"
+          aria-label="Close panel"
+          onClick={() => {
+            setNavDrawer(false);
+            setChatDrawer(false);
+          }}
+          className={`fixed inset-0 z-40 bg-ink/30 ${navDrawer ? "lg:hidden" : "xl:hidden"}`}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function Sidebar({
+  groups,
+  pathname,
+  organizationName,
+  organizationLogoUrl,
+  email,
+  menu,
+  onHide,
+  onNavigate,
+}: {
+  groups: { main: NavGroup[]; foot: NavLink[] };
+  pathname: string;
+  organizationName: string;
+  organizationLogoUrl: string | null;
+  email: string;
+  menu: ReactNode;
+  onHide: () => void;
+  onNavigate: () => void;
+}) {
+  const router = useRouter();
+  const [query, setQuery] = useState("");
+
+  /*
+   * Search finds a screen by name. It is the honest scope for it today: most
+   * sections have nothing in them yet, and a box that promised to search
+   * orders and customers would find nothing in either.
+   */
+  const q = query.trim().toLowerCase();
+  const found = q
+    ? [...groups.main.flatMap((g) => g.links), ...groups.foot].filter((l) => l.label.toLowerCase().includes(q))
+    : null;
+
+  const go = () => {
+    setQuery("");
+    onNavigate();
+  };
+
+  return (
+    <>
+      {/*
+        The top: the platform, quietly — the Pin in grey and the name beside
+        it — and the button that folds the column away. The client's own Mark
+        is at the foot, in colour, on the account button.
+      */}
+      <div className="flex h-14 flex-none items-center gap-2 px-3">
+        <Link href="/dashboard" onClick={go} className="flex min-w-0 flex-1 items-center gap-2">
+          <span aria-hidden className="portal-pin block h-7 w-7 flex-none" />
+          <span className="text-[16px] font-[650] tracking-[-0.01em] text-ink">10XiD</span>
+        </Link>
+        <button
+          type="button"
+          onClick={onHide}
+          aria-label="Hide navigation"
+          className="grid h-9 w-9 flex-none place-items-center rounded-lg text-ink-soft transition-colors
+                     hover:bg-surface hover:text-ink focus-visible:outline-2 focus-visible:outline-brand"
+        >
+          <Icon name="sidebar-left" />
+        </button>
+      </div>
+
+      <div className="px-3 pb-2">
+        <label className="flex items-center gap-2 rounded-lg border border-line bg-surface px-2.5 py-1.5
+                          text-ink-faint focus-within:border-brand focus-within:outline-2 focus-within:outline-brand/30">
+          <Icon name="search" className="h-4 w-4" />
+          <span className="sr-only">Search</span>
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && found?.[0]) {
+                router.push(found[0].href);
+                go();
+              }
+              if (e.key === "Escape") setQuery("");
+            }}
+            placeholder="Search"
+            className="min-w-0 flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-ink-faint"
+          />
+        </label>
+      </div>
+
+      <nav aria-label="Sections" className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
+        {found ? (
+          found.length ? (
+            <ul className="space-y-0.5">
+              {found.map((l) => (
+                <li key={`${l.href} ${l.label}`}>
+                  <NavItem link={l} active={isActive(pathname, l.href)} onClick={go} />
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="px-2.5 py-2 text-sm text-ink-faint">Nothing called “{query.trim()}”.</p>
+          )
+        ) : (
+          groups.main.map((group, i) => (
+            <div key={group.title?.label ?? i} className={i ? "mt-5" : ""}>
+              {group.title ? (
+                <Link
+                  href={group.title.href}
+                  onClick={go}
+                  className="mb-1 flex items-center gap-1 rounded-md px-2.5 py-1 text-[12.5px] font-[600]
+                             text-ink-soft transition-colors hover:text-ink"
+                >
+                  {group.title.label}
+                  <Icon name="chevron-right" className="h-3.5 w-3.5" />
+                </Link>
+              ) : null}
+              <ul className="space-y-0.5">
+                {group.links.map((l) => (
+                  <li key={`${l.href} ${l.label}`}>
+                    <NavItem link={l} active={isActive(pathname, l.href)} onClick={go} />
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))
+        )}
+      </nav>
+
+      <div className="flex-none border-t border-line-soft px-2 pb-2 pt-2">
+        {found ? null : (
+          <ul className="mb-2 space-y-0.5">
+            {groups.foot.map((l) => (
+              <li key={l.href}>
+                <NavItem link={l} active={isActive(pathname, l.href)} onClick={go} />
+              </li>
+            ))}
+          </ul>
+        )}
+        <AccountButton
+          organizationName={organizationName}
+          organizationLogoUrl={organizationLogoUrl}
+          email={email}
+          menu={menu}
+        />
+      </div>
+    </>
+  );
+}
+
+function NavItem({ link, active, onClick }: { link: NavLink; active: boolean; onClick: () => void }) {
+  return (
+    <Link
+      href={link.href}
+      onClick={onClick}
+      aria-current={active ? "page" : undefined}
+      className={`flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[14px] transition-colors
+                  ${active ? "bg-surface font-[600] text-ink shadow-card" : "font-[500] text-ink-soft hover:bg-surface/70 hover:text-ink"}`}
+    >
+      <Icon name={link.icon} className={`h-[18px] w-[18px] ${active ? "text-brand" : ""}`} />
+      <span className="truncate">{link.label}</span>
+    </Link>
+  );
+}
+
+/**
+ * "My 10XiD": the client's Mark, in full colour, and the account menu above it.
+ *
+ * The Mark is the identity of whoever owns the iD — the organization whose rows
+ * are on screen — and it is never muted: the most consequential thing a person
+ * can misread is whose data they are looking at. It falls back to the 10XiD
+ * Mark when the organization has no logo, which says the same thing the name
+ * does: you are in 10XiD.
+ *
+ * A plain <img>, deliberately: a client's logo is an arbitrary remote URL and
+ * next/image refuses any host not listed in next.config. The 3px radius stays
+ * at or below the artwork's own (the 10XiD Mark's plate is about 10.5% of its
+ * box), so the container never clips a rounder shape than the plate inside it.
+ */
+function AccountButton({
+  organizationName,
+  organizationLogoUrl,
+  email,
   menu,
 }: {
   organizationName: string;
   organizationLogoUrl: string | null;
   email: string;
-  links: { href: string; label: string }[];
-  /** Sign out, and anything else that needs a server action. */
   menu: ReactNode;
 }) {
-  const visible = useHideOnScrollDown();
-  const [stripRef, strip] = useScrollStrip(links.length);
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
 
@@ -315,288 +458,50 @@ export function PortalHeader({
   }, [open]);
 
   return (
-    <header
-      className={`sticky top-0 z-40 border-b border-line-soft bg-surface/95
-                  backdrop-blur transition-transform duration-200
-                  ${visible ? "translate-y-0" : "-translate-y-full"}`}
-    >
-      {/*
-        Three zones, and the measurements are the house iD's, not invented here.
+    <div ref={wrap} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        aria-label="Account and organization"
+        className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors
+                   hover:bg-surface focus-visible:outline-2 focus-visible:outline-brand"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={organizationLogoUrl ?? "/10xid-mark.png"}
+          alt=""
+          className="h-9 w-9 flex-none rounded-[3px] object-contain"
+        />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[14px] font-[600] text-ink">{organizationName}</span>
+          <span className="block truncate text-[12px] text-ink-faint">My 10XiD</span>
+        </span>
+      </button>
 
-        The reference iD (preview.10xid.com/id/10xid/) sizes its header off two
-        tokens: --markbox-client 80px for the Mark and --markbox 68px for the
-        Pin, dropping to 66/56 under 360px. Both tiers hold the same 0.85 ratio,
-        and 48/41 is that same ratio at a third tier. It is smaller than either
-        of theirs on purpose: their header is a card's masthead that stacks its
-        nav onto a SECOND row, while this one is a sticky bar that has to carry
-        Mark, nav and Pin across a single line on a 390px phone. Everything else
-        here — radii, pill geometry, type scale — is the reference's own value
-        rather than a scaled one.
-
-        The first version put 40px icons in this 64px bar and took the
-        reference's --pad of 12px above and below. That is the right proportion
-        for a masthead with room to breathe and the wrong one for a phone: 12px
-        of nothing at the top, 12px at the bottom and 16px at the screen edge
-        added up to more empty bar than Mark. Reported from a phone as "too
-        much top, bottom and outside margin".
-
-        48px leaves 8px above and below, and the side padding drops to 8px
-        below the sm breakpoint. Neither artwork carries any padding of its own
-        — both PNGs are 256x256 edge to edge, measured — so every pixel of
-        space around them is set here and nowhere else.
-      */}
-      <div className="mx-auto flex h-16 max-w-5xl items-center gap-2 px-2 sm:px-4">
-        {/*
-          LEFT — the Mark. Full colour, never muted, because the Mark IS the
-          organization: on any given screen the most consequential thing a
-          person can misread is whose data they are looking at, and staff move
-          between clients all day.
-
-          What was here before was a two-letter tile drawn in CSS on bg-brand.
-          That is not a Mark; it is a placeholder wearing the platform's colour,
-          which told a client their own brand was ours. The Mark slot now always
-          holds real artwork.
-
-          The fallback is the 10XiD Mark itself rather than initials. When an
-          organization has no logo, the honest answer is the one PortalShell
-          already gives for the NAME — you are in 10XiD — so the graphic says
-          the same thing the words do instead of inventing a brand that has
-          never existed.
-
-          A plain <img>, deliberately, and for the same reason it was one
-          before: a client's logo is an arbitrary remote URL and next/image
-          refuses any host not listed in next.config, so every new client would
-          need a deploy before their own logo appeared. Keeping the local
-          fallback on the same element keeps that one code path rather than
-          branching into an <Image> that only ever serves one file.
-
-          object-contain, not object-cover: a logo cropped to a square is a
-          logo with its edges cut off. object-left keeps it anchored the way
-          the reference's .mark--img does (object-position: left center).
-
-          The corner radius is 5px and that number is measured, not chosen.
-          /10xid-mark.png is 256x256 with NO transparent padding at all, and
-          its own rounded-square plate starts 27px in along the top edge — a
-          radius of about 10.5% of the box. An earlier version clipped this
-          element at rounded-[14px] on a 40px box, which is 35%, over three
-          times the artwork's own. The container was therefore cutting a
-          rounder shape than the plate it contained, slicing the corners off
-          the blue square and leaving something that read as a circle rather
-          than a mark. Reported from a phone: "you seem to have them in
-          circles or something, the Mark does not show clearly."
-
-          10.5% of a 48px box is 5.06px, so 5px is just under the artwork's
-          own and clips none of it, while still softening a client logo that
-          arrives as a bare rectangle. The rule to keep: this radius must stay
-          at or below the radius of the artwork inside it.
-        */}
-        <Link
-          href="/dashboard"
-          className="flex min-w-0 flex-none items-center gap-2
-                     transition active:brightness-110"
+      {open ? (
+        <div
+          role="menu"
+          className="absolute bottom-full left-0 z-50 mb-2 w-64 overflow-hidden rounded-[14px]
+                     border border-line bg-surface shadow-card-lg"
         >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={organizationLogoUrl ?? "/10xid-mark.png"}
-            alt={organizationName}
-            className="h-12 w-12 flex-none rounded-[5px] object-contain object-left"
-          />
-          {/*
-            The name is the Mark's caption, and it steps aside under 640px. On a
-            phone the three fixed items already eat 122px of a 390px bar, and
-            leaving the name in shrinks the nav to a link and a half. The Mark
-            is by definition the identity of whoever owns the iD, so it carries
-            that on its own at phone width, and the account menu spells the
-            organization out in words for anyone who wants it confirmed.
-
-            17px / 650 / -0.01em is the reference's .ident h1 exactly.
-          */}
-          <span
-            className="hidden truncate text-[17px] font-[650] tracking-[-0.01em]
-                       text-ink sm:block"
-          >
-            {organizationName}
-          </span>
-        </Link>
-
-        {/*
-          CENTRE — moving around inside the organization. Same links as before;
-          what changed is that they are now the reference's .hnav pills rather
-          than bare text: 7px/13px padding, a 999px radius, 13px at weight 520,
-          on a plate a step off the bar with a hairline border.
-
-          The nav scrolls sideways on a narrow screen, because six links do not
-          fit on a phone and wrapping them would change the header's height as
-          you move between pages.
-
-          TWO affordances, and that is the point of this version. An arrow sits
-          at each end of the strip and a drawn scrollbar runs underneath it;
-          both appear only when the pills overrun the space between Mark and
-          Pin, and both vanish when everything fits. They were tried one after
-          the other — the bar first, then the arrows in its place — and each
-          does a job the other cannot. The bar says WHERE YOU ARE and how much
-          more there is; no arrow can report that two pills remain. The arrows
-          give you something to TAP; a 3px bar is not a target, however well it
-          reads.
-
-          The track spans the full width of this zone, under the arrows as
-          well as the pills, because it is the nav's scrollbar and one that
-          stopped short of the arrows would read as a misalignment against the
-          Mark and Pin either side. It still reports the STRIP's proportions,
-          because the thumb is sized and placed in percentages of whatever the
-          track happens to be: measured at 390px, 206px of the strip's 378px is
-          visible, so the thumb is 54.5% of the 262px track — 142.8px — and at
-          full scroll its right edge lands on 325.98 against a track ending at
-          326.
-
-          What each costs, measured at 390px. The arrows cost horizontal room:
-          they and their gaps take 56px out of the zone, so the pills get 206px
-          rather than 262px, about one pill's worth of the thing they help you
-          reach. The bar costs none of the header's height. The 64px bar is set
-          by the 48px Mark, and this column measures 44.5px — a 35.5px pill row,
-          a 6px gap and the 3px bar — while the bar's 14px hit area reaches
-          59.75px, still inside the 64. Measured against the arrows-only
-          version at the same width: header 64px then and 64px now, strip 206px
-          then and 206px now. Adding the bar back moved neither.
-        */}
-        <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-          <div className="flex items-center gap-1">
-            {strip.overflowing ? (
-              <NavArrow
-                direction="left"
-                disabled={strip.atStart}
-                onClick={() => strip.page(-1)}
-              />
-            ) : null}
-
-            <nav
-              ref={stripRef}
-              aria-label="Sections"
-              className="portal-nav-scroll flex items-center gap-2
-                         overflow-x-auto whitespace-nowrap"
-            >
-              {links.map((l) => (
-                <Link
-                  key={l.href}
-                  href={l.href}
-                  className="flex-none rounded-full border border-line-soft bg-sunk
-                             px-[13px] py-[7px] text-[13px] font-[520] text-ink
-                             transition-colors hover:border-line hover:bg-brand-soft"
-                >
-                  {l.label}
-                </Link>
-              ))}
-            </nav>
-
-            {strip.overflowing ? (
-              <NavArrow
-                direction="right"
-                disabled={strip.atEnd}
-                onClick={() => strip.page(1)}
-              />
-            ) : null}
+          <div className="border-b border-line-soft px-3 py-2.5">
+            <p className="truncate text-sm font-medium text-ink">{email}</p>
+            <p className="truncate text-xs text-ink-faint">{organizationName}</p>
           </div>
-
-          {/*
-            The scrollbar, drawn rather than left to the browser.
-
-            It is hidden when everything fits, because a full-width bar under a
-            strip that does not scroll is a control that does nothing.
-
-            aria-hidden, and that is deliberate rather than an oversight. This
-            is a redundant POINTER affordance, as the arrows above it are: a
-            keyboard user tabs through the pills and the browser scrolls each
-            one into view on focus, which is the accessible path and works
-            whether either of these exists. Announcing two more scroll controls
-            to a screen reader would add things to get past, not things to use.
-
-            The hit area is 14px tall while the bar itself is 3px, because a
-            3px drag target is a target nobody hits. The padding does the work
-            and the negative margin gives the height back to the bar, which is
-            what keeps this column inside the height the Mark already sets.
-          */}
-          {strip.overflowing ? (
-            <div
-              aria-hidden
-              onPointerDown={strip.onPointerDown}
-              className="-my-[5.5px] cursor-pointer touch-none py-[5.5px]"
-            >
-              <div className="h-[3px] w-full rounded-full bg-line-soft">
-                <div
-                  className="h-full rounded-full bg-ink-faint"
-                  style={{
-                    width: `${strip.size * 100}%`,
-                    marginLeft: `${strip.start * 100}%`,
-                  }}
-                />
-              </div>
-            </div>
-          ) : null}
+          <div className="py-1">{menu}</div>
         </div>
-
-        {/*
-          RIGHT — the Pin. It opens the account menu: personal details, switch
-          organization, sign out.
-
-          A Pin is the quiet one. It is muted and tinted toward the Mark's
-          colours so it never competes with the Mark for the eye, which is the
-          whole reason it can sit on the same bar as a full-colour logo without
-          the bar looking like it has two owners.
-
-          The text "10XiD" in a bordered box that used to be here was the wrong
-          object twice over: it was louder than the Mark, and spelling the
-          product name out at the account control said the bar belonged to the
-          platform rather than to the client.
-
-          The button is bare — no border, matching the reference's .ubtn, which
-          is background:transparent/border:0 at a 10px radius. The glyph already
-          carries a rounded-square outline of its own; a second box around it is
-          a box around a box. The hover plate is the same move the reference
-          makes on its own muted icon buttons (.sheetnav:active, a faint wash).
-
-          The mask lives on the inner span, not the button: a mask clips
-          everything an element paints, focus ring included. See .portal-pin.
-        */}
-        <div ref={wrap} className="relative flex-none">
-          <button
-            type="button"
-            onClick={() => setOpen((v) => !v)}
-            aria-expanded={open}
-            aria-haspopup="menu"
-            aria-label="Account and organization"
-            className="grid h-12 w-12 place-items-center rounded-[10px]
-                       transition-colors hover:bg-sunk
-                       focus-visible:outline-2 focus-visible:outline-offset-2
-                       focus-visible:outline-brand"
-          >
-            <span aria-hidden className="portal-pin block h-[41px] w-[41px]" />
-          </button>
-
-          {open ? (
-            <div
-              role="menu"
-              className="absolute right-0 top-12 w-60 overflow-hidden rounded-[14px]
-                         border border-line bg-surface shadow-card-lg"
-            >
-              <div className="border-b border-line-soft px-3 py-2.5">
-                <p className="truncate text-sm font-medium text-ink">{email}</p>
-                <p className="truncate text-xs text-ink-faint">{organizationName}</p>
-              </div>
-              <div className="py-1">{menu}</div>
-            </div>
-          ) : null}
-        </div>
-      </div>
-    </header>
+      ) : null}
+    </div>
   );
 }
 
 /**
  * One row in the account menu. Shared so every item lines up.
  *
- * 14.5px at weight 530 is the reference's own list-row type (.sheet .links),
- * which is a touch larger and a touch lighter than text-sm/font-medium would
- * give — these are rows you read once and tap, not dense table text.
+ * 14.5px at weight 530 is the reference iD's own list-row type (.sheet .links):
+ * rows you read once and tap, not dense table text.
  */
 export const menuItemClass =
   "block w-full px-3 py-2 text-[14.5px] font-[530] text-left text-ink-soft " +
