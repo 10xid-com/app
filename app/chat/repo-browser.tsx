@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { addRepoContextAction } from "./actions";
 import type { WorkspaceData } from "./types";
+import { CsrfInput } from "./csrf";
 
 /**
  * Right, Repository tab: the conversation's repository at its branch.
@@ -258,6 +259,7 @@ function recentFiles(data: WorkspaceData, repoName: string): string[] {
 function AddButton({ conversationId, kind, path }: { conversationId: string; kind: "file" | "folder"; path: string }) {
   return (
     <form action={addRepoContextAction}>
+      <CsrfInput />
       <input type="hidden" name="conversationId" value={conversationId} />
       <input type="hidden" name="kind" value={kind} />
       <input type="hidden" name="path" value={path} />

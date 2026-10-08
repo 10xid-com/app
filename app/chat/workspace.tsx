@@ -10,6 +10,8 @@ import { LeftPanel } from "./left-panel";
 import { MessageText } from "./message-text";
 import { RightPanel } from "./right-panel";
 import type { UiRun, WorkspaceData } from "./types";
+import { CsrfInput, CsrfProvider } from "./csrf";
+import { CSRF_FIELD, CSRF_HEADER } from "@/lib/auth/csrf-names";
 
 /**
  * The workspace: three panels on a wide screen; on a narrow one the side
@@ -84,7 +86,7 @@ export function Workspace({ data }: { data: WorkspaceData }) {
     try {
       const res = await fetch(`/api/workspace/conversations/${data.conversation.id}/messages`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", [CSRF_HEADER]: data.csrf },
         body: JSON.stringify({ content: text }),
         signal: controller.signal,
       });
@@ -176,6 +178,7 @@ export function Workspace({ data }: { data: WorkspaceData }) {
             <div role="group" aria-label="Mode" className="flex rounded-md border border-line p-0.5">
               {(["ask", "plan"] as const).map((m) => (
                 <form key={m} action={setModeAction}>
+                  <CsrfInput />
                   <input type="hidden" name="conversationId" value={data.conversation!.id} />
                   <input type="hidden" name="mode" value={m} />
                   <button
@@ -214,6 +217,7 @@ export function Workspace({ data }: { data: WorkspaceData }) {
               disabled={busy || switchingEngine}
               onChange={(e) => {
                 const form = new FormData();
+                form.set(CSRF_FIELD, data.csrf);
                 form.set("conversationId", data.conversation!.id);
                 form.set("engineMode", e.currentTarget.value);
                 startEngineSwitch(() => setEngineAction(form));
@@ -259,6 +263,7 @@ export function Workspace({ data }: { data: WorkspaceData }) {
                 : `Start a conversation about ${data.client.name}.`}
             </p>
             <form action={newConversationAction} className="mt-4">
+              <CsrfInput />
               <button type="submit" className="rounded-lg bg-brand-surface px-4 py-2 text-sm font-semibold text-brand-on-surface">
                 New conversation
               </button>
@@ -448,6 +453,7 @@ export function Workspace({ data }: { data: WorkspaceData }) {
   );
 
   return (
+    <CsrfProvider value={data.csrf}>
     <div className="relative flex h-full min-h-0 bg-ground">
       {/* Left: a column on large screens, a drawer below that. */}
       <aside
@@ -477,6 +483,7 @@ export function Workspace({ data }: { data: WorkspaceData }) {
         />
       ) : null}
     </div>
+    </CsrfProvider>
   );
 }
 

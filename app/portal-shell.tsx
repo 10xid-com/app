@@ -6,6 +6,7 @@ import { CsrfField } from "./_components/csrf-field";
 import { exitClientAction } from "./staff/actions";
 import { stopActingAsAction } from "./act-as/actions";
 import { PortalHeader, menuItemClass } from "./portal-nav";
+import { mayUseChatBoss } from "@/lib/auth/chat-boss";
 
 /**
  * The frame every signed-in screen sits in.
@@ -94,6 +95,10 @@ export async function PortalShell({
     { href: "/dashboard", label: "Dashboard" },
     { href: "/jobs", label: "Jobs" },
     { href: "/team", label: "Team" },
+    // Chat Boss: the people on its list, on the business they have open.
+    ...(!isStaff && ctx && !ctx.actingAs && ctx.scope.organizationId && mayUseChatBoss(ctx.realEmail)
+      ? [{ href: "/chat", label: "Chat Boss" }]
+      : []),
     ...(isStaff
       ? [
           { href: "/staff", label: "Clients" },

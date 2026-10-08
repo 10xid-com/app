@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { authorizeRequest, STAFF_ACCESS } from "@/lib/auth/authorize";
+import { authorizeChatBossRequest } from "@/lib/auth/authorize";
 import { workspaceAccess } from "@/lib/workspace/access";
 import { parseCommand } from "@/lib/workspace/commands";
 import { runTurn } from "@/lib/workspace/runner";
@@ -9,8 +9,8 @@ import { runTurn } from "@/lib/workspace/runner";
  * Send a message in a workspace conversation; the answer streams back as
  * newline-delimited JSON (lib/workspace/wire.ts), one event per line.
  *
- * Who may call it is decided from the session alone: staff, as themselves,
- * with the client taken from their live grant. The conversation id in the URL
+ * Who may call it is decided from the session alone: a person on the Chat
+ * Boss list, on the business their session has open (lib/auth/chat-boss.ts). The conversation id in the URL
  * is checked against that client and that person by the database — another
  * client's or another person's id reads as "does not exist".
  *
@@ -26,12 +26,12 @@ const bodySchema = z.object({
 });
 
 export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
-  const decision = await authorizeRequest(request, STAFF_ACCESS);
+  const decision = await authorizeChatBossRequest(request);
   if (!decision.allowed) {
-    return NextResponse.json({ error: "Staff access is turned off." }, { status: 403 });
+    return NextResponse.json({ error: "Chat Boss is not available to you here." }, { status: 403 });
   }
   const access = await workspaceAccess(decision.ctx);
-  if (!access) return NextResponse.json({ error: "The workspace is for staff." }, { status: 403 });
+  if (!access) return NextResponse.json({ error: "Chat Boss is not available to you here." }, { status: 403 });
 
   // JSON only: a cross-site form can post text/plain without a preflight.
   if (!request.headers.get("content-type")?.startsWith("application/json")) {

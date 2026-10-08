@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
-import { requireStaffAccess } from "@/lib/auth/authorize";
+import { requireChatBossPage } from "@/lib/auth/authorize";
+import { resolveIdentity } from "@/lib/auth/session";
 import { getJob } from "@/lib/db";
-import { listClientOrganizations, liveGrantForSession } from "@/lib/db/identity";
 import {
   getConversation,
   listContextItems,
@@ -36,9 +36,9 @@ const ERRORS: Record<string, string> = {
 /**
  * The workspace: one client, its conversations, and what every answer saw.
  *
- * Staff only, as themselves. The client is the session's live grant (opened
- * here with a reason, exactly as on the Clients page), or the house when none
- * is held. The conversation is in the URL, so a refresh lands back on it —
+ * Chat Boss, for the people on its list (lib/auth/chat-boss.ts), on the
+ * business their session has open and only one they belong to. The
+ * conversation is in the URL, so a refresh lands back on it —
  * and the database checks that it belongs to this client and this person.
  */
 export default async function WorkspacePage({
@@ -46,8 +46,10 @@ export default async function WorkspacePage({
 }: {
   searchParams: Promise<{ c?: string; error?: string }>;
 }) {
-  const ctx = await requireStaffAccess("/chat");
+  const { ctx } = await requireChatBossPage("/chat");
   const access = await workspaceAccess(ctx);
+  const identity = await resolveIdentity();
+  const csrf = identity.state === "active" ? identity.csrfToken : "";
   if (!access) redirect("/dashboard");
 
   const params = await searchParams;
@@ -60,13 +62,11 @@ export default async function WorkspacePage({
   // Named but not ours — another client's, another person's, or archived.
   if (params.c && !conversation) redirect("/chat");
 
-  const [messages, runs, contextItems, withheld, clients, grant, linked] = await Promise.all([
+  const [messages, runs, contextItems, withheld, linked] = await Promise.all([
     conversation ? listMessages(access.owner, conversation.id) : [],
     conversation ? listRuns(access.owner, conversation.id) : [],
     conversation ? listContextItems(access.owner, conversation.id) : [],
     withheldEngineModes(access.owner),
-    listClientOrganizations(),
-    liveGrantForSession(ctx.sessionId),
     listLinkedRepositories(access.owner),
   ]);
   const repoNames = await repositoryNamesByIds(
@@ -90,8 +90,11 @@ export default async function WorkspacePage({
 
   const data: WorkspaceData = {
     client: access.client,
-    grant: grant ? { reason: grant.reason, expiresAt: grant.expiresAt.toISOString() } : null,
-    clients: clients.map((c) => ({ id: c.id, name: c.name })),
+    // Your own businesses: switching between them is the business switcher's.
+    clients: ctx.memberships
+      .filter((m) => m.organizationType === "client")
+      .map((m) => ({ id: m.organizationId, name: m.organizationName })),
+    csrf,
     conversations: conversations.map((c) => ({ ...c, updatedAt: c.updatedAt.toISOString() })),
     conversation: conversation
       ? {
@@ -155,9 +158,9 @@ export default async function WorkspacePage({
   return (
     <PortalShell
       email={ctx.email}
-      isStaff
+      isStaff={false}
       wide
-      actingOn={!access.client.isHouse && grant ? { name: access.client.name, reason: grant.reason } : null}
+      actingOn={null}
     >
       <Workspace data={data} />
     </PortalShell>

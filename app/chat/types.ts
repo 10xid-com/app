@@ -59,8 +59,10 @@ export type UiRepositoryState = {
 
 export type WorkspaceData = {
   client: { id: string; name: string; isHouse: boolean };
-  grant: { reason: string; expiresAt: string } | null;
+  /** The person's own businesses; switching is the business switcher's. */
   clients: { id: string; name: string }[];
+  /** This session's CSRF token, for the forms and requests below (lib/auth/csrf.ts). */
+  csrf: string;
   conversations: { id: string; title: string; mode: string; updatedAt: string }[];
   conversation: UiConversation | null;
   messages: UiMessage[];

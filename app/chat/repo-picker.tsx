@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { linkRepositoryAction, setRepositoryAction, unlinkRepositoryAction } from "./actions";
 import type { WorkspaceData } from "./types";
+import { CsrfInput } from "./csrf";
 
 /**
  * Left: which repository and branch this conversation reads, and which
@@ -69,6 +70,7 @@ function Selector({ data, conversationId }: { data: WorkspaceData; conversationI
 
   return (
     <form action={setRepositoryAction} className="space-y-2 rounded-lg border border-line bg-surface p-3">
+      <CsrfInput />
       <input type="hidden" name="conversationId" value={conversationId} />
       <label className="block text-xs text-ink-soft">
         Repository
@@ -178,6 +180,7 @@ function Manage({ data, conversationId }: { data: WorkspaceData; conversationId:
               <li key={r.id} className="flex items-center justify-between gap-2 text-xs">
                 <span className="truncate text-ink">{r.name}</span>
                 <form action={unlinkRepositoryAction}>
+                  <CsrfInput />
                   <input type="hidden" name="repositoryId" value={r.id} />
                   {conversationId ? <input type="hidden" name="conversationId" value={conversationId} /> : null}
                   <button type="submit" className="text-ink-faint hover:text-bad">
@@ -218,6 +221,7 @@ function Manage({ data, conversationId }: { data: WorkspaceData; conversationId:
                     {r.private ? <span className="ml-1 text-ink-faint">private</span> : null}
                   </span>
                   <form action={linkRepositoryAction}>
+                    <CsrfInput />
                     <input type="hidden" name="externalId" value={r.externalId} />
                     {conversationId ? <input type="hidden" name="conversationId" value={conversationId} /> : null}
                     <button type="submit" className="font-medium text-brand hover:underline">
