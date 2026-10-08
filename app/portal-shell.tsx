@@ -7,6 +7,7 @@ import { exitClientAction } from "./staff/actions";
 import { PortalHeader, menuItemClass } from "./portal-nav";
 import { mayUseChatBoss } from "@/lib/auth/chat-boss";
 import { openableBusinesses } from "@/lib/auth/policy";
+import { ROLE_LABELS, isRoleTemplate } from "@/lib/auth/permissions";
 
 /**
  * The frame every signed-in screen sits in.
@@ -188,7 +189,7 @@ export async function PortalShell({
         <div className="border-b border-brand/30 bg-brand/5" role="status">
           <p className="mx-auto max-w-5xl px-4 py-2 text-sm text-ink">
             Working in <span className="font-semibold">{onScreen.organizationName}</span> for{" "}
-            {onScreen.via.agencyName} · {onScreen.role} · until {onScreen.via.expiresAt.toISOString().slice(0, 10)}
+            {onScreen.via.agencyName} · {isRoleTemplate(onScreen.role) ? ROLE_LABELS[onScreen.role] : onScreen.role} · until {onScreen.via.expiresAt.toISOString().slice(0, 10)}
           </p>
         </div>
       ) : null}

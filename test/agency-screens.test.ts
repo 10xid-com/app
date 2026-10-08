@@ -385,6 +385,7 @@ describe("ending", () => {
       "agency.person.named",
       "agency.person.approved",
       "agency.person.blocked",
+      "agency.person.unblocked",
       "agency.acted",
       "agency.grant.revoked",
     ]) {
