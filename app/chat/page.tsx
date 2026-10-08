@@ -162,6 +162,7 @@ export default async function WorkspacePage({
       email={ctx.email}
       isStaff={false}
       wide
+      chatPanel={false}
       actingOn={null}
     >
       <Workspace data={data} />

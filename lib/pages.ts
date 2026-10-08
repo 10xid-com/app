@@ -72,6 +72,7 @@ export interface PageRecord {
 export const GROUPS = [
   "Getting in",
   "The work",
+  "Coming soon",
   "Your account",
   "Staff",
   "Machinery",
@@ -185,6 +186,154 @@ export const PAGES: PageRecord[] = [
     kind: "page",
     file: "app/pages/page.tsx",
     group: "The work",
+  },
+
+  {
+    id: "channel.id",
+    path: "/channels/id",
+    name: "iD",
+    purpose:
+      "The business's own iD: its address, Launch and Edit, and the themes it can wear. Launching, editing and themes are placeholders until the iD builder ships.",
+    audience: "member",
+    kind: "page",
+    file: "app/channels/id/page.tsx",
+    group: "The work",
+  },
+
+  /* -------------------------------------------------------------- */
+  /* Coming soon: in the navigation, not built yet                   */
+  /* -------------------------------------------------------------- */
+  {
+    id: "orders",
+    path: "/orders",
+    name: "Orders",
+    purpose:
+      "Placeholder until it is built. Every order from every channel, in one list.",
+    audience: "member",
+    kind: "page",
+    file: "app/orders/page.tsx",
+    group: "Coming soon",
+  },
+  {
+    id: "products",
+    path: "/products",
+    name: "Products",
+    purpose:
+      "Placeholder until it is built. The catalogue every channel draws from: products, variants, prices and stock.",
+    audience: "member",
+    kind: "page",
+    file: "app/products/page.tsx",
+    group: "Coming soon",
+  },
+  {
+    id: "customers",
+    path: "/customers",
+    name: "Customers",
+    purpose:
+      "Placeholder until it is built. The people who buy from the business, and what they have bought.",
+    audience: "member",
+    kind: "page",
+    file: "app/customers/page.tsx",
+    group: "Coming soon",
+  },
+  {
+    id: "growth",
+    path: "/growth",
+    name: "Growth",
+    purpose:
+      "Placeholder until it is built. Campaigns and the work that brings new customers in.",
+    audience: "member",
+    kind: "page",
+    file: "app/growth/page.tsx",
+    group: "Coming soon",
+  },
+  {
+    id: "discounts",
+    path: "/discounts",
+    name: "Discounts",
+    purpose:
+      "Placeholder until it is built. Discount codes and automatic offers.",
+    audience: "member",
+    kind: "page",
+    file: "app/discounts/page.tsx",
+    group: "Coming soon",
+  },
+  {
+    id: "content",
+    path: "/content",
+    name: "Content",
+    purpose:
+      "Placeholder until it is built. Pages, posts, files and media, in one library.",
+    audience: "member",
+    kind: "page",
+    file: "app/content/page.tsx",
+    group: "Coming soon",
+  },
+  {
+    id: "markets",
+    path: "/markets",
+    name: "Markets",
+    purpose:
+      "Placeholder until it is built. Where the business sells, and the currencies and languages each place gets.",
+    audience: "member",
+    kind: "page",
+    file: "app/markets/page.tsx",
+    group: "Coming soon",
+  },
+  {
+    id: "finance",
+    path: "/finance",
+    name: "Finance",
+    purpose:
+      "Placeholder until it is built. Payouts, invoices, billing and tax settings.",
+    audience: "member",
+    kind: "page",
+    file: "app/finance/page.tsx",
+    group: "Coming soon",
+  },
+  {
+    id: "analytics",
+    path: "/analytics",
+    name: "Analytics",
+    purpose:
+      "Placeholder until it is built. Sales, traffic and reports for the business.",
+    audience: "member",
+    kind: "page",
+    file: "app/analytics/page.tsx",
+    group: "Coming soon",
+  },
+  {
+    id: "settings",
+    path: "/settings",
+    name: "Settings",
+    purpose:
+      "Placeholder until it is built. The business's details, domains and notifications, with links to the settings that already live elsewhere.",
+    audience: "member",
+    kind: "page",
+    file: "app/settings/page.tsx",
+    group: "Coming soon",
+  },
+  {
+    id: "channels",
+    path: "/channels",
+    name: "Channels",
+    purpose:
+      "Placeholder until it is built. Every channel the business shows up on, and where adding one of its own choosing will happen.",
+    audience: "member",
+    kind: "page",
+    file: "app/channels/page.tsx",
+    group: "Coming soon",
+  },
+  {
+    id: "channel",
+    path: "/channels/[channel]",
+    name: "One channel",
+    purpose:
+      "Placeholder for a channel that cannot be connected yet: website, Instagram or LinkedIn. Any other name is a 404.",
+    audience: "member",
+    kind: "page",
+    file: "app/channels/[channel]/page.tsx",
+    group: "Coming soon",
   },
 
   /* -------------------------------------------------------------- */

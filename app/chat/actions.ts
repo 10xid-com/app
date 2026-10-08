@@ -56,6 +56,22 @@ export async function newConversationAction(formData: FormData) {
   redirect(`/chat?c=${conversation.id}`);
 }
 
+/**
+ * The same, from the Chat Boss panel beside another page: the conversation is
+ * started and the person stays where they are. The panel always shows the
+ * most recent conversation, which is now this one.
+ */
+export async function newDockConversationAction(formData: FormData) {
+  const access = await requireAccess(formData);
+  const options = modeOptions(await withheldEngineModes(access.owner));
+  await createConversation(access.owner, {
+    title: "New conversation",
+    mode: "ask",
+    engineMode: defaultMode(options) ?? "claude-coding",
+  });
+  revalidatePath("/", "layout");
+}
+
 export async function setModeAction(formData: FormData) {
   const access = await requireAccess(formData);
   const conversationId = id.parse(formData.get("conversationId"));
