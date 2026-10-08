@@ -211,6 +211,39 @@ export const PAGES: PageRecord[] = [
     group: "The work",
   },
 
+  {
+    id: "website",
+    path: "/channels/website",
+    name: "Website",
+    purpose:
+      "The business's website, run from the portal: an owner connects it; editors and publishers see what is on it; publishers publish. Read live from the site over signed requests.",
+    audience: "member",
+    kind: "page",
+    file: "app/channels/website/page.tsx",
+    group: "The work",
+  },
+  {
+    id: "website.posts",
+    path: "/channels/website/posts",
+    name: "Blog",
+    purpose: "The connected website's blog posts, searchable and filtered by status, read live from the site. Editors and up.",
+    audience: "member",
+    kind: "page",
+    file: "app/channels/website/posts/page.tsx",
+    group: "The work",
+  },
+  {
+    id: "website.post",
+    path: "/channels/website/posts/[id]",
+    name: "One post",
+    purpose:
+      "Write or edit one blog post, saved through the site's own save route. Editors draft; a live post, and making one live, is a publisher's.",
+    audience: "member",
+    kind: "page",
+    file: "app/channels/website/posts/[id]/page.tsx",
+    group: "The work",
+  },
+
   /* -------------------------------------------------------------- */
   /* Coming soon: in the navigation, not built yet                   */
   /* -------------------------------------------------------------- */
@@ -340,7 +373,7 @@ export const PAGES: PageRecord[] = [
     path: "/channels/[channel]",
     name: "One channel",
     purpose:
-      "Placeholder for a channel that cannot be connected yet: website, Instagram or LinkedIn. Any other name is a 404.",
+      "Placeholder for a channel that cannot be connected yet: Instagram or LinkedIn. Any other name is a 404; the website has its own page.",
     audience: "member",
     kind: "page",
     file: "app/channels/[channel]/page.tsx",
