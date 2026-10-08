@@ -115,3 +115,50 @@ export async function sendInvitation(input: {
     text: body,
   });
 }
+
+/**
+ * Tell a business's owners that agency access is waiting for their decision.
+ *
+ * Carries no credential and no link that acts: the decision is made on the
+ * Team page, signed in, with a fresh authenticator code.
+ */
+export async function sendAgencyNotice(input: {
+  to: string[];
+  businessName: string;
+  agencyName: string;
+  what: string;
+  teamUrl: string;
+}): Promise<void> {
+  if (input.to.length === 0) return;
+  const apiKey = process.env.RESEND_API_KEY;
+  const subject = `${input.agencyName} is asking for access to ${input.businessName}`;
+  const body = [
+    `${input.agencyName} ${input.what} for ${input.businessName} on 10XiD.`,
+    ``,
+    `Nothing changes until an owner of ${input.businessName} decides. To review it, sign in and open:`,
+    `  ${input.teamUrl}`,
+    ``,
+    `If you were not expecting this, decline it there.`,
+  ].join("\n");
+
+  if (!apiKey) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("RESEND_API_KEY is not set, so agency notices cannot be delivered.");
+    }
+    await appendFile(
+      DEV_CODE_SINK,
+      input.to.map((to) => `${new Date().toISOString()}\t${to}\tAGENCY\t${input.agencyName} → ${input.businessName}\n`).join(""),
+      "utf8",
+    );
+    return;
+  }
+
+  const { Resend } = await import("resend");
+  const resend = new Resend(apiKey);
+  await resend.emails.send({
+    from: process.env.MAIL_FROM ?? "10XiD <no-reply@10xid.com>",
+    to: input.to,
+    subject,
+    text: body,
+  });
+}

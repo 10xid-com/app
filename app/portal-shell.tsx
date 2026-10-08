@@ -85,6 +85,7 @@ export async function PortalShell({
    */
   const clientBusinesses = ctx ? openableBusinesses(ctx.memberships, ctx.agencyAccess) : [];
   const onScreen = clientBusinesses.find((m) => m.organizationId === ctx?.scope.organizationId);
+  const onScreenMembership = ctx?.memberships.find((m) => m.organizationId === ctx.scope.organizationId);
   const shown = actingOn
     ? { name: actingOn.name, logoUrl: organization?.logoUrl ?? null }
     : (organization ??
@@ -96,6 +97,11 @@ export async function PortalShell({
     { href: "/dashboard", label: "Dashboard" },
     { href: "/jobs", label: "Jobs" },
     { href: "/team", label: "Team" },
+    // Agency: an agency's owners and managers, with the agency open.
+    ...(onScreenMembership?.organizationIsAgency &&
+    (onScreenMembership.role === "owner" || onScreenMembership.role === "manager")
+      ? [{ href: "/agency", label: "Agency" }]
+      : []),
     // Chat Boss: the people on its list, on the business they have open.
     ...(!isStaff && ctx && !ctx.actingAs && ctx.scope.organizationId && mayUseChatBoss(ctx.realEmail)
       ? [{ href: "/chat", label: "Chat Boss" }]

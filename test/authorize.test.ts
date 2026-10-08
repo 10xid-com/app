@@ -68,6 +68,7 @@ function ctx(role = "owner", organizationId: string | null = BUSINESS): SessionC
             organizationName: "Rotary",
             organizationSlug: "rotary",
             organizationType: "client",
+            organizationIsAgency: false,
           },
         ]
       : [],
