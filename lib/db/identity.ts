@@ -281,6 +281,8 @@ export async function membershipsForUser(userId: string) {
       organizationName: organizations.name,
       organizationSlug: organizations.slug,
       organizationType: organizations.type,
+      /** An agency may ask for access to other businesses (login's 0025). */
+      organizationIsAgency: organizations.isAgency,
     })
     .from(memberships)
     .innerJoin(organizations, eq(organizations.id, memberships.organizationId))

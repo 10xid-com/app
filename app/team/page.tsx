@@ -11,6 +11,8 @@ import {
 } from "@/lib/auth/permissions";
 import { organizationById, teamFor } from "@/lib/db/identity";
 import { listInvitations } from "@/lib/db/invitations";
+import { grantsForBusiness } from "@/lib/db/agency";
+import { AGENCY_ERRORS, AGENCY_NOTICES, AgencySection } from "./agency-section";
 import { PortalShell } from "../portal-shell";
 import { CsrfField } from "../_components/csrf-field";
 import {
@@ -49,7 +51,7 @@ const DONE: Record<string, string> = {
 export default async function TeamPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string; done?: string }>;
+  searchParams: Promise<{ error?: string; done?: string; agency?: string; agency_error?: string }>;
 }) {
   const { ctx, businessId, role, via } = await requirePage("business.view", {
     returnPath: "/team",
@@ -74,6 +76,10 @@ export default async function TeamPage({
     assignedPerPerson(ctx.scope),
     mayInvite ? listInvitations(ctx.scope) : Promise.resolve([]),
   ]);
+  // Agency access: owners and managers see it (never through a grant); only
+  // owners decide on it (grants.approve).
+  const agencyGrants = mayInvite ? await grantsForBusiness(businessId) : [];
+  const mayDecideAgency = allows(role, "grants.approve", via);
 
   const raisedBy = new Map(raised.map((r) => [r.userId, r]));
   const assignedTo = new Map(assigned.map((r) => [r.userId, r.assigned]));
@@ -96,6 +102,16 @@ export default async function TeamPage({
         )}
       </p>
 
+      {params.agency && AGENCY_NOTICES[params.agency] ? (
+        <p role="status" className="mt-4 rounded-lg border border-good/30 bg-good/5 px-3 py-2 text-sm text-good">
+          {AGENCY_NOTICES[params.agency]}
+        </p>
+      ) : null}
+      {params.agency_error ? (
+        <p role="alert" className="mt-4 rounded-lg border border-bad/30 bg-bad/5 px-3 py-2 text-sm text-bad">
+          {AGENCY_ERRORS[params.agency_error] ?? "That did not work."}
+        </p>
+      ) : null}
       {params.done ? (
         <p
           role="status"
@@ -354,6 +370,7 @@ export default async function TeamPage({
         counts jobs currently pointed at them. All three are scoped to the
         company this session is acting on.
       </p>
+      {mayInvite ? <AgencySection grants={agencyGrants} mayDecide={mayDecideAgency} /> : null}
     </PortalShell>
   );
 }

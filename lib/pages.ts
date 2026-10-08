@@ -166,6 +166,17 @@ export const PAGES: PageRecord[] = [
     group: "The work",
   },
   {
+    id: "agency",
+    path: "/agency",
+    name: "Agency",
+    purpose:
+      "An agency's side of agency access: ask a business for access, name the people who will do the work, take them off, withdraw. Its owner approves the access and each person.",
+    audience: "member",
+    kind: "page",
+    file: "app/agency/page.tsx",
+    group: "The work",
+  },
+  {
     id: "pages",
     path: "/pages",
     name: "Pages",
