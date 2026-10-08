@@ -11,7 +11,8 @@ import { auditEvents, users } from "./schema";
  *
  * What is recorded:
  *   agency.grant.*     a request, an approval, a decline, an end, a withdrawal
- *   agency.person.*    a person named, approved, declined, blocked, taken off
+ *   agency.person.*    a person named, approved, declined, blocked, unblocked,
+ *                      taken off
  *   agency.acted       a state-changing request made through agency access
  *                      (target: the action), in the business it reached
  *

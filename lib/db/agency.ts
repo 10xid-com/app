@@ -356,7 +356,14 @@ async function setPersonStatus(
 ): Promise<GrantOutcome> {
   const g = await grantOwnedBy(where.side, where.organizationId, grantId);
   if (!g) return "not_found";
-  const entry = { actorUserId: by, agencyGrantId: grantId, action: `agency.person.${status}`, target: userId };
+  // Approving somebody who was blocked is unblocking them, and the record says so.
+  const [before] = await db
+    .select({ status: agencyGrantPeople.status })
+    .from(agencyGrantPeople)
+    .where(and(eq(agencyGrantPeople.grantId, grantId), eq(agencyGrantPeople.userId, userId)))
+    .limit(1);
+  const action = status === "approved" && before?.status === "blocked" ? "agency.person.unblocked" : `agency.person.${status}`;
+  const entry = { actorUserId: by, agencyGrantId: grantId, action, target: userId };
   return attempt(
     async (tx) => {
       const rows = await tx

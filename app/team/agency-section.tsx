@@ -56,6 +56,7 @@ const ACTIVITY: Record<string, string> = {
   "agency.person.approved": "approved",
   "agency.person.declined": "declined",
   "agency.person.blocked": "blocked",
+  "agency.person.unblocked": "unblocked",
   "agency.person.removed": "took off",
   "agency.acted": "through agency access:",
 };
@@ -64,6 +65,12 @@ function Activity({ rows, grants }: { rows: AuditRow[]; grants: GrantSummary[] }
   const emails = new Map(grants.flatMap((g) => g.people.map((p) => [p.userId, p.email] as const)));
   const agencyOf = new Map(grants.map((g) => [g.id, g.otherName] as const));
   const when = (d: Date) => d.toISOString().slice(0, 16).replace("T", " ");
+  // A person's id reads as their address; a grant's terms ("editor, 30 days") in brackets.
+  const target = (r: AuditRow) =>
+    !r.target
+      ? null
+      : (emails.get(r.target) ??
+        (r.action.startsWith("agency.grant.") ? `(${r.target.replace(/^\w+/, (role) => roleName(role))})` : r.target));
   return (
     <details className="mt-4 rounded-xl border border-line bg-surface">
       <summary className="cursor-pointer px-4 py-2 text-xs font-medium text-ink-soft">Agency activity</summary>
@@ -71,7 +78,7 @@ function Activity({ rows, grants }: { rows: AuditRow[]; grants: GrantSummary[] }
         {rows.map((r) => (
           <li key={String(r.id)} className="py-1.5 text-xs text-ink-soft">
             <span className="text-ink-faint">{when(r.createdAt)} UTC</span> · {r.actorEmail ?? "someone"}{" "}
-            {ACTIVITY[r.action] ?? r.action} {r.target ? (emails.get(r.target) ?? r.target) : null}
+            {ACTIVITY[r.action] ?? r.action} {target(r)}
             {r.agencyGrantId && agencyOf.has(r.agencyGrantId) ? ` · ${agencyOf.get(r.agencyGrantId)}` : null}
           </li>
         ))}
