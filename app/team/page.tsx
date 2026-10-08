@@ -7,7 +7,7 @@ import {
   isRoleTemplate,
   ROLE_LABELS,
   ROLE_TEMPLATES,
-  roleAllows,
+  allows,
 } from "@/lib/auth/permissions";
 import { organizationById, teamFor } from "@/lib/db/identity";
 import { listInvitations } from "@/lib/db/invitations";
@@ -51,7 +51,7 @@ export default async function TeamPage({
 }: {
   searchParams: Promise<{ error?: string; done?: string }>;
 }) {
-  const { ctx, businessId, role } = await requirePage("business.view", {
+  const { ctx, businessId, role, via } = await requirePage("business.view", {
     returnPath: "/team",
   });
   const params = await searchParams;
@@ -62,8 +62,11 @@ export default async function TeamPage({
   // Only a role carrying staff.manage may invite — owners and managers — and
   // only they see who has been invited: an invitation names an address and a
   // role before the person has agreed to anything.
-  const mayInvite = roleAllows(role, "staff.manage");
-  const assignable = ROLE_TEMPLATES.filter((template) => canAssignRole(role, template));
+  // Through an agency grant nobody manages people, whatever the role
+  // (AGENCY_NEVER): inviting would turn borrowed access into memberships.
+  const mayInvite = allows(role, "staff.manage", via);
+  const assignable = mayInvite ? ROLE_TEMPLATES.filter((template) => canAssignRole(role, template)) : [];
+  const manages = (memberRole: string) => mayInvite && canManageMember(role, memberRole);
 
   const [members, raised, assigned, pending] = await Promise.all([
     teamOrgId ? teamFor(teamOrgId) : Promise.resolve([]),
@@ -194,7 +197,7 @@ export default async function TeamPage({
                     {new Date(invitation.expiresAt).toISOString().slice(0, 10)}
                   </p>
                 </div>
-                {canManageMember(role, invitation.role) &&
+                {manages(invitation.role) &&
                 invitation.organizationId === ctx.scope.organizationId ? (
                   <form action={revokeInvitationAction} className="flex-none">
                     <CsrfField />
@@ -270,7 +273,7 @@ export default async function TeamPage({
                       {person.isService ? "key" : person.email} ·{" "}
                       {isRoleTemplate(person.role) ? ROLE_LABELS[person.role] : person.role}
                     </p>
-                    {!person.isService && canManageMember(role, person.role) ? (
+                    {!person.isService && manages(person.role) ? (
                       <div className="mt-2 flex flex-wrap items-center gap-2">
                         <form action={changeRoleAction} className="flex items-center gap-1.5">
                           <CsrfField />

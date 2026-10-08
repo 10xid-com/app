@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { requireChatBossPage } from "@/lib/auth/authorize";
+import { openableBusinesses } from "@/lib/auth/policy";
 import { resolveIdentity } from "@/lib/auth/session";
 import { getJob } from "@/lib/db";
 import {
@@ -91,9 +92,10 @@ export default async function WorkspacePage({
   const data: WorkspaceData = {
     client: access.client,
     // Your own businesses: switching between them is the business switcher's.
-    clients: ctx.memberships
-      .filter((m) => m.organizationType === "client")
-      .map((m) => ({ id: m.organizationId, name: m.organizationName })),
+    clients: openableBusinesses(ctx.memberships, ctx.agencyAccess).map((b) => ({
+      id: b.organizationId,
+      name: b.organizationName,
+    })),
     csrf,
     conversations: conversations.map((c) => ({ ...c, updatedAt: c.updatedAt.toISOString() })),
     conversation: conversation

@@ -10,6 +10,8 @@ import { csrfTokenFor, isValidCsrfToken } from "@/lib/auth/csrf";
 import { isTrustedOrigin } from "@/lib/auth/origin";
 import { safePath } from "@/lib/auth/paths";
 import {
+  AGENCY_NEVER,
+  agencyAllows,
   BUSINESS_ACTIONS,
   canAssignRole,
   canManageMember,
@@ -69,6 +71,7 @@ function ctx(role = "owner", organizationId: string | null = BUSINESS): SessionC
           },
         ]
       : [],
+    agencyAccess: [],
     absoluteExpiresAt: new Date(Date.now() + 86_400_000),
     needsSecondFactor: false,
     realUserId: "33333333-3333-4333-8333-333333333333",
@@ -340,6 +343,58 @@ describe("which job status changes are decisions", () => {
     for (const role of ["asset_manager", "viewer"]) {
       for (const from of JOB_STATUSES) expect(statusesFor(role, from)).toEqual([from]);
     }
+  });
+});
+
+describe("agency access", () => {
+  const GRANT = "44444444-4444-4444-8444-444444444444";
+  const AGENCY = "55555555-5555-4555-8555-555555555555";
+  function viaGrant(role: string, opts: { member?: string } = {}) {
+    // A member of the agency (or, with `member`, of the business itself).
+    const c = ctx(opts.member ?? "owner", opts.member ? BUSINESS : AGENCY);
+    c.scope.organizationId = BUSINESS;
+    c.agencyAccess = [
+      {
+        grantId: GRANT,
+        organizationId: BUSINESS,
+        organizationName: "Rotary",
+        organizationSlug: "rotary",
+        agencyOrganizationId: AGENCY,
+        agencyName: "Branding Centres",
+        role,
+        expiresAt: new Date(Date.now() + 86_400_000),
+      },
+    ];
+    return deps({ identity: async () => active(c) });
+  }
+
+  test("a live grant opens the business at its role, and says so", async () => {
+    const d = viaGrant("editor");
+    const decision = await authorize({ action: "jobs.create", mutation: mutation() }, d);
+    expect(decision).toMatchObject({ allowed: true, businessId: BUSINESS, role: "editor", via: { grantId: GRANT, agencyName: "Branding Centres" } });
+    expect(await reason({ action: "jobs.approve", mutation: mutation() }, d)).toBe("role_lacks_action");
+  });
+
+  test("never: managing people, grants, billing, domains or ownership — even as a manager", async () => {
+    const d = viaGrant("manager");
+    for (const action of AGENCY_NEVER) {
+      expect(await reason({ action, mutation: mutation() }, d), action).toBe("role_lacks_action");
+    }
+    // Everything else a manager does, an agency manager does.
+    expect(await reason({ action: "jobs.approve", mutation: mutation() }, d)).toBe("allowed");
+    for (const action of BUSINESS_ACTIONS) {
+      expect(agencyAllows("manager", action), action).toBe(roleAllows("manager", action) && !AGENCY_NEVER.has(action));
+    }
+  });
+
+  test("a grant reaches only its own business", async () => {
+    expect(await reason({ action: "jobs.read", businessId: OTHER }, viaGrant("editor"))).toBe("not_a_member");
+  });
+
+  test("a direct membership wins over a grant into the same business", async () => {
+    const d = viaGrant("viewer", { member: "owner" });
+    const decision = await authorize({ action: "staff.manage", mutation: mutation() }, d);
+    expect(decision).toMatchObject({ allowed: true, role: "owner", via: null });
   });
 });
 
