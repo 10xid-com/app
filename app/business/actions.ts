@@ -5,6 +5,7 @@ import { z } from "zod";
 import { BUSINESS_CHOOSER, requireSignedInAction } from "@/lib/auth/authorize";
 import { setSessionActiveOrganization } from "@/lib/db/identity";
 import { openableBusinesses } from "@/lib/auth/policy";
+import { safePath } from "@/lib/auth/paths";
 
 /**
  * Open one of your businesses.
@@ -31,6 +32,10 @@ export async function switchBusinessAction(formData: FormData) {
 
   await setSessionActiveOrganization(ctx.sessionId, id.data);
   // The dashboard rather than wherever they were: a page of the business they
-  // just left (one job, say) is not in the business they just opened.
-  redirect("/dashboard");
+  // just left (one job, say) is not in the business they just opened. A link
+  // that asked to open this business for one page (a grant, from a reminder)
+  // names it in `next`, which must be a portal path.
+  const next = formData.get("next");
+  const target = typeof next === "string" ? safePath(next) : "/";
+  redirect(target === "/" || target.startsWith("/auth/") ? "/dashboard" : target);
 }

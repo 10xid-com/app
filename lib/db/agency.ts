@@ -94,6 +94,13 @@ export type GrantSummary = {
   expiresAt: Date | null;
   /** In force right now: approved, not ended, before its date — by the database's clock. */
   live: boolean;
+  /**
+   * Approved and not ended, with seven days or fewer to run (or already run
+   * out): the agency may ask to renew it (login's 0026).
+   */
+  renewable: boolean;
+  /** For a request: the grant it renews, if it is a renewal. */
+  renewsGrantId: string | null;
   people: GrantPerson[];
 };
 
@@ -164,6 +171,8 @@ async function grantsWhere(side: "client" | "agency", organizationId: string): P
       requestedAt: agencyGrants.requestedAt,
       expiresAt: agencyGrants.expiresAt,
       live: sql<boolean>`(${agencyGrants.status} = 'active' and ${agencyGrants.expiresAt} > now())`,
+      renewable: sql<boolean>`(${agencyGrants.status} = 'active' and ${agencyGrants.expiresAt} <= now() + interval '7 days')`,
+      renewsGrantId: agencyGrants.renewsGrantId,
     })
     .from(agencyGrants)
     .innerJoin(organizations, eq(organizations.id, theirs))
@@ -172,6 +181,25 @@ async function grantsWhere(side: "client" | "agency", organizationId: string): P
     .limit(50);
   const people = await peopleOf(rows.map((r) => r.id));
   return rows.map((r) => ({ ...r, people: people.get(r.id) ?? [] }));
+}
+
+/** The two sides of a grant, for the link in a reminder (app/grants/[id]). */
+export async function grantSides(grantId: string) {
+  const client = alias(organizations, "client");
+  const agency = alias(organizations, "agency");
+  const [row] = await db
+    .select({
+      clientId: agencyGrants.clientOrganizationId,
+      clientName: client.name,
+      agencyId: agencyGrants.agencyOrganizationId,
+      agencyName: agency.name,
+    })
+    .from(agencyGrants)
+    .innerJoin(client, eq(client.id, agencyGrants.clientOrganizationId))
+    .innerJoin(agency, eq(agency.id, agencyGrants.agencyOrganizationId))
+    .where(eq(agencyGrants.id, grantId))
+    .limit(1);
+  return row ?? null;
 }
 
 /** Agency access asked of, or granted by, this business. */
@@ -227,6 +255,73 @@ export async function requestGrant(input: {
     throw error;
   }
 }
+
+/**
+ * Ask to renew access that ends within seven days, or has ended (0026): a new
+ * request for the same role and length, which the business's owner decides
+ * on like any other. The people approved on the old grant, still in the
+ * agency, are named on it again — as requests the owner approves one by one.
+ * Nothing carries over by itself.
+ */
+export async function renewGrant(
+  agencyId: string,
+  grantId: string,
+  by: string,
+): Promise<{ outcome: GrantOutcome; grantId?: string; businessId?: string }> {
+  const [old] = await db
+    .select({
+      clientId: agencyGrants.clientOrganizationId,
+      role: agencyGrants.role,
+      durationDays: agencyGrants.durationDays,
+      reason: agencyGrants.reason,
+    })
+    .from(agencyGrants)
+    .where(and(eq(agencyGrants.id, grantId), eq(agencyGrants.agencyOrganizationId, agencyId), eq(agencyGrants.status, "active")))
+    .limit(1);
+  if (!old) return { outcome: "not_found" };
+  try {
+    const renewal = await db.transaction(async (tx) => {
+      const reason = `Renewal: ${old.reason.replace(/^(Renewal: )+/, "")}`.slice(0, 500);
+      const [row] = await tx
+        .insert(agencyGrants)
+        .values({
+          clientOrganizationId: old.clientId,
+          agencyOrganizationId: agencyId,
+          role: old.role,
+          durationDays: old.durationDays,
+          reason,
+          requestedBy: by,
+        })
+        .returning({ id: agencyGrants.id, renews: agencyGrants.renewsGrantId });
+      // The database decides what a request renews; it must be this grant.
+      if (row.renews !== grantId) throw new RenewalMismatch();
+      await tx.execute(sql`
+        insert into agency_grant_people (grant_id, user_id, added_by)
+        select ${row.id}, p.user_id, ${by}
+          from agency_grant_people p
+          join memberships m on m.user_id = p.user_id and m.organization_id = ${agencyId}
+          join users u on u.id = p.user_id and u.deleted_at is null and not u.is_service
+         where p.grant_id = ${grantId} and p.status = 'approved'
+      `);
+      await writeAudit(
+        tx,
+        bothSides(
+          { clientId: old.clientId, agencyId },
+          { actorUserId: by, agencyGrantId: row.id, action: "agency.grant.renewal_requested", target: old.role },
+        ),
+      );
+      return row.id;
+    });
+    return { outcome: "done", grantId: renewal, businessId: old.clientId };
+  } catch (error) {
+    if (error instanceof RenewalMismatch) return { outcome: "refused" };
+    const r = refusal(error);
+    if (r) return { outcome: r };
+    throw error;
+  }
+}
+
+class RenewalMismatch extends Error {}
 
 /** Name one of the agency's own people on one of its open grants. */
 export async function addGrantPerson(agencyId: string, grantId: string, userId: string, addedBy: string): Promise<GrantOutcome> {

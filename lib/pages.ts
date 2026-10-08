@@ -178,6 +178,17 @@ export const PAGES: PageRecord[] = [
     group: "The work",
   },
   {
+    id: "grant",
+    path: "/grants/[id]",
+    name: "Agency grant",
+    purpose:
+      "The link in an expiry reminder. Opens the grant on the business's Team page or the agency's Agency page, for their owners and managers, offering to open the right business first. Anybody else gets a 404.",
+    audience: "member",
+    kind: "page",
+    file: "app/grants/[id]/page.tsx",
+    group: "The work",
+  },
+  {
     id: "pages",
     path: "/pages",
     name: "Pages",
@@ -429,6 +440,18 @@ export const PAGES: PageRecord[] = [
     audience: "public",
     kind: "machinery",
     file: "app/api/v1/jobs/route.ts",
+    methods: ["POST"],
+    group: "Machinery",
+  },
+  {
+    id: "api.agency-reminders",
+    path: "/api/v1/cron/agency-reminders",
+    name: "Agency expiry reminders",
+    purpose:
+      "POST only, for the daily scheduler, with the CRON_SECRET as a bearer token; a 404 until that secret is set. Tells each owner of a business and of its agency, once, that agency access ends within seven days. With ?test=<address>@resend.dev it sends one sample of each email to that test inbox instead.",
+    audience: "public",
+    kind: "machinery",
+    file: "app/api/v1/cron/agency-reminders/route.ts",
     methods: ["POST"],
     group: "Machinery",
   },
