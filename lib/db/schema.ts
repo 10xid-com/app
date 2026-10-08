@@ -1642,7 +1642,7 @@ export const repositories = pgTable("repositories", {
 });
 
 /**
- * 0027: which website a business runs from the portal's Website channel. One
+ * 0028: which website a business runs from the portal's Website channel. One
  * live connection per address across every business, and one per business.
  * No secret is stored: the portal signs its requests with its own key and the
  * site checks them with the portal's public key.

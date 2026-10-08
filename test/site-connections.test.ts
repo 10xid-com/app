@@ -5,7 +5,7 @@ import { SiteTakenError, connectWebsite, disconnectWebsite, websiteFor, type Sit
 import { closePool } from "@/lib/db/connection";
 
 /**
- * Site connections (0027), against a real database as the application role.
+ * Site connections (0028), against a real database as the application role.
  *
  *   a business sees only its own website     another business's row is not there
  *   one live website per business            a second connect is refused

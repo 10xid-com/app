@@ -6,7 +6,7 @@ import { siteConnections } from "./schema";
 import { writeAudit } from "./audit";
 
 /**
- * Which website a business runs from the Website channel (0027).
+ * Which website a business runs from the Website channel (0028).
  *
  * Read and written through the owner transaction, so row-level security
  * filters by business underneath: another business's connection is simply not

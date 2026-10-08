@@ -7,7 +7,7 @@ import { createHash, createPrivateKey, createPublicKey, sign, type KeyObject } f
  * people. The portal holds no password or token for the site. It signs each
  * request with ITS OWN Ed25519 private key, and the site checks the signature
  * with the portal's public key — which is public, and sits in the site's own
- * configuration. A site connection therefore stores no secret (0027), and a
+ * configuration. A site connection therefore stores no secret (0028), and a
  * leak of the database or of a site's settings forges nothing.
  *
  * The protocol is version 1, and the other half lives in each site (for Vinyl
