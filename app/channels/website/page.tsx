@@ -12,6 +12,7 @@ import { CsrfField } from "../../_components/csrf-field";
 import { Icon } from "../../_components/icons";
 import { connectWebsiteAction, disconnectWebsiteAction, publishWebsiteAction } from "./actions";
 import { RefreshWhileRunning } from "./refresh";
+import { SitePreview } from "./preview";
 
 export const metadata: Metadata = { title: "Website" };
 
@@ -179,7 +180,9 @@ export default async function WebsitePage({
               ) : null}
             </div>
 
-            <div className="px-5 py-4 text-sm">
+            <SitePreview url={site.siteUrl} />
+
+            <div className="border-t border-line-soft px-5 py-4 text-sm">
               {!mayEdit ? (
                 <p className="text-ink-soft">Your role can see that the website is connected. Editors and publishers work on it here.</p>
               ) : !signing ? (
