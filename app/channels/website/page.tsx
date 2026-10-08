@@ -12,7 +12,7 @@ import { CsrfField } from "../../_components/csrf-field";
 import { Icon } from "../../_components/icons";
 import { connectWebsiteAction, disconnectWebsiteAction, publishWebsiteAction } from "./actions";
 import { RefreshWhileRunning } from "./refresh";
-import { SitePreview } from "./preview";
+import { SitePreview } from "../../_components/site-preview";
 
 export const metadata: Metadata = { title: "Website" };
 

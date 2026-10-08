@@ -204,7 +204,7 @@ export const PAGES: PageRecord[] = [
     path: "/channels/id",
     name: "iD",
     purpose:
-      "The business's own iD: its address, Launch and Edit, and the themes it can wear. Launching, editing and themes are placeholders until the iD builder ships.",
+      "The business's own iD: live in the card, Launch to open it at its own address, and the themes it can wear. A business with no iD yet (ID_PREVIEWS) sees a drawing; editing and themes are placeholders until the iD builder ships.",
     audience: "member",
     kind: "page",
     file: "app/channels/id/page.tsx",

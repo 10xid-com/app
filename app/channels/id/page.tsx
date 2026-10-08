@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { requirePage } from "@/lib/auth/authorize";
 import { organizationById } from "@/lib/db/identity";
+import { liveIdFor } from "@/lib/sites/id";
 import { PortalShell } from "../../portal-shell";
 import { IdChannelView } from "./view";
 
@@ -11,21 +12,25 @@ export const metadata: Metadata = { title: "iD" };
  * drew it — the live iD in a large card with its address and the two things
  * you do with it, and the themes it can wear underneath.
  *
- * The address is the business's slug under 10xid.com. Launching, editing and
- * adding a theme are not built yet; the buttons are here, and say so, so the
- * page already has the shape it will keep.
+ * A business whose iD is built (ID_PREVIEWS, lib/sites/id.ts) sees it live
+ * in the card, and Launch iD opens it at its own address. Any other business
+ * sees a drawing at its slug under 10xid.com. Editing and adding a theme are
+ * not built yet; the buttons are here, and say so, so the page already has the
+ * shape it will keep.
  */
 
 export default async function IdChannelPage() {
   const { ctx, businessId } = await requirePage("business.view", { returnPath: "/channels/id" });
   const org = await organizationById(businessId);
+  const live = org ? liveIdFor(org.slug) : null;
 
   return (
     <PortalShell email={ctx.email} isStaff={ctx.scope.isStaff} actingOn={null}>
       <IdChannelView
         name={org?.name ?? "Your business"}
         logo={org?.brandLogoUrl ?? "/10xid-mark.png"}
-        address={org ? `${org.slug}.10xid.com` : "*.10xid.com"}
+        address={live?.address ?? (org ? `${org.slug}.10xid.com` : "*.10xid.com")}
+        live={live}
       />
     </PortalShell>
   );
