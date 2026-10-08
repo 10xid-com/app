@@ -10,6 +10,8 @@ import { useChatPanel } from "../portal-nav";
 import { newDockConversationAction } from "./actions";
 import { CsrfInput, CsrfProvider } from "./csrf";
 import { MessageText } from "./message-text";
+import { BlogDraftCard } from "./blog-draft-card";
+import type { BlogDraftView } from "@/lib/workspace/blog-draft";
 
 /**
  * Chat Boss on every page: the right-hand column of the frame.
@@ -38,7 +40,7 @@ export type ChatDockData =
         engine: { label: string; available: boolean; reason: string | null } | null;
       } | null;
       /** The most recent messages, oldest first. */
-      messages: { id: string; role: "user" | "assistant"; content: string; status: string }[];
+      messages: { id: string; role: "user" | "assistant"; content: string; status: string; drafts: BlogDraftView[] }[];
       /** How many earlier messages are only in the workspace. */
       earlier: number;
     };
@@ -228,14 +230,19 @@ function Conversation({ data }: { data: Extract<ChatDockData, { state: "on" }> }
             m.role === "user" ? (
               <UserBubble key={m.id} text={m.content} />
             ) : (
-              <Answer key={m.id}>
-                <MessageText text={m.content} />
-                {m.status !== "complete" ? (
-                  <p className="mt-2 text-xs text-warn">
-                    {m.status === "cut_off" ? "Stopped before the end." : "This answer failed part-way."}
-                  </p>
-                ) : null}
-              </Answer>
+              <div key={m.id} className="space-y-2">
+                <Answer>
+                  <MessageText text={m.content} />
+                  {m.status !== "complete" ? (
+                    <p className="mt-2 text-xs text-warn">
+                      {m.status === "cut_off" ? "Stopped before the end." : "This answer failed part-way."}
+                    </p>
+                  ) : null}
+                </Answer>
+                {m.drafts.map((d) => (
+                  <BlogDraftCard key={d.receiptId ?? d.slug} draft={d} />
+                ))}
+              </div>
             ),
           )}
           {live ? (

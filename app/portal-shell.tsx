@@ -11,7 +11,8 @@ import { CHANNELS, ID_CHANNEL, SOON, type NavLink } from "./_components/sections
 import { openableBusinesses } from "@/lib/auth/policy";
 import { ROLE_LABELS, isRoleTemplate } from "@/lib/auth/permissions";
 import { organizationById } from "@/lib/db/identity";
-import { listConversations, listMessages, withheldEngineModes } from "@/lib/db/workspace";
+import { listConversations, listMessages, listRuns, withheldEngineModes } from "@/lib/db/workspace";
+import { blogDraftFrom } from "@/lib/workspace/blog-draft";
 import { modeOptions } from "@/lib/ai/engine/registry";
 import { workspaceAccess } from "@/lib/workspace/access";
 
@@ -258,10 +259,15 @@ async function chatDockData(ctx: SessionContext | null): Promise<ChatDockData> {
   if (!latest) {
     return { state: "on", csrf, businessName: access.client.name, conversation: null, messages: [], earlier: 0 };
   }
-  const [messages, withheld] = await Promise.all([
+  const [messages, withheld, runs] = await Promise.all([
     listMessages(access.owner, latest.id),
     withheldEngineModes(access.owner),
+    listRuns(access.owner, latest.id),
   ]);
+  // Blog posts Chat Boss proposed, as cards under the answers that proposed them.
+  const draftsByRun = new Map(
+    runs.map((r) => [r.id, r.receipts.flatMap((x) => blogDraftFrom({ id: x.id, detail: x.detail }) ?? [])]),
+  );
   const engine = modeOptions(withheld, latest.engineMode).find((e) => e.id === latest.engineMode);
   const recent = messages.slice(-DOCK_MESSAGES);
 
@@ -279,6 +285,7 @@ async function chatDockData(ctx: SessionContext | null): Promise<ChatDockData> {
       role: m.role === "user" ? "user" : "assistant",
       content: m.content,
       status: m.status,
+      drafts: m.runId ? (draftsByRun.get(m.runId) ?? []) : [],
     })),
     earlier: messages.length - recent.length,
   };

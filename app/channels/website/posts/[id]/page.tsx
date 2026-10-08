@@ -6,7 +6,9 @@ import { allows } from "@/lib/auth/permissions";
 import { organizationById } from "@/lib/db/identity";
 import { websiteFor } from "@/lib/db/sites";
 import { SiteError, siteRequest } from "@/lib/sites/client";
-import { isLiveStatus, siteActorFor } from "@/lib/sites/website";
+import { formWithDraft, isLiveStatus, siteActorFor } from "@/lib/sites/website";
+import { getBlogDraftReceipt } from "@/lib/db/workspace";
+import { blogDraftSchema } from "@/lib/workspace/blog-tools";
 import { PortalShell } from "../../../../portal-shell";
 import { CsrfField } from "../../../../_components/csrf-field";
 import { savePostAction } from "../../actions";
@@ -53,7 +55,7 @@ export default async function PostPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ error?: string; detail?: string; done?: string; relayout?: string }>;
+  searchParams: Promise<{ error?: string; detail?: string; done?: string; relayout?: string; from?: string }>;
 }) {
   const { id } = await params;
   if (id !== "new" && !/^\d{1,9}$/.test(id)) notFound();
@@ -80,6 +82,18 @@ export default async function PostPage({
   } catch (err) {
     if (!(err instanceof SiteError)) throw err;
     problem = err.message;
+  }
+
+  // A post Chat Boss proposed, opened from its card: this person's own
+  // proposal, laid over the new-post defaults, for them to review and save.
+  let fromChat = false;
+  if (post && id === "new" && query.from) {
+    const receipt = await getBlogDraftReceipt(owner, Number(query.from));
+    const draft = receipt ? blogDraftSchema.safeParse(receipt.detail.draft) : null;
+    if (draft?.success) {
+      post = { ...post, form: formWithDraft(post.form, draft.data) };
+      fromChat = true;
+    }
   }
 
   const f = post?.form ?? {};
@@ -110,6 +124,11 @@ export default async function PostPage({
           {query.error === "publish"
             ? "Your role can save drafts. A publisher, manager or owner makes a post live."
             : (query.detail ?? "The site refused that.")}
+        </p>
+      ) : null}
+      {fromChat ? (
+        <p role="status" className="mt-4 rounded-lg border border-brand/30 bg-brand-soft px-3 py-2 text-sm text-ink">
+          Written with Chat Boss. Read it through, change anything you like, then save it as a draft.
         </p>
       ) : null}
       {query.done === "saved" ? (

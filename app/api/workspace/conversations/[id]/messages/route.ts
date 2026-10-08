@@ -4,6 +4,10 @@ import { authorizeChatBossRequest } from "@/lib/auth/authorize";
 import { workspaceAccess } from "@/lib/workspace/access";
 import { parseCommand } from "@/lib/workspace/commands";
 import { runTurn } from "@/lib/workspace/runner";
+import { allows } from "@/lib/auth/permissions";
+import { websiteFor } from "@/lib/db/sites";
+import { siteSigningConfigured } from "@/lib/sites/client";
+import { siteActorFor } from "@/lib/sites/website";
 
 /**
  * Send a message in a workspace conversation; the answer streams back as
@@ -45,7 +49,13 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
   const content = rest.trim() || parsed.data.content.trim();
 
   const encoder = new TextEncoder();
-  const events = runTurn({ access, conversationId: id, content, command, signal: request.signal });
+  // The website's blog, for people whose role may edit it: Chat Boss reads it
+  // and proposes drafts, as this person. Nobody else's turn sees it.
+  const site =
+    allows(decision.role, "pages.edit", decision.via) && siteSigningConfigured() ? await websiteFor(access.owner) : null;
+  const blog = site ? { siteUrl: site.siteUrl, actor: siteActorFor(decision, access.client.name) } : null;
+
+  const events = runTurn({ access, conversationId: id, content, command, signal: request.signal, blog });
   const body = new ReadableStream<Uint8Array>({
     async pull(controller) {
       try {

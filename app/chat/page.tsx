@@ -133,6 +133,7 @@ export default async function WorkspacePage({
           ? { name: repoNames.get(r.repositoryId) ?? "unknown", branch: r.branch, commitSha: r.commitSha }
           : null,
       receipts: r.receipts.map((x) => ({
+        id: x.id,
         kind: x.kind,
         label: x.label,
         ref: x.ref,
