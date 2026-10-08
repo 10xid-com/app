@@ -9,6 +9,8 @@ import { newConversationAction, setEngineAction, setModeAction } from "./actions
 import { LeftPanel } from "./left-panel";
 import { MessageText } from "./message-text";
 import { RightPanel } from "./right-panel";
+import { BlogDraftCard } from "./blog-draft-card";
+import { blogDraftFrom } from "@/lib/workspace/blog-draft";
 import type { UiRun, WorkspaceData } from "./types";
 import { CsrfInput, CsrfProvider } from "./csrf";
 import { CSRF_FIELD, CSRF_HEADER } from "@/lib/auth/csrf-names";
@@ -298,6 +300,12 @@ export function Workspace({ data }: { data: WorkspaceData }) {
                       <p className="mt-2 text-xs text-warn">{m.status === "cut_off" ? "Stopped before the end." : "This answer failed part-way."}</p>
                     ) : null}
                   </div>
+                  {run
+                    ? run.receipts.map((r, i) => {
+                        const draft = blogDraftFrom(r);
+                        return draft ? <BlogDraftCard key={r.id ?? `d${i}`} draft={draft} /> : null;
+                      })
+                    : null}
                   {run ? (
                     <RunSummary
                       run={run}

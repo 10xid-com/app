@@ -9,7 +9,9 @@ import { recordAudit } from "@/lib/db/audit";
 import { listLinkedRepositories } from "@/lib/db/repositories";
 import { SiteTakenError, connectWebsite, disconnectWebsite, websiteFor } from "@/lib/db/sites";
 import { SiteError, siteOriginFrom, siteRequest } from "@/lib/sites/client";
-import { isLiveStatus, siteActorFor } from "@/lib/sites/website";
+import { formWithDraft, isLiveStatus, siteActorFor } from "@/lib/sites/website";
+import { getBlogDraftReceipt } from "@/lib/db/workspace";
+import { blogDraftSchema } from "@/lib/workspace/blog-tools";
 
 /**
  * The Website channel's writes. Each passes the central authorization
@@ -151,4 +153,60 @@ export async function publishWebsiteAction(formData: FormData) {
     },
   ]);
   redirect(`${BACK}?done=published`);
+}
+
+/**
+ * Save a post Chat Boss proposed, as a draft, by the person who asked for it.
+ *
+ * The form names only the receipt; the post itself is read back from it
+ * (lib/db/workspace.ts getBlogDraftReceipt — this person's own, in this
+ * business), so what is saved is exactly what the card showed. It is laid over
+ * the site's new-post defaults and saved through the site's own save route,
+ * always as a draft. If the site refuses it (an address already in use, say),
+ * the person lands in the editor with the draft filled in and the reason, so
+ * nothing is lost.
+ */
+export async function saveBlogDraftFromChatAction(formData: FormData) {
+  const granted = await requireAction("pages.edit", formData, { returnPath: `${BACK}/posts` });
+  const owner = { organizationId: granted.businessId, userId: granted.ctx.userId };
+  const receiptId = Number(formData.get("receiptId"));
+  const receipt = await getBlogDraftReceipt(owner, receiptId);
+  if (!receipt) redirect(`${BACK}/posts?error=draft`);
+  const parsed = blogDraftSchema.safeParse(receipt.detail.draft);
+  if (!parsed.success) redirect(`${BACK}/posts?error=draft`);
+
+  const site = await websiteFor(owner);
+  if (!site) redirect(`${BACK}?error=notconnected`);
+  const editor = `${BACK}/posts/new?from=${receipt.id}`;
+  if (receipt.detail.site !== site.siteUrl) {
+    redirect(`${editor}&error=site&detail=${encodeURIComponent("This draft was written for a different website.")}`);
+  }
+
+  const business = await organizationById(granted.businessId);
+  const actor = siteActorFor(granted, business?.name ?? "");
+  let saved: { status: number; body: Record<string, unknown> };
+  try {
+    const base = await siteRequest({ siteUrl: site.siteUrl, actor, method: "GET", path: "/api/10xid/posts/new/" });
+    if (base.status !== 200) throw new SiteError(typeof base.body.error === "string" ? base.body.error : `The site answered ${base.status}.`);
+    const form = formWithDraft((base.body.form ?? {}) as Record<string, string | string[]>, parsed.data);
+    saved = await siteRequest({ siteUrl: site.siteUrl, actor, method: "POST", path: "/api/admin/posts/save/", form });
+  } catch (err) {
+    if (err instanceof SiteError) redirect(`${editor}&error=site&detail=${encodeURIComponent(err.message.slice(0, 200))}`);
+    throw err;
+  }
+  if (saved.status !== 200 || typeof saved.body.id !== "number") {
+    const detail = typeof saved.body.error === "string" ? saved.body.error : `The site answered ${saved.status}.`;
+    redirect(`${editor}&error=site&detail=${encodeURIComponent(detail.slice(0, 300))}`);
+  }
+
+  await recordAudit([
+    {
+      organizationId: granted.businessId,
+      actorUserId: granted.ctx.userId,
+      agencyGrantId: granted.via?.grantId ?? null,
+      action: "site.post.saved",
+      target: `${parsed.data.title.slice(0, 120)} (draft, written with Chat Boss)`,
+    },
+  ]);
+  redirect(`${BACK}/posts/${saved.body.id}?done=saved`);
 }
