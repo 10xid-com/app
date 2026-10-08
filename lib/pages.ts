@@ -415,7 +415,7 @@ export const PAGES: PageRecord[] = [
     path: "/api/v1/cron/agency-reminders",
     name: "Agency expiry reminders",
     purpose:
-      "POST only, for the daily scheduler, with the CRON_SECRET as a bearer token; a 404 until that secret is set. Tells each owner of a business and of its agency, once, that agency access ends within seven days.",
+      "POST only, for the daily scheduler, with the CRON_SECRET as a bearer token; a 404 until that secret is set. Tells each owner of a business and of its agency, once, that agency access ends within seven days. With ?test=<address>@resend.dev it sends one sample of each email to that test inbox instead.",
     audience: "public",
     kind: "machinery",
     file: "app/api/v1/cron/agency-reminders/route.ts",

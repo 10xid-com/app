@@ -66,6 +66,43 @@ export function reminderEmail(due: DueReminder, side: ReminderRecipient["side"])
   };
 }
 
+/**
+ * One sample reminder, both sides' wording, to a mail provider's test address
+ * — for proving delivery from a deployed service without a real grant or a
+ * real person. Only Resend's own test domain is accepted, so this can never
+ * mail anybody.
+ */
+export const TEST_RECIPIENT = /^[a-z0-9._+-]+@resend\.dev$/;
+
+export async function sendTestReminder(
+  to: string,
+  send: ReminderDeps["send"] = sendExpiryReminder,
+): Promise<{ sent: number; failed: number; errors: string[] }> {
+  if (!TEST_RECIPIENT.test(to)) throw new Error("Test reminders go only to @resend.dev test addresses.");
+  const sample: DueReminder = {
+    grantId: "00000000-0000-4000-8000-000000000000",
+    clientId: "",
+    clientName: "Test business",
+    agencyId: "",
+    agencyName: "Test agency",
+    role: "editor",
+    expiresAt: new Date(Date.now() + 7 * 86_400_000),
+    recipients: [],
+  };
+  const out = { sent: 0, failed: 0, errors: [] as string[] };
+  for (const side of ["client", "agency"] as const) {
+    const email = reminderEmail(sample, side);
+    try {
+      await send({ to, subject: `[Test] ${email.subject}`, text: email.text });
+      out.sent++;
+    } catch (cause) {
+      out.failed++;
+      out.errors.push(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+  return out;
+}
+
 export type ReminderRun = { due: number; sent: number; failed: number; skipped: number; errors: string[] };
 
 export type ReminderDeps = {

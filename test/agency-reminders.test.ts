@@ -56,7 +56,7 @@ const { appOrigin } = await import("@/lib/auth/origin");
 const { closePool } = await import("@/lib/db/connection");
 const { setSessionActiveOrganization } = await import("@/lib/db/identity");
 const { dueExpiryReminders, claimReminder, recordReminder } = await import("@/lib/db/agency-reminders");
-const { runExpiryReminders, reminderEmail } = await import("@/lib/agency/reminders");
+const { runExpiryReminders, reminderEmail, sendTestReminder } = await import("@/lib/agency/reminders");
 const { sendExpiryReminder } = await import("@/lib/auth/mailer");
 const { POST: cronPost } = await import("@/app/api/v1/cron/agency-reminders/route");
 const agencySide = await import("@/app/agency/actions");
@@ -367,6 +367,14 @@ describe("delivery failures", () => {
     expect((await reminders(grant.due!)).find((r) => r.email === addr("client-owner"))).toMatchObject({ status: "sending" });
   });
 
+  test("a test send reports a refusal rather than hiding it", async () => {
+    const result = await sendTestReminder("bounced@resend.dev", async () => {
+      throw new Error("The domain is not verified");
+    });
+    expect(result).toEqual({ sent: 0, failed: 2, errors: ["The domain is not verified", "The domain is not verified"] });
+    await expect(sendTestReminder("someone@example.com")).rejects.toThrow(/resend\.dev/);
+  });
+
   test("a message the mail provider refuses is a failure, not a quiet success", async () => {
     const before = process.env.RESEND_API_KEY;
     process.env.RESEND_API_KEY = "re_test_key";
@@ -412,6 +420,23 @@ describe("the scheduler's endpoint", () => {
       expect(JSON.stringify(body)).not.toContain("@");
       const sink = await readFile(SINK, "utf8").catch(() => "");
       expect(sink).toContain(`${addr("client-owner")}\tREMINDER\t`);
+
+      // A test send: Resend's test inboxes only, both wordings, nothing run.
+      const test = (q: string) =>
+        cronPost(
+          new Request(`http://app.portal.test/api/v1/cron/agency-reminders?test=${encodeURIComponent(q)}`, {
+            method: "POST",
+            headers: { authorization: `Bearer ${"s".repeat(40)}` },
+          }),
+        );
+      expect((await test(addr("client-owner"))).status).toBe(400);
+      expect((await test("delivered@resend.dev.evil.example")).status).toBe(400);
+      const sent = await test("delivered@resend.dev");
+      expect(sent.status).toBe(200);
+      expect(await sent.json()).toEqual({ test: { sent: 2, failed: 0, errors: [] } });
+      expect(await readFile(SINK, "utf8")).toContain("delivered@resend.dev\tREMINDER\t[Test] Test agency's access to Test business ends on");
+      process.env.CRON_SECRET = "";
+      expect((await test("delivered@resend.dev")).status).toBe(404);
     } finally {
       if (before === undefined) delete process.env.CRON_SECRET;
       else process.env.CRON_SECRET = before;
