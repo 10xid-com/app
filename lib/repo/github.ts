@@ -34,6 +34,18 @@ class BadCredentials extends RepoError {}
 
 type Fetch = typeof fetch;
 
+/** How long the list of repositories the app can see is kept before GitHub is asked again. */
+const ACCESSIBLE_TTL_MS = 2 * 60_000;
+
+export type AccessibleRepository = {
+  installationId: number;
+  externalId: number;
+  owner: string;
+  name: string;
+  defaultBranch: string;
+  private: boolean;
+};
+
 export type GitHubAppConfig = {
   appId: string;
   privateKey: string;
@@ -140,30 +152,61 @@ export class GitHubApp {
     return this.request("/app", this.appJwt());
   }
 
-  /** Every repository any installation of the app can see. Staff-only use: linking. */
-  async listAccessibleRepositories(): Promise<
-    { installationId: number; externalId: number; owner: string; name: string; defaultBranch: string; private: boolean }[]
-  > {
+  /**
+   * Every repository any installation of the app can see — names only, for
+   * linking.
+   *
+   * It is the same list for everyone (it is the app's, not a business's), and
+   * asking GitHub for it took up to twenty seconds, so it is kept for
+   * ACCESSIBLE_TTL_MS and shared: callers within that window, and callers
+   * arriving while it is being fetched, get the same answer. The
+   * installations are asked at once rather than one after another. `fresh`
+   * skips the kept copy.
+   */
+  async listAccessibleRepositories({ fresh = false } = {}): Promise<AccessibleRepository[]> {
+    const kept = this.accessible;
+    if (!fresh && kept && kept.at + ACCESSIBLE_TTL_MS > Date.now()) return kept.list;
+    const load = this.loadAccessible();
+    this.accessible = { at: Date.now(), list: load };
+    // A failure is not kept: the next caller asks GitHub again.
+    load.catch(() => {
+      if (this.accessible?.list === load) this.accessible = null;
+    });
+    return load;
+  }
+
+  /**
+   * One repository the app can see, by GitHub's id: from the kept list, and if
+   * it is not there (installed a moment ago), from GitHub afresh.
+   */
+  async findAccessibleRepository(externalId: number): Promise<AccessibleRepository | undefined> {
+    const hit = (await this.listAccessibleRepositories()).find((r) => r.externalId === externalId);
+    return hit ?? (await this.listAccessibleRepositories({ fresh: true })).find((r) => r.externalId === externalId);
+  }
+
+  private accessible: { at: number; list: Promise<AccessibleRepository[]> } | null = null;
+
+  private async loadAccessible(): Promise<AccessibleRepository[]> {
     const installs = await this.request<{ id: number }[]>("/app/installations?per_page=100", this.appJwt());
-    const out = [];
-    for (const inst of installs) {
-      const page = await this.withInstallationToken(inst.id, null, (token) =>
-        this.request<{
-          repositories: { id: number; name: string; owner: { login: string }; default_branch: string; private: boolean }[];
-        }>("/installation/repositories?per_page=100", token),
-      );
-      for (const r of page.repositories) {
-        out.push({
-          installationId: inst.id,
-          externalId: r.id,
-          owner: r.owner.login,
-          name: r.name,
-          defaultBranch: r.default_branch,
-          private: r.private,
-        });
-      }
-    }
-    return out;
+    const pages = await Promise.all(
+      installs.map((inst) =>
+        this.withInstallationToken(inst.id, null, (token) =>
+          this.request<{
+            repositories: { id: number; name: string; owner: { login: string }; default_branch: string; private: boolean }[];
+          }>("/installation/repositories?per_page=100", token),
+        ).then((page) => ({ installationId: inst.id, page })),
+      ),
+    );
+    return pages.flatMap(({ installationId, page }) =>
+      page.repositories.map((r) => ({
+        installationId,
+        externalId: r.id,
+        owner: r.owner.login,
+        name: r.name,
+        defaultBranch: r.default_branch,
+        private: r.private,
+      })),
+    );
   }
 
   /**

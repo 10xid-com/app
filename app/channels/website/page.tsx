@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import Link from "next/link";
 import { requirePage } from "@/lib/auth/authorize";
 import { allows } from "@/lib/auth/permissions";
@@ -7,6 +8,7 @@ import { listLinkedRepositories } from "@/lib/db/repositories";
 import { websiteFor } from "@/lib/db/sites";
 import { SiteError, siteRequest, siteSigningConfigured } from "@/lib/sites/client";
 import { siteActorFor } from "@/lib/sites/website";
+import type { SiteActor } from "@/lib/sites/sign";
 import { PortalShell } from "../../portal-shell";
 import { CsrfField } from "../../_components/csrf-field";
 import { Icon } from "../../_components/icons";
@@ -15,6 +17,7 @@ import { githubApp } from "@/lib/repo";
 import { RepoError } from "@/lib/repo/types";
 import { RefreshWhileRunning } from "./refresh";
 import { SitePreview } from "../../_components/site-preview";
+import { SubmitButton } from "../../_components/submit-button";
 
 export const metadata: Metadata = { title: "Website" };
 
@@ -91,26 +94,13 @@ export default async function WebsitePage({
   const signing = siteSigningConfigured();
 
   // What the site says about itself. Only for people who may edit: the site
-  // answers nobody else.
-  let status: Status | null = null;
-  let run: Run = null;
-  let problem: string | null = null;
-  if (site && mayEdit && signing) {
-    const actor = siteActorFor(granted, business?.name ?? "");
-    try {
-      const [s, d] = await Promise.all([
-        siteRequest({ siteUrl: site.siteUrl, actor, method: "GET", path: "/api/10xid/status/" }),
-        siteRequest({ siteUrl: site.siteUrl, actor, method: "GET", path: "/api/10xid/deploy/" }),
-      ]);
-      if (s.status === 200) status = s.body as unknown as Status;
-      else problem = typeof s.body.error === "string" ? s.body.error : `The site answered ${s.status}.`;
-      if (d.status === 200) run = (d.body.run as Run) ?? null;
-    } catch (err) {
-      if (!(err instanceof SiteError)) throw err;
-      problem = err.message;
-    }
-  }
-  const running = run !== null && run.status !== "completed";
+  // answers nobody else. It is asked now and NOT awaited: the parts of the page
+  // that need it (the Publish button, the numbers, the tiles) wait for it in
+  // their own Suspense boundaries, and everything else is shown at once.
+  const live: Promise<SiteState> =
+    site && mayEdit && signing
+      ? loadSiteState(site.siteUrl, siteActorFor(granted, business?.name ?? ""))
+      : Promise.resolve({ status: null, run: null, problem: null });
 
   return (
     <PortalShell email={ctx.email} isStaff={ctx.scope.isStaff} actingOn={null}>
@@ -193,17 +183,10 @@ export default async function WebsitePage({
                 </a>
                 <p className="text-xs text-ink-faint">Connected {site.connectedAt.toISOString().slice(0, 10)}</p>
               </div>
-              {mayPublish && status ? (
-                <form action={publishWebsiteAction}>
-                  <CsrfField />
-                  <button
-                    type="submit"
-                    disabled={running || !status.publishing}
-                    className="rounded-lg bg-brand-surface px-4 py-2 text-sm font-semibold text-brand-on-surface hover:bg-brand-surface-hover disabled:opacity-50"
-                  >
-                    {running ? "Publishing…" : "Publish"}
-                  </button>
-                </form>
+              {mayPublish ? (
+                <Suspense fallback={null}>
+                  <PublishButton live={live} />
+                </Suspense>
               ) : null}
             </div>
 
@@ -250,12 +233,12 @@ export default async function WebsitePage({
                     its people can read it in Chat Boss.
                   </p>
                   <div className="flex items-center gap-3">
-                    <button
-                      type="submit"
-                      className="rounded-lg bg-brand-surface px-4 py-2 text-sm font-semibold text-brand-on-surface hover:bg-brand-surface-hover"
+                    <SubmitButton
+                      pendingLabel="Saving…"
+                      className="rounded-lg bg-brand-surface px-4 py-2 text-sm font-semibold text-brand-on-surface hover:bg-brand-surface-hover disabled:opacity-60"
                     >
                       Save repository
-                    </button>
+                    </SubmitButton>
                     <Link href="/channels/website" className="text-sm text-ink-soft underline hover:text-ink">
                       Cancel
                     </Link>
@@ -284,71 +267,18 @@ export default async function WebsitePage({
                 <p className="text-ink-soft">Your role can see that the website is connected. Editors and publishers work on it here.</p>
               ) : !signing ? (
                 <p className="text-warn">The portal is not set up to talk to websites yet (its signing key is missing).</p>
-              ) : problem ? (
-                <p className="text-bad">The site did not answer the portal: {problem}</p>
-              ) : status ? (
-                <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  {(
-                    [
-                      ["Published posts", status.posts.published],
-                      ["Drafts", status.posts.draft],
-                      ["Scheduled", status.posts.scheduled],
-                      ["All posts", status.posts.all],
-                    ] as const
-                  ).map(([label, n]) => (
-                    <div key={label} className="rounded-lg bg-sunk px-3 py-2">
-                      <dt className="text-xs text-ink-faint">{label}</dt>
-                      <dd className="text-lg font-semibold tabular-nums text-ink">{n}</dd>
-                    </div>
-                  ))}
-                </dl>
-              ) : null}
-
-              {status && !status.publishing ? (
-                <p className="mt-3 text-warn">Publishing is not wired up on the site yet (it needs its deploy token).</p>
-              ) : null}
-
-              {run ? (
-                <p className="mt-3 flex flex-wrap items-center gap-2 text-ink-soft">
-                  <span
-                    className={`h-2 w-2 rounded-full ${
-                      running ? "bg-warn" : run.conclusion === "success" ? "bg-good" : "bg-bad"
-                    }`}
-                  />
-                  Last publish: {running ? "building now" : run.conclusion === "success" ? "live" : (run.conclusion ?? "ended")}
-                  {" · "}
-                  {new Date(run.startedAt).toISOString().slice(0, 16).replace("T", " ")} UTC
-                  {" · "}
-                  <a href={run.url} target="_blank" rel="noreferrer" className="underline">
-                    details
-                  </a>
-                </p>
-              ) : null}
-              {running ? <RefreshWhileRunning /> : null}
+              ) : (
+                <Suspense fallback={<StatsLoading />}>
+                  <SiteStats live={live} />
+                </Suspense>
+              )}
             </div>
           </section>
 
-          {mayEdit && status ? (
-            <section className="mt-6 grid gap-4 sm:grid-cols-3">
-              <Link
-                href="/channels/website/posts"
-                className="rounded-xl border border-line bg-surface p-4 shadow-card transition-colors hover:bg-sunk"
-              >
-                <Icon name="content" />
-                <p className="mt-2 text-sm font-semibold text-ink">Blog</p>
-                <p className="text-sm text-ink-soft">Write, edit and publish posts.</p>
-              </Link>
-              {[
-                ["Pages", "Edit the main website’s pages."],
-                ["Landing pages", "Build a page for a campaign."],
-              ].map(([title, text]) => (
-                <div key={title} className="rounded-xl border border-dashed border-line p-4">
-                  <Icon name="website" />
-                  <p className="mt-2 text-sm font-semibold text-ink-soft">{title}</p>
-                  <p className="text-sm text-ink-faint">{text} Coming soon.</p>
-                </div>
-              ))}
-            </section>
+          {mayEdit ? (
+            <Suspense fallback={null}>
+              <Tiles live={live} />
+            </Suspense>
           ) : null}
 
           {mayConnect ? (
@@ -363,5 +293,128 @@ export default async function WebsitePage({
         </>
       )}
     </PortalShell>
+  );
+}
+
+type SiteState = { status: Status | null; run: Run; problem: string | null };
+
+/** The site's own account of itself: its posts, and how the last publish went. */
+async function loadSiteState(siteUrl: string, actor: SiteActor): Promise<SiteState> {
+  try {
+    const [s, d] = await Promise.all([
+      siteRequest({ siteUrl, actor, method: "GET", path: "/api/10xid/status/" }),
+      siteRequest({ siteUrl, actor, method: "GET", path: "/api/10xid/deploy/" }),
+    ]);
+    return {
+      status: s.status === 200 ? (s.body as unknown as Status) : null,
+      problem: s.status === 200 ? null : typeof s.body.error === "string" ? s.body.error : `The site answered ${s.status}.`,
+      run: d.status === 200 ? ((d.body.run as Run) ?? null) : null,
+    };
+  } catch (err) {
+    if (!(err instanceof SiteError)) throw err;
+    return { status: null, run: null, problem: err.message };
+  }
+}
+
+const isRunning = (run: Run) => run !== null && run.status !== "completed";
+
+async function PublishButton({ live }: { live: Promise<SiteState> }) {
+  const { status, run } = await live;
+  if (!status) return null;
+  const running = isRunning(run);
+  return (
+    <form action={publishWebsiteAction}>
+      <CsrfField />
+      <SubmitButton
+        pendingLabel="Starting…"
+        disabled={running || !status.publishing}
+        className="rounded-lg bg-brand-surface px-4 py-2 text-sm font-semibold text-brand-on-surface hover:bg-brand-surface-hover disabled:opacity-50"
+      >
+        {running ? "Publishing…" : "Publish"}
+      </SubmitButton>
+    </form>
+  );
+}
+
+function StatsLoading() {
+  return (
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4" aria-busy="true" aria-label="Asking the site">
+      {[0, 1, 2, 3].map((i) => (
+        <div key={i} className="h-[58px] animate-pulse rounded-lg bg-sunk" />
+      ))}
+    </div>
+  );
+}
+
+async function SiteStats({ live }: { live: Promise<SiteState> }) {
+  const { status, run, problem } = await live;
+  const running = isRunning(run);
+  return (
+    <>
+      {problem ? (
+        <p className="text-bad">The site did not answer the portal: {problem}</p>
+      ) : status ? (
+        <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {(
+            [
+              ["Published posts", status.posts.published],
+              ["Drafts", status.posts.draft],
+              ["Scheduled", status.posts.scheduled],
+              ["All posts", status.posts.all],
+            ] as const
+          ).map(([label, n]) => (
+            <div key={label} className="rounded-lg bg-sunk px-3 py-2">
+              <dt className="text-xs text-ink-faint">{label}</dt>
+              <dd className="text-lg font-semibold tabular-nums text-ink">{n}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : null}
+
+      {status && !status.publishing ? (
+        <p className="mt-3 text-warn">Publishing is not wired up on the site yet (it needs its deploy token).</p>
+      ) : null}
+
+      {run ? (
+        <p className="mt-3 flex flex-wrap items-center gap-2 text-ink-soft">
+          <span className={`h-2 w-2 rounded-full ${running ? "bg-warn" : run.conclusion === "success" ? "bg-good" : "bg-bad"}`} />
+          Last publish: {running ? "building now" : run.conclusion === "success" ? "live" : (run.conclusion ?? "ended")}
+          {" · "}
+          {new Date(run.startedAt).toISOString().slice(0, 16).replace("T", " ")} UTC
+          {" · "}
+          <a href={run.url} target="_blank" rel="noreferrer" className="underline">
+            details
+          </a>
+        </p>
+      ) : null}
+      {running ? <RefreshWhileRunning /> : null}
+    </>
+  );
+}
+
+async function Tiles({ live }: { live: Promise<SiteState> }) {
+  const { status } = await live;
+  if (!status) return null;
+  return (
+    <section className="mt-6 grid gap-4 sm:grid-cols-3">
+      <Link
+        href="/channels/website/posts"
+        className="rounded-xl border border-line bg-surface p-4 shadow-card transition-colors hover:bg-sunk"
+      >
+        <Icon name="content" />
+        <p className="mt-2 text-sm font-semibold text-ink">Blog</p>
+        <p className="text-sm text-ink-soft">Write, edit and publish posts.</p>
+      </Link>
+      {[
+        ["Pages", "Edit the main website’s pages."],
+        ["Landing pages", "Build a page for a campaign."],
+      ].map(([title, text]) => (
+        <div key={title} className="rounded-xl border border-dashed border-line p-4">
+          <Icon name="website" />
+          <p className="mt-2 text-sm font-semibold text-ink-soft">{title}</p>
+          <p className="text-sm text-ink-faint">{text} Coming soon.</p>
+        </div>
+      ))}
+    </section>
   );
 }
