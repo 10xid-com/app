@@ -12,6 +12,7 @@ import {
   type InstagramPost,
   type InstagramProfile,
 } from "@/lib/integrations/instagram";
+import { mediaBucketConfigured } from "@/lib/integrations/media-bucket";
 import { PortalShell } from "../../portal-shell";
 import { CsrfField } from "../../_components/csrf-field";
 import { Icon } from "../../_components/icons";
@@ -24,7 +25,8 @@ export const metadata: Metadata = { title: "Instagram" };
 /**
  * The Instagram channel: the business's Instagram account, connected through
  * Instagram's own sign-in (app/api/instagram/connect), posted to from here
- * (./composer.tsx, app/api/instagram/posts), with how recent posts did.
+ * (./composer.tsx, app/api/instagram/posts): photos, Reels and carousels,
+ * with how recent posts did.
  *
  * Owners and managers connect and disconnect (social.connect); owners,
  * managers and publishers post (social.publish); everyone who can open the
@@ -56,7 +58,8 @@ export default async function InstagramPage({
   const owner = { organizationId: businessId, userId: ctx.userId };
   const params = await searchParams;
 
-  const config = instagramConfig();
+  // Posting needs both the Meta app and somewhere to keep media until Instagram fetches it.
+  const config = mediaBucketConfigured() ? instagramConfig() : null;
   const connection = config ? await instagramFor(owner) : null;
   const mayConnect = allows(role, "social.connect", via);
   const mayPost = allows(role, "social.publish", via);
@@ -96,11 +99,11 @@ export default async function InstagramPage({
 
       {!config ? (
         <section className="mt-6 rounded-2xl border border-line bg-surface p-6 shadow-card">
-          <Heading title="Instagram is being set up" text="10XiD needs its Meta app keys before an account can be connected. Nothing for you to do here yet." />
+          <Heading title="Instagram is being set up" text="10XiD needs its Meta app keys and media store before an account can be connected. Nothing for you to do here yet." />
         </section>
       ) : !connection ? (
         <section className="mt-6 rounded-2xl border border-line bg-surface p-6 shadow-card">
-          <Heading title="Connect your Instagram account" text="Once it is connected, your team can post photos and carousels from here and see how they did." />
+          <Heading title="Connect your Instagram account" text="Once it is connected, your team can post photos, videos and carousels from here and see how they did." />
           <ul className="mt-5 grid gap-2 text-sm text-ink-soft sm:max-w-lg">
             <li className="flex gap-2">
               <span aria-hidden className="text-ink-faint">•</span>

@@ -4,14 +4,17 @@ import { Client } from "pg";
 import {
   InstagramTakenError,
   connectInstagram,
-  deleteSocialPhotos,
+  deleteSocialMedia,
   disconnectInstagram,
   instagramFor,
   instagramToken,
-  publicSocialPhoto,
+  markSocialMediaReady,
+  newMediaKey,
+  recordSocialMedia,
   revokeInstagram,
-  saveSocialPhoto,
-  socialPhotosFor,
+  socialMediaById,
+  socialMediaFor,
+  takeExpiredSocialMedia,
   type SocialOwner,
 } from "@/lib/db/social";
 import { jpegSize, openToken, sealToken, verifySignedRequest } from "@/lib/integrations/instagram";
@@ -27,8 +30,8 @@ import { closePool } from "@/lib/db/connection";
  *   one business per account      an account connected elsewhere cannot be taken
  *   disconnecting erases          the token goes; the record stays
  *   Meta's notice is checked      only a correctly signed one ends a connection
- *   photos are capabilities       the public address needs the token; another
- *                                 business cannot post this one's photos
+ *   media belongs to a business   another business cannot see or post this
+ *                                 one's files; only whole, unexpired ones post
  */
 
 const KEY = randomBytes(32).toString("base64url");
@@ -55,7 +58,7 @@ beforeEach(() => {
 
 afterAll(async () => {
   await owner.query(`update social_connections set disconnected_at = now(), token_ciphertext = null, token_expires_at = null where disconnected_at is null and organization_id in ($1, $2)`, [rotary, northstar]);
-  await owner.query(`delete from social_media where organization_id in ($1, $2)`, [rotary, northstar]);
+  await owner.query(`delete from social_media_uploads where organization_id in ($1, $2)`, [rotary, northstar]);
   await owner.end();
   await closePool();
   vi.unstubAllEnvs();
@@ -179,37 +182,97 @@ describe("Meta's notices", () => {
   });
 });
 
-describe("photos waiting to be posted", () => {
-  test("are read from a JPEG's own header", () => {
+describe("photos and videos waiting to be posted", () => {
+  test("a JPEG's size is read from its own header", () => {
     expect(jpegSize(jpegOf(1440, 1800))).toEqual({ width: 1440, height: 1800 });
     expect(jpegSize(Buffer.from("not a jpeg"))).toBeNull();
     expect(jpegSize(Buffer.from([0x89, 0x50, 0x4e, 0x47]))).toBeNull();
   });
 
-  test("are public only by their token, and only to the business that uploaded them", async () => {
-    const bytes = jpegOf(1080, 1080);
-    const { token } = await saveSocialPhoto(at(rotary), { bytes, width: 1080, height: 1080 });
-    expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect((await publicSocialPhoto(token))?.equals(bytes)).toBe(true);
-    expect(await publicSocialPhoto(token.slice(0, -1) + (token.endsWith("A") ? "B" : "A"))).toBeNull();
-    expect(await publicSocialPhoto("../../etc")).toBeNull();
+  const photo = (o: SocialOwner) =>
+    recordSocialMedia(o, {
+      kind: "photo",
+      contentType: "image/jpeg",
+      storageKey: newMediaKey(o.organizationId, "image/jpeg"),
+      byteSize: 1000,
+      width: 1080,
+      height: 1080,
+      durationMs: null,
+      uploadId: null,
+      ready: true,
+    });
 
-    const stored = await owner.query(`select token_hash from social_media where organization_id = $1`, [rotary]);
-    expect(stored.rows.map((r) => r.token_hash)).not.toContain(token);
-
-    expect(await socialPhotosFor(at(northstar), [token])).toBeNull();
-    const mine = await socialPhotosFor(at(rotary), [token]);
-    expect(mine).toHaveLength(1);
-
-    await deleteSocialPhotos(at(rotary), mine!.map((p) => p.id));
-    expect(await publicSocialPhoto(token)).toBeNull();
+  test("keys are the business's own, and random", () => {
+    const a = newMediaKey(rotary, "video/mp4");
+    expect(a).toMatch(new RegExp(`^social/${rotary}/[A-Za-z0-9_-]{32}\\.mp4$`));
+    expect(newMediaKey(rotary, "video/mp4")).not.toBe(a);
+    expect(() => newMediaKey(rotary, "image/png")).toThrow();
   });
 
-  test("expire after a day", async () => {
-    const { token } = await saveSocialPhoto(at(rotary), { bytes: jpegOf(800, 1000), width: 800, height: 1000 });
-    await owner.query(`update social_media set expires_at = now() - interval '1 second' where organization_id = $1`, [rotary]);
-    expect(await publicSocialPhoto(token)).toBeNull();
-    expect(await socialPhotosFor(at(rotary), [token])).toBeNull();
+  test("belong to the business that uploaded them", async () => {
+    const mine = await photo(at(rotary));
+    expect((await socialMediaById(at(rotary), mine.id))?.id).toBe(mine.id);
+    expect(await socialMediaById(at(northstar), mine.id)).toBeNull();
+    expect(await socialMediaFor(at(northstar), [mine.id])).toBeNull();
+    expect((await socialMediaFor(at(rotary), [mine.id]))?.map((r) => r.id)).toEqual([mine.id]);
+    expect(await deleteSocialMedia(at(northstar), [mine.id])).toEqual([]);
+    expect((await deleteSocialMedia(at(rotary), [mine.id])).map((r) => r.storageKey)).toEqual([mine.storageKey]);
+  });
+
+  test("a video still arriving cannot be posted until it is whole", async () => {
+    const video = await recordSocialMedia(at(rotary), {
+      kind: "video",
+      contentType: "video/mp4",
+      storageKey: newMediaKey(rotary, "video/mp4"),
+      byteSize: 20 * 1024 * 1024,
+      width: 1080,
+      height: 1920,
+      durationMs: 12_000,
+      uploadId: "upload-1",
+      ready: false,
+    });
+    expect(await socialMediaFor(at(rotary), [video.id])).toBeNull();
+    await markSocialMediaReady(at(rotary), video.id);
+    const whole = await socialMediaFor(at(rotary), [video.id]);
+    expect(whole?.[0]).toMatchObject({ ready: true, uploadId: null });
+    await deleteSocialMedia(at(rotary), [video.id]);
+  });
+
+  test("the database holds Instagram's limits and the key's shape", async () => {
+    const base = { kind: "video" as const, contentType: "video/mp4", width: 1, height: 1, durationMs: 5000, uploadId: null, ready: true };
+    await expect(recordSocialMedia(at(rotary), { ...base, storageKey: newMediaKey(rotary, "video/mp4"), byteSize: 301 * 1024 * 1024 })).rejects.toThrow();
+    await expect(recordSocialMedia(at(rotary), { ...base, contentType: "video/webm", storageKey: newMediaKey(rotary, "video/mp4"), byteSize: 10 })).rejects.toThrow();
+    await expect(recordSocialMedia(at(rotary), { ...base, storageKey: "elsewhere/x.mp4", byteSize: 10 })).rejects.toThrow();
+    await expect(recordSocialMedia(at(rotary), { ...base, uploadId: "open", storageKey: newMediaKey(rotary, "video/mp4"), byteSize: 10 })).rejects.toThrow();
+  });
+
+  test("expire after a day, and are handed back for the store to delete", async () => {
+    const old = await photo(at(rotary));
+    await owner.query(`update social_media_uploads set expires_at = now() - interval '1 second' where id = $1`, [old.id]);
+    expect(await socialMediaFor(at(rotary), [old.id])).toBeNull();
+    expect(await takeExpiredSocialMedia(at(northstar))).toEqual([]);
+    expect((await takeExpiredSocialMedia(at(rotary))).map((r) => r.storageKey)).toContain(old.storageKey);
+    expect(await socialMediaById(at(rotary), old.id)).toBeNull();
+  });
+
+  test("sweeps expired legacy photos only for this business", async () => {
+    const ids: string[] = [];
+    try {
+      for (const [org, expired] of [[rotary, true], [northstar, true], [rotary, false]] as const) {
+        const row = await owner.query(`
+          insert into social_media (organization_id, uploaded_by, token_hash, content_type, bytes, width, height, expires_at)
+          values ($1, $2, $3, 'image/jpeg', $4, 1080, 1080, $5) returning id
+        `, [org, paolo, randomBytes(32).toString("hex"), jpegOf(1080, 1080), new Date(Date.now() + (expired ? -1000 : 86_400_000))]);
+        ids.push(row.rows[0].id);
+      }
+      await takeExpiredSocialMedia(at(rotary));
+      const remaining = (await owner.query("select id from social_media where id = any($1::uuid[])", [ids])).rows.map((r) => r.id);
+      expect(remaining).not.toContain(ids[0]);
+      expect(remaining).toContain(ids[1]);
+      expect(remaining).toContain(ids[2]);
+    } finally {
+      await owner.query("delete from social_media where id = any($1::uuid[])", [ids]);
+    }
   });
 });
 

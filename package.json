@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.131.0",
+    "aws4fetch": "1.0.20",
     "diff": "9.0.0",
     "drizzle-orm": "0.45.2",
     "next": "16.3.5",

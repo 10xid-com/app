@@ -34,7 +34,7 @@ export const SCOPES = [
 
 /** Instagram's own limit on a caption. */
 export const CAPTION_LIMIT = 2200;
-/** A carousel holds 2 to 10; one photo is a post of its own. */
+/** A carousel holds 2 to 10; one photo or video is a post of its own. */
 export const MAX_PHOTOS = 10;
 /** Instagram's feed takes 4:5 (portrait) to 1.91:1 (landscape). */
 export const RATIO_MIN = 0.8;
@@ -294,43 +294,73 @@ export async function recentPosts(token: string, limit = 12): Promise<InstagramP
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Wait for Instagram to finish fetching and processing a container. */
+/**
+ * Wait for Instagram to finish fetching and processing a container. A photo
+ * takes seconds; a video can take minutes, so the wait grows: every 2 seconds
+ * for the first half-minute, then every 10, for up to 6 minutes in all.
+ */
 async function ready(token: string, container: string): Promise<void> {
-  for (let i = 0; i < 20; i++) {
-    const s = await call<{ status_code?: string }>(
-      `${GRAPH}/${encodeURIComponent(container)}?fields=status_code`,
+  const started = Date.now();
+  for (let i = 0; Date.now() - started < 6 * 60_000; i++) {
+    const s = await call<{ status_code?: string; status?: string }>(
+      `${GRAPH}/${encodeURIComponent(container)}?fields=status_code,status`,
       {},
       token,
     );
     if (s.status_code === "FINISHED" || s.status_code === "PUBLISHED") return;
     if (s.status_code === "ERROR" || s.status_code === "EXPIRED") {
-      throw new InstagramError("Instagram could not use one of the photos. Try a different one.");
+      throw new InstagramError(
+        `Instagram could not use one of the files${s.status ? ` (${s.status})` : ""}. Videos must be MP4 or MOV (H.264 or HEVC), 23 to 60 frames a second, at most 1920 pixels wide.`,
+      );
     }
-    await wait(2000);
+    await wait(i < 15 ? 2000 : 10_000);
   }
-  throw new InstagramError("Instagram is still processing the photos. Check the account in a minute before posting again.");
+  throw new InstagramError("Instagram is still processing. Check the account in a few minutes before posting again.");
 }
 
+export type MediaItem = { kind: "photo" | "video"; url: string };
+export type ReelOptions = { shareToFeed: boolean; coverMs: number | null };
+
 /**
- * Post one photo, or a carousel of 2 to 10, with a caption. Each address must
- * be a public JPEG Instagram can fetch now. Answers with the new post's id and
- * address.
+ * Post to the account: one photo, one video (as a Reel), or a carousel of 2
+ * to 10 photos and videos, with a caption. Each address must be one Instagram
+ * can fetch now. Answers with the new post's id and address.
  */
-export async function publishPhotos(
+export async function publishMedia(
   token: string,
   accountId: string,
-  input: { caption: string; imageUrls: string[] },
+  input: { caption: string; items: MediaItem[]; reel?: ReelOptions },
 ): Promise<{ id: string; permalink: string | null }> {
   const media = `${GRAPH}/${encodeURIComponent(accountId)}/media`;
   const create = (params: Record<string, string>) =>
     call<{ id: string }>(media, { method: "POST", body: new URLSearchParams(params) }, token).then((r) => r.id);
 
   let container: string;
-  if (input.imageUrls.length === 1) {
-    container = await create({ image_url: input.imageUrls[0], caption: input.caption });
+  if (input.items.length === 1) {
+    const [item] = input.items;
+    if (item.kind === "photo") {
+      container = await create({ image_url: item.url, caption: input.caption });
+    } else {
+      const params: Record<string, string> = {
+        media_type: "REELS",
+        video_url: item.url,
+        caption: input.caption,
+        share_to_feed: String(input.reel?.shareToFeed ?? true),
+      };
+      if (input.reel?.coverMs !== null && input.reel?.coverMs !== undefined) params.thumb_offset = String(Math.round(input.reel.coverMs));
+      container = await create(params);
+    }
   } else {
     const children: string[] = [];
-    for (const imageUrl of input.imageUrls) children.push(await create({ image_url: imageUrl, is_carousel_item: "true" }));
+    for (const item of input.items) {
+      children.push(
+        await create(
+          item.kind === "photo"
+            ? { image_url: item.url, is_carousel_item: "true" }
+            : { media_type: "VIDEO", video_url: item.url, is_carousel_item: "true" },
+        ),
+      );
+    }
     for (const child of children) await ready(token, child);
     container = await create({ media_type: "CAROUSEL", children: children.join(","), caption: input.caption });
   }

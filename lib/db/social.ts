@@ -1,5 +1,5 @@
 import "server-only";
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { and, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { DatabaseError } from "pg";
 import { db, inOwnerTransaction } from "./connection";
@@ -8,7 +8,8 @@ import { writeAudit } from "./audit";
 import { InstagramError, openToken, refreshToken, sealToken } from "@/lib/integrations/instagram";
 
 /**
- * A business's Instagram account, and the photos it is about to post (0034).
+ * A business's Instagram account, and the photos and videos it is about to
+ * post (0034 connections, 0035 bucket uploads).
  *
  * Read and written through the owner transaction, so row-level security
  * filters by business underneath. The access token is sealed before it is
@@ -153,61 +154,92 @@ export async function instagramToken(owner: SocialOwner, connection: SocialConne
 }
 
 /* ------------------------------------------------------------------ */
-/* Photos waiting to be posted                                          */
+/* Photos and videos waiting to be posted                               */
 /* ------------------------------------------------------------------ */
 
-const hashOf = (token: string) => createHash("sha256").update(token).digest("hex");
+export type SocialMediaRow = typeof socialMedia.$inferSelect;
+export type SocialMediaKind = "photo" | "video";
 
-/** Keep a JPEG for Instagram to fetch; answers with the token for its public address. */
-export async function saveSocialPhoto(
+const EXTENSIONS: Record<string, string> = { "image/jpeg": "jpg", "video/mp4": "mp4", "video/quicktime": "mov" };
+
+/** Where a new file goes in the store: under the business, with a random name. */
+export function newMediaKey(organizationId: string, contentType: string): string {
+  const ext = EXTENSIONS[contentType];
+  if (!ext) throw new Error(`No extension for ${contentType}.`);
+  return `social/${organizationId}/${randomBytes(24).toString("base64url")}.${ext}`;
+}
+
+export async function recordSocialMedia(
   owner: SocialOwner,
-  input: { bytes: Buffer; width: number; height: number },
-): Promise<{ token: string }> {
-  const token = randomBytes(32).toString("base64url");
-  await inOwnerTransaction(owner.organizationId, owner.userId, async (tx) => {
-    // This business's leftovers from abandoned posts, while we are here.
-    await tx.delete(socialMedia).where(lt(socialMedia.expiresAt, new Date()));
-    await tx.insert(socialMedia).values({
-      organizationId: owner.organizationId,
-      uploadedBy: owner.userId,
-      tokenHash: hashOf(token),
-      contentType: "image/jpeg",
-      bytes: input.bytes,
-      width: input.width,
-      height: input.height,
-    });
-  });
-  return { token };
-}
-
-/** This business's unexpired photos for these tokens, in the order given; null if any is missing. */
-export async function socialPhotosFor(owner: SocialOwner, tokens: string[]): Promise<{ id: string; token: string }[] | null> {
-  const hashes = tokens.map(hashOf);
-  const rows = await inOwnerTransaction(owner.organizationId, owner.userId, (tx) =>
+  input: {
+    kind: SocialMediaKind;
+    contentType: string;
+    storageKey: string;
+    byteSize: number;
+    width: number | null;
+    height: number | null;
+    durationMs: number | null;
+    uploadId: string | null;
+    ready: boolean;
+  },
+): Promise<SocialMediaRow> {
+  const [row] = await inOwnerTransaction(owner.organizationId, owner.userId, (tx) =>
     tx
-      .select({ id: socialMedia.id, tokenHash: socialMedia.tokenHash, expiresAt: socialMedia.expiresAt })
-      .from(socialMedia)
-      .where(inArray(socialMedia.tokenHash, hashes)),
+      .insert(socialMedia)
+      .values({ organizationId: owner.organizationId, uploadedBy: owner.userId, ...input })
+      .returning(),
   );
-  const byHash = new Map(rows.filter((r) => r.expiresAt > new Date()).map((r) => [r.tokenHash, r.id]));
-  const out = tokens.map((token, i) => ({ id: byHash.get(hashes[i]) ?? "", token }));
-  return out.every((p) => p.id) ? out : null;
+  return row;
 }
 
-export async function deleteSocialPhotos(owner: SocialOwner, ids: string[]): Promise<void> {
-  if (ids.length === 0) return;
+/** One of this business's unexpired files, or null. */
+export async function socialMediaById(owner: SocialOwner, id: string): Promise<SocialMediaRow | null> {
+  const rows = await inOwnerTransaction(owner.organizationId, owner.userId, (tx) =>
+    tx.select().from(socialMedia).where(eq(socialMedia.id, id)).limit(1),
+  );
+  const row = rows[0];
+  return row && row.expiresAt > new Date() ? row : null;
+}
+
+export async function markSocialMediaReady(owner: SocialOwner, id: string): Promise<void> {
   await inOwnerTransaction(owner.organizationId, owner.userId, (tx) =>
-    tx.delete(socialMedia).where(inArray(socialMedia.id, ids)),
+    tx.update(socialMedia).set({ ready: true, uploadId: null }).where(eq(socialMedia.id, id)),
   );
 }
 
-/** The photo behind a public token, for Instagram's fetch (0034's social_media_public). */
-export async function publicSocialPhoto(token: string): Promise<Buffer | null> {
-  if (!/^[A-Za-z0-9_-]{43}$/.test(token)) return null;
-  const result = await db.execute<{ content_type: string; bytes: Buffer }>(
-    sql`select content_type, bytes from social_media_public(${hashOf(token)})`,
+/** This business's whole, unexpired files for these ids, in the order given; null if any is not. */
+export async function socialMediaFor(owner: SocialOwner, ids: string[]): Promise<SocialMediaRow[] | null> {
+  const rows = await inOwnerTransaction(owner.organizationId, owner.userId, (tx) =>
+    tx.select().from(socialMedia).where(inArray(socialMedia.id, ids)),
   );
-  return result.rows[0]?.bytes ?? null;
+  const now = new Date();
+  const byId = new Map(rows.filter((r) => r.ready && r.expiresAt > now).map((r) => [r.id, r]));
+  const out = ids.map((id) => byId.get(id));
+  return out.every(Boolean) ? (out as SocialMediaRow[]) : null;
+}
+
+/** Forget these files; answers with their keys and open uploads, for the store to delete. */
+export async function deleteSocialMedia(owner: SocialOwner, ids: string[]): Promise<Pick<SocialMediaRow, "storageKey" | "uploadId">[]> {
+  if (ids.length === 0) return [];
+  return inOwnerTransaction(owner.organizationId, owner.userId, (tx) =>
+    tx
+      .delete(socialMedia)
+      .where(inArray(socialMedia.id, ids))
+      .returning({ storageKey: socialMedia.storageKey, uploadId: socialMedia.uploadId }),
+  );
+}
+
+/** This business's files past their 24 hours: forgotten here, returned for the store to delete. */
+export async function takeExpiredSocialMedia(owner: SocialOwner): Promise<Pick<SocialMediaRow, "storageKey" | "uploadId">[]> {
+  return inOwnerTransaction(owner.organizationId, owner.userId, async (tx) => {
+    // 0034 photos stay usable during rollout; retire them only after their
+    // original expiration. The legacy table has the same business RLS policy.
+    await tx.execute(sql`delete from social_media where expires_at < now()`);
+    return tx
+      .delete(socialMedia)
+      .where(lt(socialMedia.expiresAt, new Date()))
+      .returning({ storageKey: socialMedia.storageKey, uploadId: socialMedia.uploadId });
+  });
 }
 
 /**
