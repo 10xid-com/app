@@ -95,3 +95,36 @@ export async function disconnectWebsite(owner: SiteOwner, id: string, agencyGran
     ]);
   });
 }
+
+/**
+ * Attach a repository to the business's live website connection, change it,
+ * or take it off (null). The repository must be linked to this business: the
+ * composite key (0028) refuses one linked to any other, and row-level
+ * security keeps another business's connection out of reach. `label` is what
+ * the audit names, e.g. "owner/name".
+ *
+ * True when the connection was found and changed.
+ */
+export async function setWebsiteRepository(
+  owner: SiteOwner,
+  input: { connectionId: string; repositoryId: string | null; label: string; agencyGrantId: string | null },
+): Promise<boolean> {
+  return inOwnerTransaction(owner.organizationId, owner.userId, async (tx) => {
+    const [row] = await tx
+      .update(siteConnections)
+      .set({ repositoryId: input.repositoryId })
+      .where(and(eq(siteConnections.id, input.connectionId), isNull(siteConnections.disconnectedAt)))
+      .returning({ siteUrl: siteConnections.siteUrl });
+    if (!row) return false;
+    await writeAudit(tx, [
+      {
+        organizationId: owner.organizationId,
+        actorUserId: owner.userId,
+        agencyGrantId: input.agencyGrantId,
+        action: "site.repository_set",
+        target: `${row.siteUrl} → ${input.repositoryId ? input.label : "none"}`,
+      },
+    ]);
+    return true;
+  });
+}
