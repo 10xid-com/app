@@ -492,6 +492,18 @@ export const PAGES: PageRecord[] = [
     group: "Machinery",
   },
   {
+    id: "api.website.post-preview",
+    path: "/api/website/posts/[id]/preview",
+    name: "Blog post preview",
+    purpose:
+      "A saved post drawn by the business's own website as its next build will draw it, draft or not; served sandboxed to the editor's Preview on site.",
+    audience: "member",
+    kind: "machinery",
+    file: "app/api/website/posts/[id]/preview/route.ts",
+    methods: ["GET"],
+    group: "Machinery",
+  },
+  {
     id: "api.workspace.repositories",
     path: "/api/workspace/repositories",
     name: "Repositories to link",

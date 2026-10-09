@@ -14,6 +14,7 @@ import { CsrfField } from "../../../../_components/csrf-field";
 import { savePostAction } from "../../actions";
 import { SubmitButton } from "../../../../_components/submit-button";
 import { FeaturedImageField, InsertImage } from "./image-tools";
+import { PostPreview } from "./post-preview";
 import { resolveIdentity } from "@/lib/auth/session";
 
 export const metadata: Metadata = { title: "Post" };
@@ -110,6 +111,7 @@ export default async function PostPage({
   const relayout = imported && query.relayout === "1";
   const chosen = new Set(many(f.term));
   const hidden = Object.entries(f).filter(([k]) => !SHOWN.has(k));
+  const siteUrl = site.siteUrl.replace(/\/+$/, "");
 
   return (
     <PortalShell email={granted.ctx.email} isStaff={granted.ctx.scope.isStaff} actingOn={null}>
@@ -205,6 +207,7 @@ export default async function PostPage({
               ) : null}
             </label>
             {readOnly || (imported && !relayout) ? null : <InsertImage targetId="post-body" csrf={csrf} />}
+            <PostPreview siteUrl={siteUrl} postId={isNew ? null : Number(id)} />
             <label className="grid gap-1.5 text-sm">
               <span className="font-medium text-ink">Excerpt</span>
               <textarea name="excerpt" rows={3} maxLength={320} defaultValue={one(f.excerpt)} readOnly={readOnly} placeholder="Left blank, the first sentences are used." className={input} />
@@ -279,7 +282,7 @@ export default async function PostPage({
 
             <div className="grid gap-1.5 rounded-xl border border-line bg-surface p-4 text-sm shadow-card">
               <span className="font-medium text-ink">Featured image</span>
-              <FeaturedImageField defaultPath={one(f.featured)} readOnly={readOnly} csrf={csrf} inputClassName={input} />
+              <FeaturedImageField defaultPath={one(f.featured)} readOnly={readOnly} csrf={csrf} inputClassName={input} siteUrl={siteUrl} />
             </div>
 
             <fieldset className="grid gap-2 rounded-xl border border-line bg-surface p-4 text-sm shadow-card" disabled={readOnly}>
