@@ -42,6 +42,12 @@ const EXEMPT: Record<string, string> = {
   "app/access/page.tsx": "Describes the person's own sign-in state after a refusal; shows no business data.",
   "app/api/v1/cron/agency-reminders/route.ts":
     "The scheduler's endpoint: a bearer secret (CRON_SECRET, compared in constant time), not a session; a 404 until it is set. It acts on no business a request names: it tells grants' own owners, once each, that agency access is ending, and answers with counts only.",
+  "app/api/v1/instagram/photos/[token]/route.ts":
+    "Instagram fetches a photo being posted from here, without a session. The 256-bit random token in the address is the capability; only its hash is stored, and the photo is deleted once posted (24 hours at most).",
+  "app/api/v1/instagram/deauthorize/route.ts":
+    "Meta's server-to-server notice, without a session: honoured only when its signed_request verifies against the app secret, and it can only end a connection.",
+  "app/api/v1/instagram/data-deletion/route.ts":
+    "Meta's server-to-server data deletion request, without a session: honoured only when its signed_request verifies against the app secret; it can only end a connection. Its GET answers a status line for a confirmation code and reads nothing.",
   "app/api/v1/jobs/route.ts":
     "The machine endpoint: an API key, not a session, bound to one business and write-only. No keys can be minted while staff access is off.",
 };
