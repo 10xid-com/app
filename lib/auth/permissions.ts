@@ -64,6 +64,8 @@ export const BUSINESS_ACTIONS = [
   "jobs.update_status",
   "jobs.approve",
   "jobs.attach_drive_folder",
+  "jobs.note",
+  "jobs.assign",
   "staff.manage",
   // Revision 2, features not built yet.
   "pages.edit",
@@ -91,6 +93,10 @@ export type BusinessAction = (typeof BUSINESS_ACTIONS)[number];
  *                  and remove people, but never make or touch an owner.
  *   editor         writes: files and moves jobs, edits pages, drafts posts,
  *                  adds files. Does not publish or decide.
+ *
+ * Writing a note on a job and handing a job to a teammate (2026-10-09) go
+ * with filing jobs: every role that may create a job may do both. A viewer
+ * reads the notes and is handed nothing to write with.
  *   publisher      an editor who may also publish.
  *   asset_manager  looks after files: the vault, sharing it, Drive folders.
  *   viewer         reads.
@@ -103,6 +109,8 @@ const EDITOR: readonly BusinessAction[] = [
   "jobs.read",
   "jobs.create",
   "jobs.update_status",
+  "jobs.note",
+  "jobs.assign",
   "pages.edit",
   "vault.read",
   "vault.write",
@@ -127,6 +135,8 @@ const GRANTS: Record<RoleTemplate, readonly BusinessAction[]> = {
     "business.view",
     "jobs.read",
     "jobs.create",
+    "jobs.note",
+    "jobs.assign",
     "jobs.attach_drive_folder",
     "vault.read",
     "vault.write",

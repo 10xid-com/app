@@ -204,6 +204,8 @@ const EXPECTED: Record<BusinessAction, readonly RoleTemplate[]> = {
   "jobs.update_status": [O, M, E, P],
   "jobs.approve": [O, M],
   "jobs.attach_drive_folder": [O, M, A],
+  "jobs.note": [O, M, E, P, A],
+  "jobs.assign": [O, M, E, P, A],
   "staff.manage": [O, M],
   "pages.edit": [O, M, E, P],
   "pages.publish": [O, M, P],

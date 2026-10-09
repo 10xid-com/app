@@ -1,7 +1,7 @@
 import "server-only";
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import { inTenantTransaction, type Transaction } from "./connection";
-import { jobEvents, jobs, organizations } from "./schema";
+import { jobEvents, jobNotes, jobs, organizations } from "./schema";
 import { uuidv7 } from "../ids";
 
 /**
@@ -81,11 +81,15 @@ export type JobRow = typeof jobs.$inferSelect;
  * written down in the migration and can be audited there, rather than being a
  * branch in application code that says `if (isAdmin) skipTheCheck()`.
  */
-export async function listJobs(scope: Scope): Promise<JobRow[]> {
+export async function listJobs(
+  scope: Scope,
+  opts: { assignedTo?: string } = {},
+): Promise<JobRow[]> {
   return inTenantTransaction(scope.organizationId, isSurveying(scope), (tx) =>
     tx
       .select()
       .from(jobs)
+      .where(opts.assignedTo ? eq(jobs.assignedTo, opts.assignedTo) : undefined)
       .orderBy(desc(jobs.createdAt))
       .limit(200),
   );
@@ -198,6 +202,112 @@ export async function setJobStatus(
     );
 
     return after;
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* Passing work around: notes, and handing a job to a teammate         */
+/* ------------------------------------------------------------------ */
+
+export type JobNoteRow = typeof jobNotes.$inferSelect;
+
+/** What the people of the business have said about a job, oldest first. */
+export async function listJobNotes(scope: Scope, jobId: string): Promise<JobNoteRow[]> {
+  return inTenantTransaction(scope.organizationId, isSurveying(scope), (tx) =>
+    tx
+      .select()
+      .from(jobNotes)
+      .where(eq(jobNotes.jobId, jobId))
+      .orderBy(asc(jobNotes.createdAt), asc(jobNotes.id))
+      .limit(500),
+  );
+}
+
+async function insertNote(
+  tx: Transaction,
+  scope: Scope,
+  job: JobRow,
+  body: string,
+  handedTo: string | null,
+): Promise<JobNoteRow> {
+  const [note] = await tx
+    .insert(jobNotes)
+    .values({
+      id: uuidv7(),
+      jobId: job.id,
+      organizationId: job.organizationId,
+      authorId: scope.userId,
+      authorEmailAtTime: scope.email,
+      body: body.trim(),
+      handedTo,
+    })
+    .returning();
+  return note;
+}
+
+/**
+ * Write a note on a job. Append-only at the database (login's 0031), which
+ * also refuses a note on a job of another business: the job is read under
+ * row-level security, so it is simply not there. Null when it is not.
+ */
+export async function addJobNote(
+  scope: Scope,
+  jobId: string,
+  body: string,
+): Promise<JobNoteRow | null> {
+  const organizationId = requireWritableOrg(scope);
+
+  return inTenantTransaction(organizationId, false, async (tx) => {
+    const job = (await tx.select().from(jobs).where(eq(jobs.id, jobId)).limit(1))[0];
+    if (!job) return null;
+    return insertNote(tx, scope, job, body, null);
+  });
+}
+
+export type Handover = { job: JobRow; note: JobNoteRow | null };
+
+/**
+ * Give a job to a person of the business, or take it off whoever has it
+ * (`to` null), with an optional note that goes with it.
+ *
+ * Locked, and compared with who the person was looking at as the holder
+ * (`from`): two people handing the same job at once must not both win, and
+ * the second has made their choice about a job that has since moved on. Null
+ * then, and nothing is written. The database refuses a `to` who is not a
+ * person of the job's business (0031).
+ */
+export async function handOverJob(
+  scope: Scope,
+  jobId: string,
+  input: { to: string | null; from: string | null; note?: string | null },
+): Promise<Handover | null> {
+  const organizationId = requireWritableOrg(scope);
+
+  return inTenantTransaction(organizationId, false, async (tx) => {
+    const before = (
+      await tx.select().from(jobs).where(eq(jobs.id, jobId)).limit(1).for("update")
+    )[0];
+    if (!before || before.assignedTo !== input.from) return null;
+
+    const [after] = await tx
+      .update(jobs)
+      .set({ assignedTo: input.to, updatedAt: new Date() })
+      .where(eq(jobs.id, jobId))
+      .returning();
+
+    await recordEvent(
+      tx,
+      scope,
+      after,
+      input.to ? "handed_over" : "unassigned",
+      { assignedTo: before.assignedTo },
+      { assignedTo: after.assignedTo },
+    );
+
+    const body = input.note?.trim();
+    const note = body ? await insertNote(tx, scope, after, body, input.to) : null;
+
+    return { job: after, note };
   });
 }
 

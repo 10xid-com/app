@@ -187,3 +187,51 @@ export async function sendExpiryReminder(input: { to: string; subject: string; t
   });
   if (error) throw new Error(`Resend refused the reminder: ${error.message}`);
 }
+
+/**
+ * Tell somebody a job has been handed to them.
+ *
+ * Carries no credential: the link opens the job, signed in, like any other
+ * page. The note is what a teammate typed and is sent as plain text. A
+ * failure is the caller's to swallow: the handover stands without it, and
+ * the job is under "Assigned to me" either way.
+ */
+export async function sendHandoverNotice(input: {
+  to: string;
+  fromName: string;
+  businessName: string;
+  jobRef: string;
+  jobTitle: string;
+  note: string | null;
+  jobUrl: string;
+}): Promise<void> {
+  const apiKey = process.env.RESEND_API_KEY;
+  const subject = `${input.fromName} handed you ${input.jobRef}: ${input.jobTitle}`;
+  const body = [
+    `${input.fromName} handed you a job at ${input.businessName} on 10XiD.`,
+    ``,
+    `  ${input.jobRef}  ${input.jobTitle}`,
+    ...(input.note ? [``, `Their note:`, ...input.note.split("\n").map((line) => `  ${line}`)] : []),
+    ``,
+    `To open it, sign in and go to:`,
+    `  ${input.jobUrl}`,
+  ].join("\n");
+
+  if (!apiKey) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("RESEND_API_KEY is not set, so handover notices cannot be delivered.");
+    }
+    await appendFile(DEV_CODE_SINK, `${new Date().toISOString()}\t${input.to}\tHANDOVER\t${subject}\n`, "utf8");
+    return;
+  }
+
+  const { Resend } = await import("resend");
+  const resend = new Resend(apiKey);
+  const { error } = await resend.emails.send({
+    from: process.env.MAIL_FROM ?? "10XiD <no-reply@10xid.com>",
+    to: input.to,
+    subject,
+    text: body,
+  });
+  if (error) throw new Error(`Resend refused the handover notice: ${error.message}`);
+}

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { listJobs } from "@/lib/db";
+import { teamFor } from "@/lib/db/identity";
 import { requirePage } from "@/lib/auth/authorize";
 import { roleAllows } from "@/lib/auth/permissions";
 import { PortalShell } from "../portal-shell";
@@ -29,12 +30,23 @@ const ERRORS: Record<string, string> = {
 export default async function JobsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{ error?: string; view?: string }>;
 }) {
-  const { ctx, role } = await requirePage("jobs.read", { returnPath: "/jobs" });
+  const { ctx, role, businessId } = await requirePage("jobs.read", { returnPath: "/jobs" });
   const params = await searchParams;
+  // "Assigned to me" is the work handed to this person: their list of what to do.
+  const mine = params.view === "mine";
 
-  const jobs = await listJobs(ctx.scope);
+  const [jobs, team] = await Promise.all([
+    listJobs(ctx.scope, mine ? { assignedTo: ctx.userId } : {}),
+    teamFor(businessId),
+  ]);
+  const holder = (userId: string | null) => {
+    if (!userId) return null;
+    if (userId === ctx.userId) return "You";
+    const person = team.find((p) => p.userId === userId);
+    return person ? person.fullName || person.email : "Somebody no longer here";
+  };
 
   const canWrite = roleAllows(role, "jobs.create");
 
@@ -58,6 +70,25 @@ export default async function JobsPage({
         </span>
       </div>
 
+      <nav aria-label="Which jobs" className="mb-4 flex gap-1 rounded-lg bg-sunk p-1 text-sm sm:w-fit">
+        {[
+          { href: "/jobs", label: "All jobs", current: !mine },
+          { href: "/jobs?view=mine", label: "Assigned to me", current: mine },
+        ].map((tab) => (
+          <Link
+            key={tab.href}
+            href={tab.href}
+            aria-current={tab.current ? "page" : undefined}
+            className={`flex-1 rounded-md px-3 py-1.5 text-center font-medium transition-colors duration-150
+                        focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand sm:flex-none ${
+                          tab.current ? "bg-surface text-ink shadow-card" : "text-ink-soft hover:text-ink"
+                        }`}
+          >
+            {tab.label}
+          </Link>
+        ))}
+      </nav>
+
       {params.error ? (
         <p
           role="alert"
@@ -70,7 +101,7 @@ export default async function JobsPage({
       <div className="overflow-hidden rounded-xl border border-line bg-surface shadow-card">
         {jobs.length === 0 ? (
           <p className="px-4 py-10 text-center text-sm text-ink-faint">
-            Nothing here yet.
+            {mine ? "Nothing handed to you right now." : "Nothing here yet."}
           </p>
         ) : (
           <ul className="divide-y divide-line-soft">
@@ -92,6 +123,11 @@ export default async function JobsPage({
                   <span className="flex-none text-xs text-ink-faint">
                     {job.direction === "from_client" ? "→ us" : "→ client"}
                   </span>
+                  {!mine ? (
+                    <span className="w-28 flex-none truncate text-xs text-ink-soft">
+                      {holder(job.assignedTo) ?? <span className="text-ink-faint">Unassigned</span>}
+                    </span>
+                  ) : null}
                   <span
                     className={`flex-none rounded-full px-2 py-0.5 text-xs font-medium ${
                       STATUS_STYLE[job.status] ?? "bg-sunk text-ink-faint"
