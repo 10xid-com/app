@@ -17,6 +17,7 @@ import { modeOptions } from "@/lib/ai/engine/registry";
 import { listLinkedRepositories } from "@/lib/db/repositories";
 import { githubApp } from "@/lib/repo";
 import { websiteFor } from "@/lib/db/sites";
+import { connectedChannels, type ConnectedChannel } from "@/lib/db/channels";
 import { workspaceAccess } from "@/lib/workspace/access";
 
 /**
@@ -90,6 +91,12 @@ export async function PortalShell({
         ? { name: onScreen.organizationName, logoUrl: onScreenOrg?.brandLogoUrl ?? null }
         : { name: "10XiD Portal", logoUrl: null }));
 
+  // The sidebar lists the channels this business has connected; Add channel
+  // (/channels) offers the rest.
+  const connected: Set<ConnectedChannel> =
+    ctx && onScreen ? await connectedChannels({ organizationId: onScreen.organizationId, userId: ctx.userId }) : new Set();
+  const channelLinks = (["website", "instagram", "facebook"] as const).filter((c) => connected.has(c)).map((c) => CHANNELS[c]);
+
   const main: NavGroup[] = [
     {
       links: [
@@ -110,9 +117,7 @@ export async function PortalShell({
       title: { label: "Channels", href: SOON.channels.href },
       links: [
         ID_CHANNEL,
-        CHANNELS.website,
-        CHANNELS.instagram,
-        CHANNELS.linkedin,
+        ...channelLinks,
         { href: SOON.channels.href, label: "Add channel", icon: "plus" } satisfies NavLink,
       ].map(link),
     },

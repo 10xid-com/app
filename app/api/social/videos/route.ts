@@ -7,7 +7,7 @@ import { sweepExpiredSocialMedia } from "@/lib/integrations/social-media";
 import { VIDEO_MAX_BYTES, VIDEO_MAX_MS, VIDEO_MIN_MS, VIDEO_PART_BYTES, VIDEO_TYPES } from "@/lib/integrations/video-limits";
 
 /**
- * Start a video upload for an Instagram post. The video then comes up in
+ * Start a video upload for a post (Instagram, Facebook). The video then comes up in
  * parts (./[id]/parts/[part]) and is put together (./[id]/complete); until
  * then it cannot be posted. social.publish, CSRF and Origin checked by the
  * central function.
@@ -25,14 +25,14 @@ const body = z.object({
 
 export async function POST(request: Request) {
   const decision = await authorizeRequest(request, "social.publish");
-  if (!decision.allowed) return NextResponse.json({ error: "Your role cannot post to Instagram here." }, { status: 403 });
+  if (!decision.allowed) return NextResponse.json({ error: "Your role cannot post here." }, { status: 403 });
   if (!mediaBucketConfigured()) return NextResponse.json({ error: "The portal has nowhere to keep media yet." }, { status: 503 });
   const owner = { organizationId: decision.businessId, userId: decision.ctx.userId };
 
   const parsed = body.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json(
-      { error: "Instagram takes MP4 or MOV video from 3 seconds to 15 minutes, up to 300MB." },
+      { error: "Videos must be MP4 or MOV, 3 seconds to 15 minutes, up to 300MB." },
       { status: 400 },
     );
   }

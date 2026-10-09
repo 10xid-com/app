@@ -1,6 +1,6 @@
 import "server-only";
-import { createCipheriv, createDecipheriv, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { appOrigin } from "@/lib/auth/origin";
+import { channelTokenKey, MetaError } from "./meta";
 
 /**
  * Instagram, through Meta's "Instagram API with Instagram Login".
@@ -8,7 +8,7 @@ import { appOrigin } from "@/lib/auth/origin";
  * A business connects its Instagram professional account (Business or
  * Creator) by signing in to Instagram from the Instagram channel; Instagram
  * hands back a code, which becomes a token good for an hour, which becomes one
- * good for 60 days. The portal keeps that one, encrypted (sealToken below),
+ * good for 60 days. The portal keeps that one, sealed (./meta.ts),
  * and refreshes it as it is used.
  *
  * Configuration, on the app service:
@@ -40,26 +40,14 @@ export const MAX_PHOTOS = 10;
 export const RATIO_MIN = 0.8;
 export const RATIO_MAX = 1.91;
 
-export class InstagramError extends Error {
-  constructor(
-    message: string,
-    /** Instagram's own error code: 190 is a token it no longer accepts. */
-    readonly code: number | null = null,
-  ) {
-    super(message);
-    this.name = "InstagramError";
-  }
-  get signedOut(): boolean {
-    return this.code === 190;
-  }
-}
+export class InstagramError extends MetaError {}
 
 export type InstagramConfig = { appId: string; appSecret: string };
 
 export function instagramConfig(): InstagramConfig | null {
   const appId = process.env.INSTAGRAM_APP_ID?.trim();
   const appSecret = process.env.INSTAGRAM_APP_SECRET?.trim();
-  if (!appId || !/^\d{5,25}$/.test(appId) || !appSecret || !tokenKey()) return null;
+  if (!appId || !/^\d{5,25}$/.test(appId) || !appSecret || !channelTokenKey()) return null;
   return { appId, appSecret };
 }
 
@@ -77,49 +65,6 @@ export function authorizeUrl(config: InstagramConfig, state: string): string {
   // Straight to Instagram's own sign-in, not Facebook's.
   url.searchParams.set("enable_fb_login", "false");
   return url.toString();
-}
-
-/* ------------------------------------------------------------------ */
-/* Stored tokens                                                        */
-/* ------------------------------------------------------------------ */
-
-function tokenKey(): Buffer | null {
-  const raw = process.env.CHANNEL_TOKEN_KEY?.trim();
-  if (!raw) return null;
-  const key = Buffer.from(raw, "base64url");
-  return key.length === 32 ? key : null;
-}
-
-/** What a sealed token is bound to: a ciphertext moved to another row does not open. */
-export type TokenBinding = { organizationId: string; channel: string; accountId: string };
-
-const binding = (b: TokenBinding) => Buffer.from(`${b.organizationId}:${b.channel}:${b.accountId}`);
-
-/** AES-256-GCM, as `v1.<iv>.<ciphertext>.<tag>`, base64url. */
-export function sealToken(token: string, bound: TokenBinding): string {
-  const key = tokenKey();
-  if (!key) throw new InstagramError("The portal has no CHANNEL_TOKEN_KEY to store the token with.");
-  const iv = randomBytes(12);
-  const cipher = createCipheriv("aes-256-gcm", key, iv);
-  cipher.setAAD(binding(bound));
-  const sealed = Buffer.concat([cipher.update(token, "utf8"), cipher.final()]);
-  return ["v1", iv, sealed, cipher.getAuthTag()].map((p) => (typeof p === "string" ? p : p.toString("base64url"))).join(".");
-}
-
-export function openToken(sealed: string, bound: TokenBinding): string {
-  const key = tokenKey();
-  const [version, iv, data, tag] = sealed.split(".");
-  if (!key || version !== "v1" || !iv || !data || !tag) {
-    throw new InstagramError("The stored Instagram token cannot be read. Connect the account again.");
-  }
-  try {
-    const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(iv, "base64url"));
-    decipher.setAAD(binding(bound));
-    decipher.setAuthTag(Buffer.from(tag, "base64url"));
-    return Buffer.concat([decipher.update(Buffer.from(data, "base64url")), decipher.final()]).toString("utf8");
-  } catch {
-    throw new InstagramError("The stored Instagram token cannot be read. Connect the account again.");
-  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -408,22 +353,3 @@ export function jpegSize(bytes: Uint8Array): { width: number; height: number } |
   return null;
 }
 
-/**
- * Instagram's signed notice (deauthorize, data deletion): `<sig>.<payload>`,
- * the signature an HMAC-SHA256 of the payload with the app secret. Answers
- * with the person's app-scoped id when it is genuine.
- */
-export function verifySignedRequest(config: InstagramConfig, signed: string): string | null {
-  const [sig, payload] = signed.split(".", 2);
-  if (!sig || !payload) return null;
-  const expected = createHmac("sha256", config.appSecret).update(payload).digest();
-  const given = Buffer.from(sig, "base64url");
-  if (given.length !== expected.length || !timingSafeEqual(given, expected)) return null;
-  try {
-    const data = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as { algorithm?: string; user_id?: string | number };
-    if (data.algorithm?.toUpperCase() !== "HMAC-SHA256" || data.user_id === undefined) return null;
-    return String(data.user_id);
-  } catch {
-    return null;
-  }
-}

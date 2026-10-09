@@ -15,7 +15,7 @@ export const dynamic = "force-dynamic";
 
 export async function PUT(request: Request, ctx: { params: Promise<{ id: string; part: string }> }) {
   const decision = await authorizeRequest(request, "social.publish");
-  if (!decision.allowed) return NextResponse.json({ error: "Your role cannot post to Instagram here." }, { status: 403 });
+  if (!decision.allowed) return NextResponse.json({ error: "Your role cannot post here." }, { status: 403 });
   const owner = { organizationId: decision.businessId, userId: decision.ctx.userId };
 
   const { id, part: raw } = await ctx.params;

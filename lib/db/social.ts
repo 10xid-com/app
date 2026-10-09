@@ -5,73 +5,86 @@ import { DatabaseError } from "pg";
 import { db, inOwnerTransaction } from "./connection";
 import { socialConnections, socialMedia } from "./schema";
 import { writeAudit } from "./audit";
-import { InstagramError, openToken, refreshToken, sealToken } from "@/lib/integrations/instagram";
+import { MetaError, openToken, sealToken } from "@/lib/integrations/meta";
+import { refreshToken } from "@/lib/integrations/instagram";
 
 /**
- * A business's Instagram account, and the photos and videos it is about to
- * post (0034 connections, 0035 bucket uploads).
+ * A business's Instagram account and Facebook Page, and the photos and videos
+ * it is about to post (0034 and 0036 connections, 0035 bucket uploads).
  *
  * Read and written through the owner transaction, so row-level security
  * filters by business underneath. The access token is sealed before it is
- * written and opened only here, bound to the business and the account
- * (lib/integrations/instagram.ts), and erased on disconnect.
+ * written and opened only here, bound to the business, the channel and the
+ * account (lib/integrations/meta.ts), and erased on disconnect.
  */
 
 export type SocialConnection = typeof socialConnections.$inferSelect;
 export type SocialOwner = { organizationId: string; userId: string };
+export type SocialChannel = SocialConnection["channel"];
 
-const CHANNEL = "instagram";
+/** How the record names an account: @username on Instagram, the Page's name on Facebook. */
+const label = (channel: SocialChannel, name: string) => (channel === "instagram" ? `@${name}` : name);
 
-export async function instagramFor(owner: SocialOwner): Promise<SocialConnection | null> {
+export async function socialConnectionFor(owner: SocialOwner, channel: SocialChannel): Promise<SocialConnection | null> {
   const rows = await inOwnerTransaction(owner.organizationId, owner.userId, (tx) =>
     tx
       .select()
       .from(socialConnections)
-      .where(and(eq(socialConnections.channel, CHANNEL), isNull(socialConnections.disconnectedAt)))
+      .where(and(eq(socialConnections.channel, channel), isNull(socialConnections.disconnectedAt)))
       .limit(1),
   );
   return rows[0] ?? null;
 }
 
-export class InstagramTakenError extends Error {
+/** Which channels the business has live connections on. */
+export async function connectedSocialChannels(owner: SocialOwner): Promise<SocialChannel[]> {
+  const rows = await inOwnerTransaction(owner.organizationId, owner.userId, (tx) =>
+    tx
+      .select({ channel: socialConnections.channel })
+      .from(socialConnections)
+      .where(isNull(socialConnections.disconnectedAt)),
+  );
+  return rows.map((r) => r.channel);
+}
+
+export class SocialAccountTakenError extends Error {
   constructor() {
-    super("That Instagram account is already connected to another business.");
-    this.name = "InstagramTakenError";
+    super("That account is already connected to another business.");
+    this.name = "SocialAccountTakenError";
   }
 }
 
 /**
- * Connect an account, replacing the business's current one if there is one
- * (connecting again is how a signed-out connection is mended).
+ * Connect an account, replacing the business's current one on that channel
+ * if there is one (connecting again is how a signed-out connection is mended,
+ * and how a business moves to another Page).
  */
-export async function connectInstagram(
+export async function connectSocial(
   owner: SocialOwner,
+  channel: SocialChannel,
   input: {
     accountId: string;
     scopedId: string;
     username: string;
     token: string;
-    expiresAt: Date;
+    /** Null for a token that does not expire (a Facebook Page's). */
+    expiresAt: Date | null;
     scopes: string[];
     agencyGrantId: string | null;
   },
 ): Promise<SocialConnection> {
-  const tokenCiphertext = sealToken(input.token, {
-    organizationId: owner.organizationId,
-    channel: CHANNEL,
-    accountId: input.accountId,
-  });
+  const tokenCiphertext = sealToken(input.token, { organizationId: owner.organizationId, channel, accountId: input.accountId });
   try {
     return await inOwnerTransaction(owner.organizationId, owner.userId, async (tx) => {
       await tx
         .update(socialConnections)
         .set({ disconnectedAt: new Date(), tokenCiphertext: null, tokenExpiresAt: null })
-        .where(and(eq(socialConnections.channel, CHANNEL), isNull(socialConnections.disconnectedAt)));
+        .where(and(eq(socialConnections.channel, channel), isNull(socialConnections.disconnectedAt)));
       const [row] = await tx
         .insert(socialConnections)
         .values({
           organizationId: owner.organizationId,
-          channel: CHANNEL,
+          channel,
           accountId: input.accountId,
           scopedId: input.scopedId,
           username: input.username,
@@ -86,34 +99,34 @@ export async function connectInstagram(
           organizationId: owner.organizationId,
           actorUserId: owner.userId,
           agencyGrantId: input.agencyGrantId,
-          action: "instagram.connected",
-          target: `@${input.username}`,
+          action: `${channel}.connected`,
+          target: label(channel, input.username),
         },
       ]);
       return row;
     });
   } catch (err) {
     const cause = (err as { cause?: unknown }).cause ?? err;
-    if (cause instanceof DatabaseError && cause.code === "23505") throw new InstagramTakenError();
+    if (cause instanceof DatabaseError && cause.code === "23505") throw new SocialAccountTakenError();
     throw err;
   }
 }
 
-export async function disconnectInstagram(owner: SocialOwner, id: string, agencyGrantId: string | null): Promise<void> {
+export async function disconnectSocial(owner: SocialOwner, id: string, agencyGrantId: string | null): Promise<void> {
   await inOwnerTransaction(owner.organizationId, owner.userId, async (tx) => {
     const [row] = await tx
       .update(socialConnections)
       .set({ disconnectedAt: new Date(), tokenCiphertext: null, tokenExpiresAt: null })
       .where(and(eq(socialConnections.id, id), isNull(socialConnections.disconnectedAt)))
-      .returning({ username: socialConnections.username });
+      .returning({ username: socialConnections.username, channel: socialConnections.channel });
     if (!row) return;
     await writeAudit(tx, [
       {
         organizationId: owner.organizationId,
         actorUserId: owner.userId,
         agencyGrantId,
-        action: "instagram.disconnected",
-        target: `@${row.username}`,
+        action: `${row.channel}.disconnected`,
+        target: label(row.channel, row.username),
       },
     ]);
   });
@@ -123,15 +136,16 @@ export async function disconnectInstagram(owner: SocialOwner, id: string, agency
 const REFRESH_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
- * The connection's token, extended for another 60 days when it was last
- * extended over a week ago. So a connection stays live as long as someone
- * opens the channel or posts at least every 60 days.
+ * The connection's token. An Instagram token is extended for another 60 days
+ * when it was last extended over a week ago, so it stays live as long as
+ * someone opens the channel or posts at least every 60 days. A Facebook
+ * Page's token does not expire.
  */
-export async function instagramToken(owner: SocialOwner, connection: SocialConnection): Promise<string> {
-  if (!connection.tokenCiphertext) throw new InstagramError("Instagram is not connected.");
-  const bound = { organizationId: owner.organizationId, channel: CHANNEL, accountId: connection.accountId };
+export async function channelToken(owner: SocialOwner, connection: SocialConnection): Promise<string> {
+  if (!connection.tokenCiphertext) throw new MetaError("This channel is not connected.");
+  const bound = { organizationId: owner.organizationId, channel: connection.channel, accountId: connection.accountId };
   const token = openToken(connection.tokenCiphertext, bound);
-  if (Date.now() - connection.tokenRefreshedAt.getTime() < REFRESH_AFTER_MS) return token;
+  if (connection.channel !== "instagram" || Date.now() - connection.tokenRefreshedAt.getTime() < REFRESH_AFTER_MS) return token;
   try {
     const fresh = await refreshToken(token);
     await inOwnerTransaction(owner.organizationId, owner.userId, (tx) =>
@@ -148,7 +162,7 @@ export async function instagramToken(owner: SocialOwner, connection: SocialConne
   } catch (err) {
     // A token Instagram has stopped accepting is the caller's to report; a
     // refresh that merely failed leaves the current token, still good.
-    if (err instanceof InstagramError && err.signedOut) throw err;
+    if (err instanceof MetaError && err.signedOut) throw err;
     return token;
   }
 }
@@ -243,13 +257,17 @@ export async function takeExpiredSocialMedia(owner: SocialOwner): Promise<Pick<S
 }
 
 /**
- * Instagram's notice that the person removed the app, or asked for their data
- * to be deleted (0034's social_connection_revoke). The caller has checked the
+ * Meta's notice that the person removed the app, or asked for their data to
+ * be deleted (0034's social_connection_revoke). The caller has checked the
  * notice's signature. Answers with how many connections were ended.
  */
-export async function revokeInstagram(scopedId: string, reason: "deauthorize" | "deletion_request"): Promise<number> {
+export async function revokeSocial(
+  channel: SocialChannel,
+  scopedId: string,
+  reason: "deauthorize" | "deletion_request",
+): Promise<number> {
   const result = await db.execute<{ n: number }>(
-    sql`select social_connection_revoke(${CHANNEL}, ${scopedId}, ${reason}) as n`,
+    sql`select social_connection_revoke(${channel}, ${scopedId}, ${reason}) as n`,
   );
   return Number(result.rows[0]?.n ?? 0);
 }

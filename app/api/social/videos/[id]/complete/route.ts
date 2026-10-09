@@ -20,7 +20,7 @@ const body = z.object({
 
 export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const decision = await authorizeRequest(request, "social.publish");
-  if (!decision.allowed) return NextResponse.json({ error: "Your role cannot post to Instagram here." }, { status: 403 });
+  if (!decision.allowed) return NextResponse.json({ error: "Your role cannot post here." }, { status: 403 });
   const owner = { organizationId: decision.businessId, userId: decision.ctx.userId };
 
   const { id } = await ctx.params;

@@ -3,9 +3,8 @@ import { Suspense } from "react";
 import { requirePage } from "@/lib/auth/authorize";
 import { allows } from "@/lib/auth/permissions";
 import { resolveIdentity } from "@/lib/auth/session";
-import { instagramFor, instagramToken, type SocialConnection } from "@/lib/db/social";
+import { channelToken, socialConnectionFor, type SocialConnection } from "@/lib/db/social";
 import {
-  InstagramError,
   instagramConfig,
   profile,
   recentPosts,
@@ -13,19 +12,20 @@ import {
   type InstagramProfile,
 } from "@/lib/integrations/instagram";
 import { mediaBucketConfigured } from "@/lib/integrations/media-bucket";
+import { MetaError } from "@/lib/integrations/meta";
 import { PortalShell } from "../../portal-shell";
 import { CsrfField } from "../../_components/csrf-field";
 import { Icon } from "../../_components/icons";
 import { SubmitButton } from "../../_components/submit-button";
 import { disconnectInstagramAction } from "./actions";
-import { Composer } from "./composer";
+import { SocialComposer } from "../../_components/social-composer";
 
 export const metadata: Metadata = { title: "Instagram" };
 
 /**
  * The Instagram channel: the business's Instagram account, connected through
  * Instagram's own sign-in (app/api/instagram/connect), posted to from here
- * (./composer.tsx, app/api/instagram/posts): photos, Reels and carousels,
+ * (app/_components/social-composer.tsx, app/api/instagram/posts): photos, Reels and carousels,
  * with how recent posts did.
  *
  * Owners and managers connect and disconnect (social.connect); owners,
@@ -60,7 +60,7 @@ export default async function InstagramPage({
 
   // Posting needs both the Meta app and somewhere to keep media until Instagram fetches it.
   const config = mediaBucketConfigured() ? instagramConfig() : null;
-  const connection = config ? await instagramFor(owner) : null;
+  const connection = config ? await socialConnectionFor(owner, "instagram") : null;
   const mayConnect = allows(role, "social.connect", via);
   const mayPost = allows(role, "social.publish", via);
   const identity = connection && mayPost ? await resolveIdentity() : null;
@@ -71,11 +71,11 @@ export default async function InstagramPage({
   const live: Promise<Live> | null = connection
     ? (async () => {
         try {
-          const token = await instagramToken(owner, connection);
+          const token = await channelToken(owner, connection);
           const [account, posts] = await Promise.all([profile(token), recentPosts(token)]);
           return { ok: true as const, account, posts };
         } catch (err) {
-          if (err instanceof InstagramError) return { ok: false as const, signedOut: err.signedOut, message: err.message };
+          if (err instanceof MetaError) return { ok: false as const, signedOut: err.signedOut, message: err.message };
           throw err;
         }
       })()
@@ -131,7 +131,7 @@ export default async function InstagramPage({
             <section className="rounded-2xl border border-line bg-surface p-5 shadow-card">
               <h2 className="text-base font-semibold text-ink">New post</h2>
               {mayPost ? (
-                <Composer csrf={csrf} username={connection.username} />
+                <SocialComposer channel="instagram" csrf={csrf} username={connection.username} />
               ) : (
                 <p className="mt-2 text-sm text-ink-soft">A publisher, manager or owner can post to Instagram.</p>
               )}

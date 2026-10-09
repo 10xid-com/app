@@ -2,23 +2,24 @@ import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { Client } from "pg";
 import {
-  InstagramTakenError,
-  connectInstagram,
+  SocialAccountTakenError,
+  channelToken,
+  connectSocial,
   deleteSocialMedia,
-  disconnectInstagram,
-  instagramFor,
-  instagramToken,
+  disconnectSocial,
+  socialConnectionFor,
   markSocialMediaReady,
   newMediaKey,
   recordSocialMedia,
-  revokeInstagram,
+  revokeSocial,
   socialMediaById,
   socialMediaFor,
   takeExpiredSocialMedia,
   type SocialOwner,
 } from "@/lib/db/social";
-import { jpegSize, openToken, sealToken, verifySignedRequest } from "@/lib/integrations/instagram";
-import { igStateMatches, newIgState } from "@/lib/integrations/instagram-state";
+import { jpegSize } from "@/lib/integrations/instagram";
+import { openToken, sealToken, verifySignedRequest } from "@/lib/integrations/meta";
+import { newOAuthState, oauthStateMatches } from "@/lib/integrations/oauth-state";
 import { closePool } from "@/lib/db/connection";
 
 /**
@@ -68,7 +69,7 @@ const at = (organizationId: string): SocialOwner => ({ organizationId, userId: p
 const account = () => String(17_800_000_000_000_000n + BigInt(Math.floor(Math.random() * 1e9)));
 
 async function connect(o: SocialOwner, accountId = account(), scopedId = account()) {
-  return connectInstagram(o, {
+  return connectSocial(o, "instagram", {
     accountId,
     scopedId,
     username: `vwt_${accountId.slice(-5)}`,
@@ -106,32 +107,32 @@ describe("connections", () => {
     expect(stored.rows[0].token_ciphertext).toMatch(/^v1\./);
     expect(stored.rows[0].token_ciphertext).not.toContain("secret");
 
-    expect((await instagramFor(at(rotary)))?.id).toBe(row.id);
-    expect(await instagramFor(at(northstar))).toBeNull();
-    expect(await instagramToken(at(rotary), row)).toBe(`IGAA-secret-${row.accountId}`);
+    expect((await socialConnectionFor(at(rotary), "instagram"))?.id).toBe(row.id);
+    expect(await socialConnectionFor(at(northstar), "instagram")).toBeNull();
+    expect(await channelToken(at(rotary), row)).toBe(`IGAA-secret-${row.accountId}`);
 
-    await disconnectInstagram(at(northstar), row.id, null); // another business's id changes nothing
-    expect((await instagramFor(at(rotary)))?.id).toBe(row.id);
+    await disconnectSocial(at(northstar), row.id, null); // another business's id changes nothing
+    expect((await socialConnectionFor(at(rotary), "instagram"))?.id).toBe(row.id);
   });
 
   test("an account connected to one business cannot be connected to another", async () => {
-    const mine = await instagramFor(at(rotary));
-    await expect(connect(at(northstar), mine!.accountId)).rejects.toBeInstanceOf(InstagramTakenError);
+    const mine = await socialConnectionFor(at(rotary), "instagram");
+    await expect(connect(at(northstar), mine!.accountId)).rejects.toBeInstanceOf(SocialAccountTakenError);
   });
 
   test("connecting again replaces the business's account", async () => {
-    const before = await instagramFor(at(rotary));
+    const before = await socialConnectionFor(at(rotary), "instagram");
     const after = await connect(at(rotary));
-    expect((await instagramFor(at(rotary)))?.id).toBe(after.id);
+    expect((await socialConnectionFor(at(rotary), "instagram"))?.id).toBe(after.id);
     const old = await owner.query(`select disconnected_at, token_ciphertext from social_connections where id = $1`, [before!.id]);
     expect(old.rows[0].disconnected_at).not.toBeNull();
     expect(old.rows[0].token_ciphertext).toBeNull();
   });
 
   test("disconnecting erases the token and is on the record", async () => {
-    const row = (await instagramFor(at(rotary)))!;
-    await disconnectInstagram(at(rotary), row.id, null);
-    expect(await instagramFor(at(rotary))).toBeNull();
+    const row = (await socialConnectionFor(at(rotary), "instagram"))!;
+    await disconnectSocial(at(rotary), row.id, null);
+    expect(await socialConnectionFor(at(rotary), "instagram")).toBeNull();
     const gone = await owner.query(`select token_ciphertext, token_expires_at from social_connections where id = $1`, [row.id]);
     expect(gone.rows[0]).toEqual({ token_ciphertext: null, token_expires_at: null });
     const audit = await owner.query(
@@ -153,24 +154,23 @@ describe("connections", () => {
 
 describe("Meta's notices", () => {
   const secret = "test-app-secret";
-  const config = { appId: "1234567890", appSecret: secret };
   const sign = (payload: object, key = secret) => {
     const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
     return `${createHmac("sha256", key).update(body).digest("base64url")}.${body}`;
   };
 
   test("only a correctly signed notice names anyone", () => {
-    expect(verifySignedRequest(config, sign({ algorithm: "HMAC-SHA256", user_id: "42" }))).toBe("42");
-    expect(verifySignedRequest(config, sign({ algorithm: "HMAC-SHA256", user_id: "42" }, "wrong"))).toBeNull();
-    expect(verifySignedRequest(config, sign({ algorithm: "none", user_id: "42" }))).toBeNull();
-    expect(verifySignedRequest(config, "garbage")).toBeNull();
+    expect(verifySignedRequest(secret, sign({ algorithm: "HMAC-SHA256", user_id: "42" }))).toBe("42");
+    expect(verifySignedRequest(secret, sign({ algorithm: "HMAC-SHA256", user_id: "42" }, "wrong"))).toBeNull();
+    expect(verifySignedRequest(secret, sign({ algorithm: "none", user_id: "42" }))).toBeNull();
+    expect(verifySignedRequest(secret, "garbage")).toBeNull();
   });
 
   test("a deauthorize notice ends that account's connection and erases its token", async () => {
     const scoped = account();
     const row = await connect(at(northstar), account(), scoped);
-    expect(await revokeInstagram(scoped, "deauthorize")).toBe(1);
-    expect(await instagramFor(at(northstar))).toBeNull();
+    expect(await revokeSocial("instagram", scoped, "deauthorize")).toBe(1);
+    expect(await socialConnectionFor(at(northstar), "instagram")).toBeNull();
     const gone = await owner.query(`select token_ciphertext from social_connections where id = $1`, [row.id]);
     expect(gone.rows[0].token_ciphertext).toBeNull();
     const audit = await owner.query(
@@ -178,7 +178,7 @@ describe("Meta's notices", () => {
       [northstar],
     );
     expect(audit.rows[0]).toEqual({ action: "instagram.disconnected_by_deauthorize", actor_user_id: null });
-    expect(await revokeInstagram(scoped, "deauthorize")).toBe(0);
+    expect(await revokeSocial("instagram", scoped, "deauthorize")).toBe(0);
   });
 });
 
@@ -278,11 +278,11 @@ describe("photos and videos waiting to be posted", () => {
 
 describe("the sign-in round trip", () => {
   test("accepts only the state this browser was given, for the same business", () => {
-    const { state, cookie } = newIgState(rotary);
-    expect(igStateMatches(cookie, state, rotary)).toBe(true);
-    expect(igStateMatches(cookie, state, northstar)).toBe(false);
-    expect(igStateMatches(cookie, state + "x", rotary)).toBe(false);
-    expect(igStateMatches(undefined, state, rotary)).toBe(false);
-    expect(igStateMatches(`${randomUUID()}.${rotary}`, state, rotary)).toBe(false);
+    const { state, cookie } = newOAuthState(rotary);
+    expect(oauthStateMatches(cookie, state, rotary)).toBe(true);
+    expect(oauthStateMatches(cookie, state, northstar)).toBe(false);
+    expect(oauthStateMatches(cookie, state + "x", rotary)).toBe(false);
+    expect(oauthStateMatches(undefined, state, rotary)).toBe(false);
+    expect(oauthStateMatches(`${randomUUID()}.${rotary}`, state, rotary)).toBe(false);
   });
 });
