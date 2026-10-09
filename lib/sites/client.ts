@@ -92,13 +92,7 @@ export function siteSigningConfigured(): boolean {
   return signingKeyFrom(process.env.SITE_SIGNING_KEY) !== null;
 }
 
-/**
- * One signed call. `path` is the site's own path (with its trailing slash);
- * `form` is sent as a form submission, which is what the site's save routes
- * read. Answers with the site's status and JSON body; a non-JSON or
- * unreachable answer is a SiteError saying so.
- */
-export async function siteRequest(input: {
+type SignedCall = {
   siteUrl: string;
   actor: SiteActor;
   method: "GET" | "POST";
@@ -106,7 +100,10 @@ export async function siteRequest(input: {
   form?: Record<string, string | string[]>;
   /** A file upload: sent as multipart, and signed over its exact bytes like any other body. */
   multipart?: FormData;
-}): Promise<{ status: number; body: Record<string, unknown> }> {
+};
+
+/** Sign and send one call; the answer comes back unread. */
+async function signedFetch(input: SignedCall, accept: string): Promise<{ url: URL; response: Response }> {
   const key = signingKeyFrom(process.env.SITE_SIGNING_KEY);
   if (!key) throw new SiteError("The portal has no site-signing key yet (SITE_SIGNING_KEY).");
 
@@ -117,7 +114,7 @@ export async function siteRequest(input: {
   await assertPublicHost(url.hostname);
 
   let body = Buffer.alloc(0);
-  const headers: Record<string, string> = { accept: "application/json" };
+  const headers: Record<string, string> = { accept };
   if (input.form) {
     const params = new URLSearchParams();
     for (const [k, v] of Object.entries(input.form)) for (const one of Array.isArray(v) ? v : [v]) params.append(k, one);
@@ -131,9 +128,8 @@ export async function siteRequest(input: {
   }
   Object.assign(headers, signRequest({ method: input.method, url, body, actor: input.actor, key }));
 
-  let response: Response;
   try {
-    response = await fetch(url, {
+    const response = await fetch(url, {
       method: input.method,
       headers,
       body: input.method === "GET" ? undefined : body,
@@ -142,9 +138,20 @@ export async function siteRequest(input: {
       // An image takes longer to send than a form.
       signal: AbortSignal.timeout(input.multipart ? 60_000 : 20_000),
     });
+    return { url, response };
   } catch {
     throw new SiteError(`${url.host} did not answer.`);
   }
+}
+
+/**
+ * One signed call. `path` is the site's own path (with its trailing slash);
+ * `form` is sent as a form submission, which is what the site's save routes
+ * read. Answers with the site's status and JSON body; a non-JSON or
+ * unreachable answer is a SiteError saying so.
+ */
+export async function siteRequest(input: SignedCall): Promise<{ status: number; body: Record<string, unknown> }> {
+  const { url, response } = await signedFetch(input, "application/json");
 
   const text = await response.text();
   let parsed: unknown;
@@ -162,4 +169,24 @@ export async function siteRequest(input: {
     throw new SiteError(`${url.host} sent an answer the portal cannot read.`, response.status);
   }
   return { status: response.status, body: parsed as Record<string, unknown> };
+}
+
+/** Pages are bounded: a post drawn whole is a few hundred KB. */
+const MAX_PAGE_BYTES = 5 * 1024 * 1024;
+
+/**
+ * One signed GET for a page the site draws, such as a draft's preview.
+ * Answers with the site's status and its HTML, or with null when the answer
+ * is not HTML (an error, which the site sends as JSON or text).
+ */
+export async function sitePage(
+  input: Omit<SignedCall, "method" | "form" | "multipart">,
+): Promise<{ status: number; origin: string; html: string | null }> {
+  const { url, response } = await signedFetch({ ...input, method: "GET" }, "text/html");
+  const type = response.headers.get("content-type") ?? "";
+  const length = Number(response.headers.get("content-length") ?? "0");
+  if (length > MAX_PAGE_BYTES) throw new SiteError(`${url.host} sent a page too large to show.`, response.status);
+  const text = await response.text();
+  if (text.length > MAX_PAGE_BYTES) throw new SiteError(`${url.host} sent a page too large to show.`, response.status);
+  return { status: response.status, origin: url.origin, html: /^text\/html\b/i.test(type) ? text : null };
 }
