@@ -19,7 +19,6 @@ import {
   AlreadyLinkedError,
   getLinkedRepository,
   linkRepository,
-  listLinkedRepositories,
   type RepositoryRow,
   setConversationRepository,
   unlinkRepository,
@@ -28,6 +27,7 @@ import { githubApp, readerFor } from "@/lib/repo";
 import { checkBranch, checkPath } from "@/lib/repo/policy";
 import { RepoError } from "@/lib/repo/types";
 import { workspaceAccess } from "@/lib/workspace/access";
+import { websiteFor } from "@/lib/db/sites";
 import { bindRepository } from "@/lib/workspace/bind";
 import { contextRef } from "@/lib/workspace/repo-tools";
 
@@ -193,17 +193,15 @@ async function branchFor(row: RepositoryRow, requested: string): Promise<string 
 export type PanelRepositoryResult = { ok: true } | { ok: false; error: string };
 
 /**
- * The Chat Boss panel's "+ GitHub repository": put a repository on the
- * conversation without leaving the page, the way Claude Code adds one to a
- * session. One step, whichever the person picked:
+ * The Chat Boss panel's "+ GitHub repository": put the business's WEBSITE
+ * repository on the conversation without leaving the page — the repository
+ * the Website channel is connected with, and no other. The panel lists only
+ * that one, and this checks it again: a repository id from anywhere else is
+ * refused, even one linked to the business (the workspace's own picker is
+ * where any of those is chosen).
  *
- *   - a repository already linked to this business (`repositoryId`), or
- *   - one the GitHub App can see but nobody has linked yet (`externalId`),
- *     which is linked to this business first, exactly as the workspace's
- *     "Link" does: installation, owner and name come from GitHub's answer.
- *
- * Neither names a branch and the default is used, unless `branch` asks for
- * another. With neither, the conversation is taken off its repository.
+ * `branch` changes the branch; without it the default is used. With no
+ * `repositoryId` the conversation is taken off its repository.
  *
  * It answers instead of redirecting, so the panel stays on the page it is
  * beside and says what went wrong in place.
@@ -211,51 +209,23 @@ export type PanelRepositoryResult = { ok: true } | { ok: false; error: string };
 export async function panelRepositoryAction(formData: FormData): Promise<PanelRepositoryResult> {
   const access = await requireAccess(formData);
   const conversationId = id.safeParse(formData.get("conversationId"));
-  // Before anything is linked: a stale panel must not leave a repository
-  // linked to the business with no conversation using it.
   if (!conversationId.success || !(await getConversation(access.owner, conversationId.data))) {
     return { ok: false, error: "That conversation does not exist here." };
   }
 
   const repositoryId = String(formData.get("repositoryId") ?? "");
-  const externalId = Number(formData.get("externalId") ?? 0);
-  let row: RepositoryRow | null = null;
-
-  if (repositoryId) {
-    row = await getLinkedRepository(access.owner, repositoryId);
-  } else if (externalId) {
-    const app = githubApp();
-    if (!app) return { ok: false, error: "The GitHub App is not set up on this server." };
-    if (!Number.isSafeInteger(externalId) || externalId <= 0) return { ok: false, error: NOT_AVAILABLE };
-    // Picked from a list fetched a moment ago: it may have been linked since.
-    row = (await listLinkedRepositories(access.owner)).find((r) => r.externalId === externalId) ?? null;
-    if (!row) {
-      let found;
-      try {
-        found = (await app.listAccessibleRepositories()).find((r) => r.externalId === externalId);
-      } catch (err) {
-        if (!(err instanceof RepoError)) throw err;
-        return { ok: false, error: "GitHub could not be reached. Try again in a moment." };
-      }
-      if (!found) return { ok: false, error: NOT_AVAILABLE };
-      try {
-        row = await linkRepository(access.owner, found);
-      } catch (err) {
-        if (err instanceof AlreadyLinkedError) {
-          return { ok: false, error: "That repository is already linked to another business. Unlink it there first." };
-        }
-        throw err;
-      }
-    }
-  } else {
-    if (!(await setConversationRepository(access.owner, conversationId.data, null, null))) {
-      return { ok: false, error: "That conversation does not exist here." };
-    }
+  if (!repositoryId) {
+    await setConversationRepository(access.owner, conversationId.data, null, null);
     revalidatePath("/", "layout");
     return { ok: true };
   }
 
-  if (!row) return { ok: false, error: NOT_AVAILABLE };
+  const site = await websiteFor(access.owner);
+  if (!site?.repositoryId || site.repositoryId !== repositoryId) {
+    return { ok: false, error: "Only the website’s repository can be added here." };
+  }
+  const row = await getLinkedRepository(access.owner, repositoryId);
+  if (!row) return { ok: false, error: "The website’s repository is no longer linked to this business." };
   const branch = await branchFor(row, String(formData.get("branch") ?? ""));
   if (!branch) return { ok: false, error: "That branch does not exist in the repository." };
   if (!(await setConversationRepository(access.owner, conversationId.data, row.id, branch))) {
@@ -264,8 +234,6 @@ export async function panelRepositoryAction(formData: FormData): Promise<PanelRe
   revalidatePath("/", "layout");
   return { ok: true };
 }
-
-const NOT_AVAILABLE = "That repository is not available. Check the GitHub App can see it.";
 
 /** Add a file or folder of the conversation's repository to its context. */
 export async function addRepoContextAction(formData: FormData) {

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { CSRF_FIELD } from "@/lib/auth/csrf-names";
@@ -8,27 +9,29 @@ import { panelRepositoryAction } from "./actions";
 import { useCsrf } from "./csrf";
 
 /**
- * Adding a GitHub repository from the Chat Boss panel, in place — the way
- * Claude Code adds one to a session — rather than by going to the workspace.
+ * Adding the website's GitHub repository from the Chat Boss panel, in place —
+ * the way Claude Code adds one to a session — rather than by going to the
+ * workspace.
  *
- * The picker lists the repositories already linked to this business, then the
- * ones the GitHub App can see that nobody has linked yet (fetched only when the
- * picker opens). Picking either puts it on the conversation at its default
- * branch, linking it to the business first if it needs to be
- * (panelRepositoryAction). The chip above the message box then shows it, with
- * its branch to change and × to take it off.
+ * The panel offers ONE repository: the one the Website channel is connected
+ * with. Not every repository linked to the business, and not the rest of what
+ * the GitHub App can see; panelRepositoryAction refuses any other. Picking it
+ * puts it on the conversation at its default branch, and the chip above the
+ * message box then shows it, with its branch to change and × to take it off.
  *
  * Read-only, like everywhere else: answers read the branch, nothing is written.
  */
 
 export type DockRepositories = {
   conversationId: string;
-  /** Linked to this business already. */
-  linked: { id: string; externalId: number; name: string; defaultBranch: string }[];
+  website: {
+    /** Whether the business has connected its website at all. */
+    connected: boolean;
+    /** The repository the website is connected with, if one was chosen. */
+    repository: { id: string; name: string; defaultBranch: string } | null;
+  };
   current: { id: string; name: string; branch: string } | null;
 };
-
-type Available = { externalId: number; name: string; private: boolean; linkedHere: boolean };
 
 /** Calls the action with the session's token and refreshes the page around the panel. */
 function useSetRepository(conversationId: string) {
@@ -57,101 +60,37 @@ function useSetRepository(conversationId: string) {
   return { set, pending, error };
 }
 
-export function RepoPicker({ repos, businessName, onClose }: { repos: DockRepositories; businessName: string; onClose: () => void }) {
+export function RepoPicker({ repos, onClose }: { repos: DockRepositories; onClose: () => void }) {
   const { set, pending, error } = useSetRepository(repos.conversationId);
-  const [query, setQuery] = useState("");
-  const [available, setAvailable] = useState<Available[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const input = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    input.current?.focus();
-    let stale = false;
-    fetch("/api/workspace/repositories")
-      .then(async (res) => {
-        const body = await res.json().catch(() => ({}));
-        if (stale) return;
-        if (!res.ok) throw new Error(body.error ?? "Repositories could not be loaded.");
-        setAvailable(body.repositories);
-      })
-      .catch((err: Error) => !stale && setLoadError(err.message));
-    return () => {
-      stale = true;
-    };
-  }, []);
-
-  const needle = query.trim().toLowerCase();
-  const matches = (name: string) => name.toLowerCase().includes(needle);
-  const linkedIds = new Set(repos.linked.map((r) => r.externalId));
-  const linked = repos.linked.filter((r) => matches(r.name));
-  const more = (available ?? []).filter((r) => !r.linkedHere && !linkedIds.has(r.externalId) && matches(r.name));
-
-  // Enter picks the first match that can be picked: the one already in use is
-  // shown but skipped, or Enter would reset it to its default branch.
-  function pickFirst() {
-    const first = linked.find((r) => r.id !== repos.current?.id);
-    if (first) set({ repositoryId: first.id }, onClose);
-    else if (more[0]) set({ externalId: String(more[0].externalId) }, onClose);
-  }
+  const repo = repos.website.repository;
+  const inUse = repo !== null && repos.current?.id === repo.id;
 
   return (
     <div
       role="dialog"
-      aria-label="Add a GitHub repository"
+      aria-label="Add the website’s repository"
       className="absolute bottom-full left-0 z-10 mb-2 w-[min(20rem,calc(100vw-2rem))] overflow-hidden rounded-xl border
                  border-line bg-surface shadow-card-lg"
     >
-      <div className="flex items-center gap-2 border-b border-line-soft px-3 py-2">
-        <Icon name="github" className="h-4 w-4 flex-none text-ink-soft" />
-        <input
-          ref={input}
-          type="search"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              pickFirst();
-            }
-          }}
-          placeholder="Search repositories"
-          aria-label="Search repositories"
-          className="min-w-0 flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-ink-faint"
-        />
-      </div>
-
-      <div className="max-h-72 overflow-y-auto py-1" aria-busy={pending}>
-        {linked.length ? <Heading text={`Linked to ${businessName}`} /> : null}
-        {linked.map((r) => (
+      <Heading text="Website repository" />
+      <div className="pb-1" aria-busy={pending}>
+        {repo ? (
           <Row
-            key={r.id}
-            name={r.name}
-            note={repos.current?.id === r.id ? "in use" : r.defaultBranch}
-            disabled={pending || repos.current?.id === r.id}
-            onPick={() => set({ repositoryId: r.id }, onClose)}
+            name={repo.name}
+            note={inUse ? "in use" : repo.defaultBranch}
+            disabled={pending || inUse}
+            onPick={() => set({ repositoryId: repo.id }, onClose)}
           />
-        ))}
-
-        {more.length ? <Heading text="On GitHub" /> : null}
-        {more.map((r) => (
-          <Row
-            key={r.externalId}
-            name={r.name}
-            note={r.private ? "private" : "public"}
-            disabled={pending}
-            onPick={() => set({ externalId: String(r.externalId) }, onClose)}
-          />
-        ))}
-
-        {available === null && !loadError ? <p className="px-3 py-2 text-xs text-ink-faint">Asking GitHub…</p> : null}
-        {loadError ? <p className="px-3 py-2 text-xs text-bad">{loadError}</p> : null}
-        {available !== null && linked.length === 0 && more.length === 0 ? (
-          <p className="px-3 py-2 text-xs text-ink-faint">
-            {needle
-              ? `No repository matches “${query.trim()}”.`
-              : "No repositories yet. Install the GitHub App on a repository to see it here."}
+        ) : (
+          <p className="px-3 py-2 text-xs leading-relaxed text-ink-soft">
+            {repos.website.connected
+              ? "Your website was connected without a repository. "
+              : "Your website isn’t connected yet. "}
+            <Link href="/channels/website" className="font-medium text-brand hover:underline">
+              Open the Website channel
+            </Link>
           </p>
-        ) : null}
+        )}
       </div>
 
       {error ? (
@@ -160,9 +99,7 @@ export function RepoPicker({ repos, businessName, onClose }: { repos: DockReposi
         </p>
       ) : null}
       <p className="border-t border-line-soft px-3 py-2 text-[11px] leading-relaxed text-ink-faint">
-        {pending
-          ? "Adding…"
-          : `Read-only. A repository picked from GitHub is linked to ${businessName}, and only its conversations can read it.`}
+        {pending ? "Adding…" : "Read-only. Chat Boss reads the code; it changes nothing."}
       </p>
     </div>
   );
@@ -222,7 +159,7 @@ export function RepoChip({ repos }: { repos: DockRepositories & { current: NonNu
     };
   }, [open, branches, conversationId, current.id]);
 
-  const defaultBranch = repos.linked.find((r) => r.id === current.id)?.defaultBranch;
+  const defaultBranch = repos.website.repository?.id === current.id ? repos.website.repository.defaultBranch : undefined;
 
   return (
     <div className="px-2 pt-2">

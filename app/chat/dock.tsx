@@ -46,8 +46,8 @@ export type ChatDockData =
       messages: { id: string; role: "user" | "assistant"; content: string; status: string; drafts: BlogDraftView[] }[];
       /** How many earlier messages are only in the workspace. */
       earlier: number;
-      /** Linked to this business; null when the GitHub App is not set up here. */
-      repositories: DockRepositories["linked"] | null;
+      /** The website and its repository; null when the GitHub App is not set up here. */
+      website: DockRepositories["website"] | null;
     };
 
 type Live = { userText: string; answer: string; activity: string | null; finished: boolean };
@@ -107,7 +107,7 @@ function Off() {
           It works on your business’s jobs and records with you. Ask your 10XiD contact to switch it on.
         </p>
       </div>
-      <Composer disabled draft="" setDraft={() => {}} onSend={() => {}} busy={false} onStop={() => {}} repos={null} businessName="" />
+      <Composer disabled draft="" setDraft={() => {}} onSend={() => {}} busy={false} onStop={() => {}} repos={null} />
     </>
   );
 }
@@ -281,19 +281,18 @@ function Conversation({ data }: { data: Extract<ChatDockData, { state: "on" }> }
         busy={busy}
         onStop={() => abort.current?.abort()}
         repos={
-          data.repositories
-            ? { conversationId: conversation.id, linked: data.repositories, current: conversation.repository }
+          data.website
+            ? { conversationId: conversation.id, website: data.website, current: conversation.repository }
             : null
         }
-        businessName={data.businessName}
       />
     </>
   );
 }
 
 /**
- * The message box, with "+" for what can be added to a conversation: a GitHub
- * repository (picked here, in place), skills, and uploads. The last two are
+ * The message box, with "+" for what can be added to a conversation: the
+ * website's GitHub repository (picked here, in place), skills, and uploads. The last two are
  * not built yet and say so. The repository on the conversation sits above the
  * box as a chip.
  */
@@ -305,7 +304,6 @@ function Composer({
   busy,
   onStop,
   repos,
-  businessName,
 }: {
   disabled: boolean;
   draft: string;
@@ -315,7 +313,6 @@ function Composer({
   onStop: () => void;
   /** Null when the GitHub App is not set up here, or there is no conversation. */
   repos: DockRepositories | null;
-  businessName: string;
 }) {
   // The "+" menu, or the repository picker that replaces it.
   const [menu, setMenu] = useState<"closed" | "menu" | "repo">("closed");
@@ -381,7 +378,7 @@ function Composer({
               <Icon name="plus" className="h-[18px] w-[18px]" />
             </button>
             {menu === "repo" && repos ? (
-              <RepoPicker repos={repos} businessName={businessName} onClose={() => setMenu("closed")} />
+              <RepoPicker repos={repos} onClose={() => setMenu("closed")} />
             ) : null}
             {menu === "menu" ? (
               <div
@@ -393,7 +390,7 @@ function Composer({
                   <button type="button" role="menuitem" onClick={() => setMenu("repo")} className={addItem}>
                     <Icon name="github" className="h-4 w-4" />
                     <span className="flex-1">GitHub repository</span>
-                    {repos.current ? <span className="text-[11px] text-ink-faint">change</span> : null}
+                    <span className="text-[11px] text-ink-faint">website</span>
                   </button>
                 ) : (
                   <span role="menuitem" aria-disabled className={`${addItem} cursor-not-allowed opacity-60`}>
