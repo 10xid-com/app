@@ -14,6 +14,8 @@ import { organizationById } from "@/lib/db/identity";
 import { listConversations, listMessages, listRuns, withheldEngineModes } from "@/lib/db/workspace";
 import { blogDraftFrom } from "@/lib/workspace/blog-draft";
 import { modeOptions } from "@/lib/ai/engine/registry";
+import { listLinkedRepositories } from "@/lib/db/repositories";
+import { githubApp } from "@/lib/repo";
 import { workspaceAccess } from "@/lib/workspace/access";
 
 /**
@@ -257,13 +259,15 @@ async function chatDockData(ctx: SessionContext | null): Promise<ChatDockData> {
 
   const [latest] = await listConversations(access.owner, 1);
   if (!latest) {
-    return { state: "on", csrf, businessName: access.client.name, conversation: null, messages: [], earlier: 0 };
+    return { state: "on", csrf, businessName: access.client.name, conversation: null, messages: [], earlier: 0, repositories: null };
   }
-  const [messages, withheld, runs] = await Promise.all([
+  const [messages, withheld, runs, linked] = await Promise.all([
     listMessages(access.owner, latest.id),
     withheldEngineModes(access.owner),
     listRuns(access.owner, latest.id),
+    listLinkedRepositories(access.owner),
   ]);
+  const current = latest.repositoryId ? linked.find((r) => r.id === latest.repositoryId) : undefined;
   // Blog posts Chat Boss proposed, as cards under the answers that proposed them.
   const draftsByRun = new Map(
     runs.map((r) => [r.id, r.receipts.flatMap((x) => blogDraftFrom({ id: x.id, detail: x.detail }) ?? [])]),
@@ -279,6 +283,7 @@ async function chatDockData(ctx: SessionContext | null): Promise<ChatDockData> {
       id: latest.id,
       title: latest.title,
       engine: engine ? { label: engine.label, available: engine.available, reason: engine.reason } : null,
+      repository: current ? { id: current.id, name: `${current.owner}/${current.name}`, branch: latest.branch ?? current.defaultBranch } : null,
     },
     messages: recent.map((m) => ({
       id: m.id,
@@ -288,5 +293,9 @@ async function chatDockData(ctx: SessionContext | null): Promise<ChatDockData> {
       drafts: m.runId ? (draftsByRun.get(m.runId) ?? []) : [],
     })),
     earlier: messages.length - recent.length,
+    // For the "+" menu's repository picker. Names only; nothing inside is read here.
+    repositories: githubApp()
+      ? linked.map((r) => ({ id: r.id, externalId: r.externalId, name: `${r.owner}/${r.name}`, defaultBranch: r.defaultBranch }))
+      : null,
   };
 }
