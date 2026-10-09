@@ -134,6 +134,22 @@ const noteSchema = z.object({
   from: z.union([z.literal(""), z.uuid()]),
 });
 
+/** What the notes box hears back: nothing (it worked), or a sentence. */
+export type NoteState = { error: string | null; notice: string | null; at: number };
+
+const NOTE_ERRORS = {
+  note: "Write a note, or choose somebody to hand this to. A note can be up to 4,000 characters.",
+  person: "That person is not on this business\u2019s team, so the job was not handed over.",
+  moved: "Somebody changed who has this job while you were looking, so it was not handed over. It is shown as it is now.",
+  gone: "This job is no longer there.",
+} as const;
+
+const said = (error: keyof typeof NOTE_ERRORS | null, notice: string | null = null): NoteState => ({
+  error: error ? NOTE_ERRORS[error] : null,
+  notice,
+  at: Date.now(),
+});
+
 /**
  * The job page's one box: write a note, hand the job to a teammate, or both.
  *
@@ -141,18 +157,20 @@ const noteSchema = z.object({
  * Who the job goes to is checked against the business's people here, so a
  * mistake is a sentence; the database refuses anybody else regardless
  * (login's 0031).
+ *
+ * It answers the page rather than redirecting: the box (./[id]/notes.tsx)
+ * shows the note the moment Send is pressed and this replaces it with the
+ * real one, so nobody watches a button say "Sending…". The page refreshes
+ * through revalidatePath in this same response.
  */
-export async function postJobNoteAction(formData: FormData) {
+export async function sendJobNoteAction(_prev: NoteState, formData: FormData): Promise<NoteState> {
   const parsed = noteSchema.safeParse({
     jobId: formData.get("jobId"),
     body: formData.get("body") ?? "",
     handTo: formData.get("handTo") ?? "keep",
     from: formData.get("from") ?? "",
   });
-  if (!parsed.success) {
-    const jobId = z.uuid().safeParse(formData.get("jobId"));
-    redirect(jobId.success ? `/jobs/${jobId.data}?error=note` : "/jobs");
-  }
+  if (!parsed.success) return said("note");
   const { jobId, body } = parsed.data;
   const from = parsed.data.from || null;
   const to = parsed.data.handTo === "keep" ? from : parsed.data.handTo === "nobody" ? null : parsed.data.handTo;
@@ -160,19 +178,19 @@ export async function postJobNoteAction(formData: FormData) {
 
   // Nothing changes hands: this is a note, and a note needs words.
   if (to === from) {
-    if (!body) redirect(`${page}?error=note`);
+    if (!body) return said("note");
     const { ctx } = await requireAction("jobs.note", formData, {
       returnPath: page,
       resource: { type: "job", id: jobId },
     });
     try {
-      await addJobNote(ctx.scope, jobId, body);
+      if (!(await addJobNote(ctx.scope, jobId, body))) return said("gone");
     } catch (error) {
       if (error instanceof ScopeError) redirect("/jobs?error=noclient");
       throw error;
     }
     revalidatePath(page);
-    redirect(`${page}#notes`);
+    return said(null);
   }
 
   const { ctx, businessId } = await requireAction("jobs.assign", formData, {
@@ -182,7 +200,7 @@ export async function postJobNoteAction(formData: FormData) {
 
   const people = (await teamFor(businessId)).filter((p) => !p.isService);
   const recipient = to ? people.find((p) => p.userId === to) : null;
-  if (to && !recipient) redirect(`${page}?error=person`);
+  if (to && !recipient) return said("person");
 
   let handed;
   try {
@@ -193,7 +211,7 @@ export async function postJobNoteAction(formData: FormData) {
   }
   revalidatePath(page);
   revalidatePath("/jobs");
-  if (!handed) redirect(`${page}?error=moved`);
+  if (!handed) return said("moved");
 
   // Handing a job to yourself needs no email.
   if (recipient && recipient.userId !== ctx.userId) {
@@ -212,9 +230,12 @@ export async function postJobNoteAction(formData: FormData) {
       // The handover stands; the email is a courtesy, and the job is under
       // "Assigned to me" either way.
       console.error("[jobs] handover notice did not send:", cause instanceof Error ? cause.message : cause);
-      redirect(`${page}?notice=mail#notes`);
+      return said(
+        null,
+        `Handed over, but the email to ${recipient.fullName || recipient.email} did not send. It is under \u201cAssigned to me\u201d on their Jobs page.`,
+      );
     }
   }
 
-  redirect(`${page}#notes`);
+  return said(null);
 }

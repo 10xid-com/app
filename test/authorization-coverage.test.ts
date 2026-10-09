@@ -125,6 +125,8 @@ describe("every page, route and server action is authorized", () => {
 
 /** Client-side forms outside Chat Boss, each with why it cannot be a server form. */
 const CLIENT_FORMS: Record<string, string> = {
+  "app/jobs/[id]/notes.tsx":
+    "A job's notes box shows the note the moment it is sent and the server's answer replaces it; a server form would make the sender watch the round trip.",
   "app/channels/website/form-key.tsx":
     "Makes a website form key and shows it once. The key comes back in the action's answer so it never travels in the address (browser history, request logs).",
 };
