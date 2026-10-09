@@ -182,3 +182,35 @@ export async function abortMultipart(key: string, uploadId: string): Promise<voi
     // Best effort: an abandoned upload costs storage, not correctness.
   }
 }
+
+/** Put a file from disk in the store: whole when small, in 8MB parts when not, never all in memory. */
+export async function putFile(key: string, path: string, contentType: string): Promise<void> {
+  const { open } = await import("node:fs/promises");
+  const PART = 8 * 1024 * 1024;
+  const file = await open(path, "r");
+  try {
+    const { size } = await file.stat();
+    const read = async (offset: number, length: number) => {
+      const buffer = new Uint8Array(new ArrayBuffer(length));
+      await file.read(buffer, 0, length, offset);
+      return buffer;
+    };
+    if (size <= PART) {
+      await putObject(key, await read(0, size), contentType);
+      return;
+    }
+    const uploadId = await startMultipart(key, contentType);
+    try {
+      const parts: { part: number; etag: string }[] = [];
+      for (let part = 1, offset = 0; offset < size; part++, offset += PART) {
+        parts.push({ part, etag: await uploadPart(key, uploadId, part, await read(offset, Math.min(PART, size - offset))) });
+      }
+      await completeMultipart(key, uploadId, parts);
+    } catch (err) {
+      await abortMultipart(key, uploadId);
+      throw err;
+    }
+  } finally {
+    await file.close();
+  }
+}
