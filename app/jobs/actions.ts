@@ -3,8 +3,11 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { createJob, ScopeError, setJobStatus } from "@/lib/db";
+import { addJobNote, createJob, handOverJob, ScopeError, setJobStatus } from "@/lib/db";
+import { organizationById, teamFor } from "@/lib/db/identity";
 import { requireAction } from "@/lib/auth/authorize";
+import { sendHandoverNotice } from "@/lib/auth/mailer";
+import { appOrigin } from "@/lib/auth/origin";
 import { JOB_STATUSES, statusChangeAction } from "@/lib/auth/permissions";
 
 const newJobSchema = z.object({
@@ -82,4 +85,98 @@ export async function setJobStatusAction(formData: FormData) {
 
   revalidatePath("/jobs");
   redirect(changed ? `/jobs/${jobId}` : `/jobs/${jobId}?error=moved`);
+}
+
+/** "keep" leaves the job with whoever has it; "nobody" takes it off them. */
+const noteSchema = z.object({
+  jobId: z.uuid(),
+  body: z.string().trim().max(4000),
+  handTo: z.union([z.literal("keep"), z.literal("nobody"), z.uuid()]),
+  /** Who had the job when the person looked. A handover only applies if they still do. */
+  from: z.union([z.literal(""), z.uuid()]),
+});
+
+/**
+ * The job page's one box: write a note, hand the job to a teammate, or both.
+ *
+ * Handing over needs `jobs.assign`; a note on its own needs `jobs.note`.
+ * Who the job goes to is checked against the business's people here, so a
+ * mistake is a sentence; the database refuses anybody else regardless
+ * (login's 0031).
+ */
+export async function postJobNoteAction(formData: FormData) {
+  const parsed = noteSchema.safeParse({
+    jobId: formData.get("jobId"),
+    body: formData.get("body") ?? "",
+    handTo: formData.get("handTo") ?? "keep",
+    from: formData.get("from") ?? "",
+  });
+  if (!parsed.success) {
+    const jobId = z.uuid().safeParse(formData.get("jobId"));
+    redirect(jobId.success ? `/jobs/${jobId.data}?error=note` : "/jobs");
+  }
+  const { jobId, body } = parsed.data;
+  const from = parsed.data.from || null;
+  const to = parsed.data.handTo === "keep" ? from : parsed.data.handTo === "nobody" ? null : parsed.data.handTo;
+  const page = `/jobs/${jobId}`;
+
+  // Nothing changes hands: this is a note, and a note needs words.
+  if (to === from) {
+    if (!body) redirect(`${page}?error=note`);
+    const { ctx } = await requireAction("jobs.note", formData, {
+      returnPath: page,
+      resource: { type: "job", id: jobId },
+    });
+    try {
+      await addJobNote(ctx.scope, jobId, body);
+    } catch (error) {
+      if (error instanceof ScopeError) redirect("/jobs?error=noclient");
+      throw error;
+    }
+    revalidatePath(page);
+    redirect(`${page}#notes`);
+  }
+
+  const { ctx, businessId } = await requireAction("jobs.assign", formData, {
+    returnPath: page,
+    resource: { type: "job", id: jobId },
+  });
+
+  const people = (await teamFor(businessId)).filter((p) => !p.isService);
+  const recipient = to ? people.find((p) => p.userId === to) : null;
+  if (to && !recipient) redirect(`${page}?error=person`);
+
+  let handed;
+  try {
+    handed = await handOverJob(ctx.scope, jobId, { to, from, note: body || null });
+  } catch (error) {
+    if (error instanceof ScopeError) redirect("/jobs?error=noclient");
+    throw error;
+  }
+  revalidatePath(page);
+  revalidatePath("/jobs");
+  if (!handed) redirect(`${page}?error=moved`);
+
+  // Handing a job to yourself needs no email.
+  if (recipient && recipient.userId !== ctx.userId) {
+    const sender = people.find((p) => p.userId === ctx.userId);
+    try {
+      await sendHandoverNotice({
+        to: recipient.email,
+        fromName: sender?.fullName || ctx.email,
+        businessName: (await organizationById(businessId))?.name ?? "your business",
+        jobRef: handed.job.ref,
+        jobTitle: handed.job.title,
+        note: handed.note?.body ?? null,
+        jobUrl: `${appOrigin() ?? ""}${page}`,
+      });
+    } catch (cause) {
+      // The handover stands; the email is a courtesy, and the job is under
+      // "Assigned to me" either way.
+      console.error("[jobs] handover notice did not send:", cause instanceof Error ? cause.message : cause);
+      redirect(`${page}?notice=mail#notes`);
+    }
+  }
+
+  redirect(`${page}#notes`);
 }

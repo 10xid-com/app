@@ -1,13 +1,16 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getJob, listJobEvents } from "@/lib/db";
+import { getJob, listJobEvents, listJobNotes } from "@/lib/db";
+import { teamFor } from "@/lib/db/identity";
 import { z } from "zod";
 import { requirePage } from "@/lib/auth/authorize";
-import { statusesFor } from "@/lib/auth/permissions";
+import { allows, statusesFor } from "@/lib/auth/permissions";
 import { PortalShell } from "../../portal-shell";
 import { CsrfField } from "../../_components/csrf-field";
-import { setJobStatusAction } from "../actions";
+import { NotesThread } from "../../_components/notes-thread";
+import { SubmitButton } from "../../_components/submit-button";
+import { postJobNoteAction, setJobStatusAction } from "../actions";
 
 export const metadata: Metadata = { title: "Job" };
 
@@ -56,14 +59,14 @@ export default async function JobPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{ error?: string; notice?: string }>;
 }) {
   const { id } = await params;
-  const { error } = await searchParams;
+  const { error, notice } = await searchParams;
   // The id is input from the address bar: anything that is not a uuid cannot
   // name a job, and is the same 404 as one that does not exist.
   if (!z.uuid().safeParse(id).success) notFound();
-  const { ctx, role } = await requirePage("jobs.read", {
+  const { ctx, role, via, businessId } = await requirePage("jobs.read", {
     returnPath: `/jobs/${id}`,
     resource: { type: "job", id },
   });
@@ -71,7 +74,21 @@ export default async function JobPage({
   const job = await getJob(ctx.scope, id);
   if (!job) notFound();
 
-  const events = await listJobEvents(ctx.scope, id);
+  const [events, notes, team] = await Promise.all([
+    listJobEvents(ctx.scope, id),
+    listJobNotes(ctx.scope, id),
+    teamFor(businessId),
+  ]);
+
+  // Names for the people of this business. Somebody who has since left is
+  // shown by the address they wrote under, which the note keeps.
+  const people = team.filter((p) => !p.isService);
+  const nameOf = (userId: string | null, fallback = "Somebody who has left") => {
+    const person = team.find((p) => p.userId === userId);
+    return person ? person.fullName || person.email : fallback;
+  };
+  const mayNote = allows(role, "jobs.note", via);
+  const mayAssign = allows(role, "jobs.assign", via);
 
   // What the sender filled in, if this job arrived from a form rather than from
   // these screens. It is read off the creation event rather than from columns on
@@ -127,6 +144,16 @@ export default async function JobPage({
             </dd>
           </div>
           <div className="flex justify-between gap-4 border-b border-line-soft pb-2">
+            <dt className="text-sm text-ink-faint">Assigned to</dt>
+            <dd className="text-sm text-ink">
+              {job.assignedTo
+                ? job.assignedTo === ctx.userId
+                  ? "You"
+                  : nameOf(job.assignedTo, "Somebody no longer here")
+                : "Nobody yet"}
+            </dd>
+          </div>
+          <div className="flex justify-between gap-4 border-b border-line-soft pb-2">
             <dt className="text-sm text-ink-faint">Raised</dt>
             <dd className="text-sm tabular-nums text-ink">
               {new Date(job.createdAt).toISOString().slice(0, 10)}
@@ -139,8 +166,8 @@ export default async function JobPage({
             role="alert"
             className="mt-6 rounded-lg border border-bad/30 bg-bad/5 px-3 py-2 text-sm text-bad"
           >
-            Somebody changed this job&rsquo;s status while you were looking at it, so
-            your change was not made. It is shown as it is now.
+            Somebody changed this job while you were looking at it, so your change
+            was not made. It is shown as it is now.
           </p>
         ) : null}
 
@@ -206,6 +233,93 @@ export default async function JobPage({
           </p>
         </section>
       ) : null}
+
+      <NotesThread
+        notes={notes.map((note) => ({
+          id: note.id,
+          author: note.authorId === ctx.userId ? "You" : nameOf(note.authorId, note.authorEmailAtTime),
+          at: new Date(note.createdAt),
+          body: note.body,
+          handedTo: note.handedTo
+            ? note.handedTo === ctx.userId
+              ? "you"
+              : nameOf(note.handedTo, "somebody no longer here")
+            : null,
+        }))}
+      >
+        {mayNote || mayAssign ? (
+          <form action={postJobNoteAction} className="grid gap-3">
+            <CsrfField />
+            <input type="hidden" name="jobId" value={job.id} />
+            <input type="hidden" name="from" value={job.assignedTo ?? ""} />
+            {error === "note" ? (
+              <p role="alert" className="rounded-lg border border-bad/30 bg-bad/5 px-3 py-2 text-sm text-bad">
+                Write a note, or choose somebody to hand this to. A note can be up to 4,000 characters.
+              </p>
+            ) : error === "person" ? (
+              <p role="alert" className="rounded-lg border border-bad/30 bg-bad/5 px-3 py-2 text-sm text-bad">
+                That person is not on this business&rsquo;s team, so the job was not handed over.
+              </p>
+            ) : notice === "mail" ? (
+              <p role="status" className="rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-sm text-ink">
+                Handed over, but the email to them did not send. It is under &ldquo;Assigned to me&rdquo; on their Jobs page.
+              </p>
+            ) : null}
+            <label htmlFor="note-body" className="sr-only">
+              Note
+            </label>
+            <textarea
+              id="note-body"
+              name="body"
+              rows={3}
+              maxLength={4000}
+              placeholder={mayNote ? "Write a note for the team…" : "Add a note to go with it (optional)…"}
+              className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink
+                         placeholder:text-ink-faint focus:border-brand focus:outline-2 focus:outline-brand/30"
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              {mayAssign ? (
+                <>
+                  <label htmlFor="hand-to" className="text-sm text-ink-soft">
+                    Hand to
+                  </label>
+                  <select
+                    id="hand-to"
+                    name="handTo"
+                    defaultValue="keep"
+                    className="min-w-0 max-w-full rounded-lg border border-line bg-surface px-3 py-1.5 text-sm text-ink
+                               focus:border-brand focus:outline-2 focus:outline-brand/30"
+                  >
+                    <option value="keep">
+                      {job.assignedTo
+                        ? `Keep with ${job.assignedTo === ctx.userId ? "me" : nameOf(job.assignedTo, "them")}`
+                        : "Nobody (just a note)"}
+                    </option>
+                    {people
+                      .filter((p) => p.userId !== job.assignedTo)
+                      .map((p) => (
+                        <option key={p.userId} value={p.userId}>
+                          {p.userId === ctx.userId ? `Me (${p.fullName || p.email})` : p.fullName || p.email}
+                        </option>
+                      ))}
+                    {job.assignedTo ? <option value="nobody">Nobody: take it off them</option> : null}
+                  </select>
+                </>
+              ) : (
+                <input type="hidden" name="handTo" value="keep" />
+              )}
+              <SubmitButton
+                pendingLabel="Sending…"
+                className="ml-auto rounded-lg bg-brand-surface px-4 py-1.5 text-sm font-semibold text-brand-on-surface
+                           transition-colors duration-150 hover:bg-brand-surface-hover disabled:opacity-60
+                           focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
+              >
+                Send
+              </SubmitButton>
+            </div>
+          </form>
+        ) : null}
+      </NotesThread>
 
       <section className="mt-6">
         <h2 className="mb-3 text-sm font-semibold text-ink">History</h2>
