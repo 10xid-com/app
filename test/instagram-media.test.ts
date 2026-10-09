@@ -278,3 +278,16 @@ describe("a photo", () => {
     expect(asked).toHaveLength(0);
   });
 });
+
+describe("the old upload addresses", () => {
+  test("still answer, as the same handlers, for a page loaded before uploads moved", async () => {
+    const old = await import("@/app/api/instagram/videos/route");
+    const current = await import("@/app/api/social/videos/route");
+    expect(old.POST).toBe(current.POST);
+    const res = await old.POST(json("/api/instagram/videos", { contentType: "video/mp4", byteSize: 1000, width: 1080, height: 1920, durationMs: 5000 }));
+    expect(res.status).toBe(200);
+    expect((await import("@/app/api/instagram/photos/route")).POST).toBe((await import("@/app/api/social/photos/route")).POST);
+    expect((await import("@/app/api/instagram/videos/[id]/parts/[part]/route")).PUT).toBe((await import("@/app/api/social/videos/[id]/parts/[part]/route")).PUT);
+    expect((await import("@/app/api/instagram/videos/[id]/complete/route")).POST).toBe((await import("@/app/api/social/videos/[id]/complete/route")).POST);
+  });
+});

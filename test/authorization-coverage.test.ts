@@ -103,6 +103,22 @@ describe("every page, route and server action is authorized", () => {
     }
   });
 
+  // A route that re-exports another's handlers (an old address kept working)
+  // is as guarded as the route it points at, and must point at one.
+  test.each(
+    routes
+      .map((f) => ({ ...f, from: /^export\s*\{[^}]*\}\s*from\s*["']@\/(app\/[^"']+)["']/m.exec(f.source)?.[1] }))
+      .filter((f) => f.from)
+      .map((f) => [f.path, f.from!]),
+  )("route %s re-exports a guarded route", (path, from) => {
+    const target = routes.find((r) => r.path === `${from}.ts`);
+    expect(target, `${path} must re-export an existing route`).toBeTruthy();
+    for (const [name, body] of functions(target!.source)) {
+      if (!/^(GET|POST|PUT|PATCH|DELETE)$/.test(name)) continue;
+      expect(guarded(body), `${from} ${name} must call the central authorization function`).toBe(true);
+    }
+  });
+
   test.each(actionFiles.map((f) => [f.path, f.source]))("server actions in %s", (path, source) => {
     const fns = functions(source);
     // A local helper that calls a guard counts, as does one that calls such a helper.
