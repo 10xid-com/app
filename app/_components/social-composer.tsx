@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CSRF_HEADER } from "@/lib/auth/csrf-names";
+import { drawableText, wholeVideo, type VideoEdit } from "@/lib/integrations/video-edit-spec";
+import { clock, VideoEditor, VideoPreview, type VideoShape } from "./video-editor";
 import {
   CAROUSEL_VIDEO_MAX_MS,
   VIDEO_MAX_BYTES,
@@ -26,9 +28,11 @@ import {
  * browser — the preview shows that same crop. For Facebook a photo is only
  * converted, and scaled to 2048px at most.
  *
- * Videos go up as they are (MP4 or MOV), in 8MB parts, and Instagram does
- * its own processing, which can take a few minutes. A video on its own is a
- * Reel: it can also show in the main feed, and its cover can be any frame.
+ * Videos go up as they are (MP4 or MOV), in 8MB parts, and are then edited
+ * on the server (./video-editor.tsx: trim, shape, sound, text) into an MP4
+ * every channel takes. Instagram does its own processing after that, which
+ * can take a few minutes. A video on its own is a Reel: it can also show in
+ * the main feed, and its cover can be any frame of the kept part.
  *
  * Nothing leaves the browser until Post is pressed.
  */
@@ -40,6 +44,23 @@ const RULES = {
   facebook: { textLimit: 63_206, maxHashtags: Infinity, width: 2048, endpoint: "/api/facebook/posts", name: "Facebook" },
 } as const;
 const MAX_ITEMS = 10;
+
+/** The shapes a video on its own can be cropped to. */
+const VIDEO_SHAPES: Record<SocialComposerChannel, VideoShape[]> = {
+  instagram: [
+    { label: "Original", ratio: null },
+    { label: "9:16 Reel", ratio: 9 / 16 },
+    { label: "4:5", ratio: 0.8 },
+    { label: "1:1", ratio: 1 },
+  ],
+  facebook: [
+    { label: "Original", ratio: null },
+    { label: "9:16", ratio: 9 / 16 },
+    { label: "4:5", ratio: 0.8 },
+    { label: "1:1", ratio: 1 },
+    { label: "16:9", ratio: 16 / 9 },
+  ],
+};
 
 type Shape = "original" | "square" | "portrait" | "landscape";
 const SHAPES: { value: Shape; label: string }[] = [
@@ -164,13 +185,13 @@ export function SocialComposer({
   const facebook = channel === "facebook";
   const router = useRouter();
   const picker = useRef<HTMLInputElement>(null);
-  const reelVideo = useRef<HTMLVideoElement>(null);
   const [items, setItems] = useState<Item[]>([]);
   const [shape, setShape] = useState<Shape>("original");
   const [caption, setCaption] = useState("");
   const [shown, setShown] = useState(0);
   const [shareToFeed, setShareToFeed] = useState(true);
   const [coverMs, setCoverMs] = useState(0);
+  const [edits, setEdits] = useState<Record<string, VideoEdit>>({});
   const [step, setStep] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [posted, setPosted] = useState<string | null | undefined>(undefined);
@@ -187,11 +208,24 @@ export function SocialComposer({
   const hashtags = (caption.match(/(^|\s)#[^\s#]+/g) ?? []).length;
   const busy = step !== null;
   const current = items[Math.min(shown, items.length - 1)];
+  const inCarousel = !facebook && items.length > 1;
 
-  // The Reel preview shows the chosen cover frame.
-  useEffect(() => {
-    if (reel && reelVideo.current) reelVideo.current.currentTime = coverMs / 1000;
-  }, [reel, coverMs]);
+  /** A video's edits as they will be made: in a carousel, the post's shape is its shape. */
+  const editFor = (item: Item): VideoEdit => {
+    const e = edits[item.id] ?? wholeVideo(item.durationMs ?? 0);
+    return {
+      ...e,
+      crop: { ratio: inCarousel ? ratio : e.crop.ratio, position: e.crop.position },
+      texts: e.texts.filter((t) => drawableText(t.text)),
+    };
+  };
+  const currentEdit = current?.kind === "video" ? editFor(current) : null;
+  const previewBox =
+    reel && currentEdit
+      ? (currentEdit.crop.ratio ?? 9 / 16)
+      : facebook && current?.kind === "video" && currentEdit
+        ? (currentEdit.crop.ratio ?? current.width / current.height)
+        : ratio;
 
   async function add(files: FileList | null) {
     if (!files?.length) return;
@@ -214,7 +248,9 @@ export function SocialComposer({
           if (info.durationMs < VIDEO_MIN_MS || info.durationMs > VIDEO_MAX_MS) {
             throw new Error(`${file.name} is ${seconds(info.durationMs)} long; Instagram takes videos from 3 seconds to 15 minutes.`);
           }
-          added.push({ id: crypto.randomUUID(), kind: "video", file, type, url, ...info });
+          const id = crypto.randomUUID();
+          added.push({ id, kind: "video", file, type, url, ...info });
+          setEdits((e) => ({ ...e, [id]: wholeVideo(info.durationMs) }));
         } else {
           const bitmap = await createImageBitmap(file).catch(() => {
             throw new Error(`${file.name} could not be opened here. Save it as a JPEG or PNG and add it again.`);
@@ -243,6 +279,11 @@ export function SocialComposer({
     }
     const next = items.filter((x) => x.id !== id);
     setItems(next);
+    setEdits((e) => {
+      const rest = { ...e };
+      delete rest[id];
+      return rest;
+    });
     setShown((s) => Math.min(s, Math.max(0, next.length - 1)));
     setCoverMs(0);
   }
@@ -310,7 +351,13 @@ export function SocialComposer({
     const done = await fetch(`/api/social/videos/${id}/complete`, { method: "POST", headers: json, body: JSON.stringify({ parts }) });
     const body = await asJson(done);
     if (!done.ok) throw failed(body, `The video did not finish uploading (${done.status}).`);
-    return id;
+
+    // Every video is edited on the server, edits or none, into an MP4 every channel takes.
+    setStep(`${label.replace(/^Uploading/, "Editing").replace(/…$/, "")}… this can take a minute.`);
+    const edited = await fetch(`/api/social/videos/${id}/edit`, { method: "POST", headers: json, body: JSON.stringify(editFor(item)) });
+    const result = await asJson(edited);
+    if (!edited.ok || typeof result.id !== "string") throw failed(result, `The video could not be edited (${edited.status}).`);
+    return result.id;
   }
 
   async function post() {
@@ -337,7 +384,14 @@ export function SocialComposer({
       const res = await fetch(rules.endpoint, {
         method: "POST",
         headers: { [CSRF_HEADER]: csrf, "content-type": "application/json" },
-        body: JSON.stringify({ caption, media: ids, ...(reel ? { reel: { shareToFeed, coverMs } } : {}) }),
+        body: JSON.stringify({
+          caption,
+          media: ids,
+          // The cover is a frame of the kept part, counted from where it now starts.
+          ...(reel && currentEdit
+            ? { reel: { shareToFeed, coverMs: Math.max(0, Math.min(coverMs, currentEdit.endMs) - currentEdit.startMs) } }
+            : {}),
+        }),
       });
       const body = await asJson(res);
       if (!res.ok) throw failed(body, `${rules.name} did not take the post (${res.status}).`);
@@ -346,6 +400,7 @@ export function SocialComposer({
         urls.current.delete(p.url);
       });
       setItems([]);
+      setEdits({});
       setCaption("");
       setShown(0);
       setCoverMs(0);
@@ -358,7 +413,8 @@ export function SocialComposer({
     }
   }
 
-  const longInCarousel = !facebook && items.length > 1 && items.some((i) => i.kind === "video" && (i.durationMs ?? 0) > CAROUSEL_VIDEO_MAX_MS);
+  const longInCarousel =
+    inCarousel && items.some((i) => i.kind === "video" && editFor(i).endMs - editFor(i).startMs > CAROUSEL_VIDEO_MAX_MS);
   const videoWithOthers = facebook && items.length > 1 && items.some((i) => i.kind === "video");
   const problem =
     items.length === 0 && !(facebook && caption.trim())
@@ -366,7 +422,7 @@ export function SocialComposer({
         ? "Write something, or add photos or a video."
         : "Add a photo or video to post."
       : longInCarousel
-        ? "A video in a carousel can be up to a minute long. Post a longer one on its own, as a Reel."
+        ? "A video in a carousel can be up to a minute long. Trim it, or post it on its own as a Reel."
         : videoWithOthers
           ? "On Facebook a video is posted on its own. Remove the other photos or videos, or post them separately."
           : caption.length > rules.textLimit
@@ -437,19 +493,31 @@ export function SocialComposer({
           ) : null}
         </div>
 
+        {current?.kind === "video" && currentEdit ? (
+          <VideoEditor
+            key={current.id}
+            durationMs={current.durationMs ?? 0}
+            edit={edits[current.id] ?? currentEdit}
+            onChange={(next) => setEdits((e) => ({ ...e, [current.id]: next }))}
+            shapes={inCarousel ? null : VIDEO_SHAPES[channel]}
+            shapeFixed={inCarousel}
+            disabled={busy}
+          />
+        ) : null}
+
         {facebook ? null : reel ? (
           <fieldset className="grid gap-3 rounded-xl border border-line p-3 text-sm" disabled={busy}>
             <legend className="px-1 font-medium text-ink">Reel</legend>
             <label className="grid gap-1.5">
               <span className="text-ink-soft">
-                Cover: the frame at {seconds(coverMs)}
+                Cover: the frame at {clock(Math.max(coverMs, currentEdit?.startMs ?? 0))}
               </span>
               <input
                 type="range"
-                min={0}
-                max={Math.max(0, (reel.durationMs ?? 0) - 100)}
+                min={currentEdit?.startMs ?? 0}
+                max={Math.max(0, (currentEdit?.endMs ?? reel.durationMs ?? 0) - 100)}
                 step={100}
-                value={coverMs}
+                value={Math.min(Math.max(coverMs, currentEdit?.startMs ?? 0), currentEdit?.endMs ?? coverMs)}
                 onChange={(e) => setCoverMs(Number(e.target.value))}
                 aria-label="Cover frame"
               />
@@ -552,11 +620,18 @@ export function SocialComposer({
             </p>
           ) : null}
           {facebook && items.length === 0 ? null : (
-          <div className="relative bg-neutral-900" style={{ aspectRatio: String(reel ? 9 / 16 : ratio) }}>
-            {reel ? (
-              <video ref={reelVideo} src={reel.url} muted playsInline controls preload="auto" className="absolute inset-0 h-full w-full object-contain" />
-            ) : current?.kind === "video" ? (
-              <video key={current.id} src={current.url} muted playsInline controls preload="metadata" className="absolute inset-0 h-full w-full object-cover" />
+          <div className="relative bg-neutral-900" style={{ aspectRatio: String(previewBox) }}>
+            {current?.kind === "video" && currentEdit ? (
+              <VideoPreview
+                key={current.id}
+                url={current.url}
+                width={current.width}
+                height={current.height}
+                edit={currentEdit}
+                box={previewBox}
+                fit={reel && currentEdit.crop.ratio === null ? "contain" : "cover"}
+                seekMs={reel ? Math.max(coverMs, currentEdit.startMs) : undefined}
+              />
             ) : current ? (
               // eslint-disable-next-line @next/next/no-img-element -- a photo chosen on this device
               <img src={current.url} alt="" className="absolute inset-0 h-full w-full object-cover" />

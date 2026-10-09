@@ -625,6 +625,18 @@ export const PAGES: PageRecord[] = [
     group: "Machinery",
   },
   {
+    id: "api.social.video-edit",
+    path: "/api/social/videos/[id]/edit",
+    name: "Edit a video",
+    purpose:
+      "Trims, crops to a shape, mutes and adds text to an uploaded video with ffmpeg, and turns it into an MP4 every channel takes; every video goes through it before it is posted.",
+    audience: "member",
+    kind: "machinery",
+    file: "app/api/social/videos/[id]/edit/route.ts",
+    methods: ["POST"],
+    group: "Machinery",
+  },
+  {
     id: "api.instagram.posts",
     path: "/api/instagram/posts",
     name: "Post to Instagram",
