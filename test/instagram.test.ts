@@ -58,7 +58,7 @@ beforeEach(() => {
 
 afterAll(async () => {
   await owner.query(`update social_connections set disconnected_at = now(), token_ciphertext = null, token_expires_at = null where disconnected_at is null and organization_id in ($1, $2)`, [rotary, northstar]);
-  await owner.query(`delete from social_media where organization_id in ($1, $2)`, [rotary, northstar]);
+  await owner.query(`delete from social_media_uploads where organization_id in ($1, $2)`, [rotary, northstar]);
   await owner.end();
   await closePool();
   vi.unstubAllEnvs();
@@ -248,7 +248,7 @@ describe("photos and videos waiting to be posted", () => {
 
   test("expire after a day, and are handed back for the store to delete", async () => {
     const old = await photo(at(rotary));
-    await owner.query(`update social_media set expires_at = now() - interval '1 second' where id = $1`, [old.id]);
+    await owner.query(`update social_media_uploads set expires_at = now() - interval '1 second' where id = $1`, [old.id]);
     expect(await socialMediaFor(at(rotary), [old.id])).toBeNull();
     expect(await takeExpiredSocialMedia(at(northstar))).toEqual([]);
     expect((await takeExpiredSocialMedia(at(rotary))).map((r) => r.storageKey)).toContain(old.storageKey);

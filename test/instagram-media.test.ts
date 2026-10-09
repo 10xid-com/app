@@ -97,7 +97,7 @@ afterAll(async () => {
     `update social_connections set disconnected_at = now(), token_ciphertext = null, token_expires_at = null where organization_id = $1 and disconnected_at is null`,
     [ids.rotary],
   );
-  await db.query(`delete from social_media where organization_id = $1`, [ids.rotary]);
+  await db.query(`delete from social_media_uploads where organization_id = $1`, [ids.rotary]);
   await db.end();
   const { closePool } = await import("@/lib/db/connection");
   await closePool();
@@ -190,7 +190,7 @@ describe("a video upload", () => {
       { part: 2, etag: two.body.etag! },
     ]);
     expect(done.res.status).toBe(200);
-    const row = await db.query(`select ready, upload_id, storage_key from social_media where id = $1`, [body.id]);
+    const row = await db.query(`select ready, upload_id, storage_key from social_media_uploads where id = $1`, [body.id]);
     expect(row.rows[0]).toMatchObject({ ready: true, upload_id: null });
     expect(store.get(row.rows[0].storage_key)?.length).toBe(size);
 
@@ -202,7 +202,7 @@ describe("a video upload", () => {
 describe("posting", () => {
   test("a video on its own goes up as a Reel, from a presigned address, and is then deleted", async () => {
     const id = await uploadWholeVideo(PART + 10, 20_000);
-    const key = (await db.query(`select storage_key from social_media where id = $1`, [id])).rows[0].storage_key;
+    const key = (await db.query(`select storage_key from social_media_uploads where id = $1`, [id])).rows[0].storage_key;
     const asked = instagram();
 
     const { res, body } = await post({ caption: "New wrap", media: [id], reel: { shareToFeed: false, coverMs: 4500 } });
@@ -215,7 +215,7 @@ describe("posting", () => {
     expect(asked.some((a) => a.url.endsWith("/media_publish"))).toBe(true);
 
     expect(store.has(key)).toBe(false);
-    expect((await db.query(`select 1 from social_media where id = $1`, [id])).rowCount).toBe(0);
+    expect((await db.query(`select 1 from social_media_uploads where id = $1`, [id])).rowCount).toBe(0);
   });
 
   test("a carousel mixes photos and videos as carousel items", async () => {
