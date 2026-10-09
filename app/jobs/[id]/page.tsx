@@ -5,12 +5,13 @@ import { getJob, listJobEvents, listJobNotes } from "@/lib/db";
 import { teamFor } from "@/lib/db/identity";
 import { z } from "zod";
 import { requirePage } from "@/lib/auth/authorize";
-import { allows, statusesFor } from "@/lib/auth/permissions";
+import { allows, JOB_KIND_LABELS, JOB_KINDS, statusesFor } from "@/lib/auth/permissions";
 import { PortalShell } from "../../portal-shell";
 import { CsrfField } from "../../_components/csrf-field";
+import { JobKindBadge } from "../../_components/job-kind";
 import { NotesThread } from "../../_components/notes-thread";
 import { SubmitButton } from "../../_components/submit-button";
-import { postJobNoteAction, setJobStatusAction } from "../actions";
+import { postJobNoteAction, setJobKindAction, setJobStatusAction } from "../actions";
 
 export const metadata: Metadata = { title: "Job" };
 
@@ -101,6 +102,8 @@ export default async function JobPage({
   // manager's. The action checks the same rule again on submit.
   const statuses = statusesFor(role, job.status).filter((s) => s !== "draft" || s === job.status);
   const canWrite = statuses.some((s) => s !== job.status);
+  // Quote, estimate or job: moving the work along, like a status change.
+  const mayChangeKind = allows(role, "jobs.update_status", via);
 
   return (
     <PortalShell
@@ -118,6 +121,7 @@ export default async function JobPage({
 
       <div className="mt-4 rounded-xl border border-line bg-surface p-6 shadow-card">
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <JobKindBadge kind={job.kind} className="self-center" />
           <span className="font-mono text-xs tabular-nums text-ink-faint">
             {job.ref}
           </span>
@@ -127,6 +131,38 @@ export default async function JobPage({
         </div>
 
         <dl className="mt-5 grid gap-x-8 gap-y-3 sm:grid-cols-2">
+          <div className="flex items-center justify-between gap-4 border-b border-line-soft pb-2 sm:col-span-2">
+            <dt className="text-sm text-ink-faint">Type</dt>
+            <dd className="text-sm text-ink">
+              {mayChangeKind ? (
+                <form action={setJobKindAction} className="flex gap-1 rounded-lg bg-sunk p-1">
+                  <CsrfField />
+                  <input type="hidden" name="jobId" value={job.id} />
+                  <input type="hidden" name="from" value={job.kind} />
+                  {JOB_KINDS.map((k) => (
+                    <button
+                      key={k}
+                      type="submit"
+                      name="kind"
+                      value={k}
+                      aria-pressed={k === job.kind}
+                      disabled={k === job.kind}
+                      className={`rounded-md px-3 py-1 text-xs font-medium transition-colors duration-150
+                                  focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand ${
+                                    k === job.kind
+                                      ? "bg-surface text-ink shadow-card"
+                                      : "text-ink-soft hover:text-ink"
+                                  }`}
+                    >
+                      {JOB_KIND_LABELS[k]}
+                    </button>
+                  ))}
+                </form>
+              ) : (
+                JOB_KIND_LABELS[job.kind]
+              )}
+            </dd>
+          </div>
           <div className="flex justify-between gap-4 border-b border-line-soft pb-2">
             <dt className="text-sm text-ink-faint">Status</dt>
             <dd className="text-sm text-ink">{job.status.replace(/_/g, " ")}</dd>

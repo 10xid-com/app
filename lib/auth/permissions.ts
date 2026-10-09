@@ -205,6 +205,22 @@ export const JOB_STATUSES = [
 
 export type JobStatus = (typeof JOB_STATUSES)[number];
 
+/**
+ * What kind of work a job is (login's 0033): asked to price, priced, doing.
+ * Website forms file quotes and estimates; a quote the customer accepts
+ * becomes a job. Changing it is moving the work along, so it needs
+ * `jobs.update_status`, like the moves that are not decisions.
+ */
+export const JOB_KINDS = ["quote", "estimate", "job"] as const;
+
+export type JobKind = (typeof JOB_KINDS)[number];
+
+export const JOB_KIND_LABELS: Record<JobKind, string> = {
+  quote: "Quote",
+  estimate: "Estimate",
+  job: "Job",
+};
+
 /** Statuses that record a decision about the work. */
 const DECISIONS: ReadonlySet<JobStatus> = new Set(["approved", "changes_requested", "cancelled"]);
 

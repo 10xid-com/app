@@ -8,6 +8,7 @@ import { organizationById } from "@/lib/db/identity";
 import { recordAudit } from "@/lib/db/audit";
 import { AlreadyLinkedError, linkRepository, listLinkedRepositories } from "@/lib/db/repositories";
 import { SiteTakenError, connectWebsite, disconnectWebsite, setWebsiteRepository, websiteFor } from "@/lib/db/sites";
+import { mintKey, revokeKey } from "@/lib/db/api-keys";
 import { githubApp } from "@/lib/repo";
 import { RepoError } from "@/lib/repo/types";
 import { SiteError, siteOriginFrom, siteRequest } from "@/lib/sites/client";
@@ -25,6 +26,7 @@ import { blogDraftSchema } from "@/lib/workspace/blog-tools";
  *   website's repository  domains.manage
  *   save a post           pages.edit — and pages.publish for anything live
  *   publish               pages.publish
+ *   website form keys     domains.manage, and a fresh authenticator to make one
  */
 
 const BACK = "/channels/website";
@@ -276,4 +278,61 @@ export async function saveBlogDraftFromChatAction(formData: FormData) {
     },
   ]);
   redirect(`${BACK}/posts/${saved.body.id}?done=saved`);
+}
+
+/* ------------------------------------------------------------------ */
+/* Website forms: the key the site's server files enquiries with.      */
+/* ------------------------------------------------------------------ */
+
+export type FormKeyState = { secret: string | null; error: string | null };
+
+/**
+ * Make a key for the website's forms (app/api/v1/jobs). Owners only, never
+ * through an agency (domains.manage), with an authenticator code from the
+ * last five minutes: a key files work into the business with nobody signed in.
+ *
+ * The key comes back in the action's answer and is shown once on the page.
+ * It is never put in the address, where it would stay in the browser's
+ * history and the server's request log. It is stored only as a hash.
+ */
+export async function mintFormKeyAction(_prev: FormKeyState, formData: FormData): Promise<FormKeyState> {
+  const granted = await requireAction("domains.manage", formData, { returnPath: BACK, fresh: "decision" });
+  const label = z.string().trim().min(3).max(80).safeParse(formData.get("label") || "Website forms");
+  if (!label.success) return { secret: null, error: "Give the key a name of 3 to 80 characters." };
+
+  const minted = await mintKey({
+    organizationId: granted.businessId,
+    label: label.data,
+    createdBy: granted.ctx.userId,
+  });
+  await recordAudit([
+    {
+      organizationId: granted.businessId,
+      actorUserId: granted.ctx.userId,
+      agencyGrantId: null,
+      action: "api_key.created",
+      target: `${label.data} (${minted.prefix}…)`,
+    },
+  ]);
+  return { secret: minted.secret, error: null };
+}
+
+/** Stop a key working at once. The jobs it filed stay, and say who filed them. */
+export async function revokeFormKeyAction(formData: FormData) {
+  const granted = await requireAction("domains.manage", formData, { returnPath: BACK });
+  const keyId = z.uuid().safeParse(formData.get("keyId"));
+  if (!keyId.success) redirect(BACK);
+  // The business is the session's, so this cannot reach another business's
+  // key; the tenant policy would refuse it underneath regardless.
+  await revokeKey(granted.businessId, keyId.data);
+  await recordAudit([
+    {
+      organizationId: granted.businessId,
+      actorUserId: granted.ctx.userId,
+      agencyGrantId: null,
+      action: "api_key.revoked",
+      target: keyId.data,
+    },
+  ]);
+  redirect(`${BACK}?done=keyrevoked#forms`);
 }
