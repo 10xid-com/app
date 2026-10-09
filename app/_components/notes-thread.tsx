@@ -15,6 +15,8 @@ export type ThreadNote = {
   body: string;
   /** Set on the note that went with a handover: who the work went to. */
   handedTo: string | null;
+  /** Shown the moment it is sent, before the server has it. */
+  pending?: boolean;
 };
 
 export function NotesThread({
@@ -36,7 +38,7 @@ export function NotesThread({
         ) : (
           <ol className="divide-y divide-line-soft">
             {notes.map((note) => (
-              <li key={note.id} className="px-4 py-3">
+              <li key={note.id} className={`px-4 py-3 ${note.pending ? "opacity-60" : ""}`} aria-busy={note.pending}>
                 <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
                   <span className="text-sm font-semibold text-ink">{note.author}</span>
                   {note.handedTo ? (
@@ -44,12 +46,16 @@ export function NotesThread({
                       handed to {note.handedTo}
                     </span>
                   ) : null}
-                  <time
-                    dateTime={note.at.toISOString()}
-                    className="ml-auto font-mono text-xs tabular-nums text-ink-faint"
-                  >
-                    {note.at.toISOString().replace("T", " ").slice(0, 16)}
-                  </time>
+                  {note.pending ? (
+                    <span className="ml-auto text-xs text-ink-faint">Sending…</span>
+                  ) : (
+                    <time
+                      dateTime={note.at.toISOString()}
+                      className="ml-auto font-mono text-xs tabular-nums text-ink-faint"
+                    >
+                      {note.at.toISOString().replace("T", " ").slice(0, 16)}
+                    </time>
+                  )}
                 </div>
                 <p className="mt-1 text-sm whitespace-pre-wrap break-words text-ink">{note.body}</p>
               </li>
