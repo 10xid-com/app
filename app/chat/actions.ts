@@ -133,7 +133,7 @@ export async function linkRepositoryAction(formData: FormData) {
   if (!app || !Number.isSafeInteger(externalId) || externalId <= 0) redirect(`${back}&error=repo`);
   let found;
   try {
-    found = (await app.listAccessibleRepositories()).find((r) => r.externalId === externalId);
+    found = await app.findAccessibleRepository(externalId);
   } catch (err) {
     if (!(err instanceof RepoError)) throw err;
   }

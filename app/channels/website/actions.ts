@@ -102,7 +102,7 @@ export async function setWebsiteRepositoryAction(formData: FormData) {
     } else {
       let found;
       try {
-        found = (await app.listAccessibleRepositories()).find((r) => r.externalId === externalId);
+        found = await app.findAccessibleRepository(externalId);
       } catch (err) {
         if (!(err instanceof RepoError)) throw err;
         redirect(`${BACK}?error=github`);

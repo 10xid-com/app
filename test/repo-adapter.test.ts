@@ -283,3 +283,61 @@ describe("@mentions", () => {
     expect(parseMentions("@README.md.")).toEqual([{ kind: "file", path: "README.md" }]);
   });
 });
+
+describe("the list of repositories the app can see", () => {
+  // A hand-rolled GitHub with two installations, counting what is asked of it.
+  function github() {
+    const asked: string[] = [];
+    let repos = [{ id: 11, name: "site", owner: { login: "acme" }, default_branch: "main", private: true }];
+    let failNext = false;
+    const fetch = (async (input: RequestInfo | URL) => {
+      const path = new URL(String(input)).pathname;
+      asked.push(path);
+      if (failNext) {
+        failNext = false;
+        return new Response("{}", { status: 500 });
+      }
+      if (path === "/app/installations") return Response.json([{ id: 1 }, { id: 2 }]);
+      if (path.endsWith("/access_tokens")) return Response.json({ token: `t${path}`, expires_at: new Date(Date.now() + 3_600_000).toISOString() });
+      if (path === "/installation/repositories") return Response.json({ repositories: repos });
+      return new Response("{}", { status: 404 });
+    }) as typeof globalThis.fetch;
+    const app = new GitHubApp({ appId: "1", privateKey, fetch, apiUrl: "https://api.github.test" });
+    return {
+      app,
+      asked,
+      lists: () => asked.filter((p) => p === "/app/installations").length,
+      add: (r: (typeof repos)[number]) => (repos = [...repos, r]),
+      failOnce: () => (failNext = true),
+    };
+  }
+
+  test("every installation is listed, and the answer is kept and shared", async () => {
+    const g = github();
+    const [a, b] = await Promise.all([g.app.listAccessibleRepositories(), g.app.listAccessibleRepositories()]);
+    expect(a.map((r) => r.installationId).sort()).toEqual([1, 2]);
+    expect(b).toBe(a);
+    await g.app.listAccessibleRepositories();
+    expect(g.lists()).toBe(1);
+    await g.app.listAccessibleRepositories({ fresh: true });
+    expect(g.lists()).toBe(2);
+  });
+
+  test("a failure is not kept", async () => {
+    const g = github();
+    g.failOnce();
+    await expect(g.app.listAccessibleRepositories()).rejects.toBeInstanceOf(RepoError);
+    expect(await g.app.listAccessibleRepositories()).toHaveLength(2);
+  });
+
+  test("finding one repository asks GitHub again when the kept list does not have it", async () => {
+    const g = github();
+    await g.app.listAccessibleRepositories();
+    g.add({ id: 12, name: "new", owner: { login: "acme" }, default_branch: "main", private: false });
+    expect((await g.app.findAccessibleRepository(11))?.name).toBe("site");
+    expect(g.lists()).toBe(1);
+    expect((await g.app.findAccessibleRepository(12))?.name).toBe("new");
+    expect(g.lists()).toBe(2);
+    expect(await g.app.findAccessibleRepository(99)).toBeUndefined();
+  });
+});
