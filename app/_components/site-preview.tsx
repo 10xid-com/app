@@ -3,8 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 
 /**
- * The connected website, live, in a browser frame — the Website channel's
- * answer to the iD page's preview card.
+ * A live page in a browser frame: the connected website on the Website
+ * channel, and the business's iD on the iD channel.
  *
  * The site is drawn at a real screen size (a 1280px desktop or a 390px phone)
  * and scaled down to fit, so it lays out exactly as a visitor sees it rather
@@ -23,8 +23,16 @@ const SIZES = {
 
 type Mode = keyof typeof SIZES;
 
-export function SitePreview({ url }: { url: string }) {
-  const [mode, setMode] = useState<Mode>("desktop");
+export function SitePreview({
+  url,
+  initialMode = "desktop",
+  openLabel = "Open site",
+}: {
+  url: string;
+  initialMode?: Mode;
+  openLabel?: string;
+}) {
+  const [mode, setMode] = useState<Mode>(initialMode);
   const [box, setBox] = useState(0);
   const [loaded, setLoaded] = useState(false);
   const area = useRef<HTMLDivElement>(null);
@@ -54,6 +62,8 @@ export function SitePreview({ url }: { url: string }) {
               type="button"
               aria-pressed={mode === m}
               onClick={() => {
+                // The same size keeps the same frame, which never loads again.
+                if (m === mode) return;
                 setLoaded(false);
                 setMode(m);
               }}
@@ -66,7 +76,7 @@ export function SitePreview({ url }: { url: string }) {
           ))}
         </div>
         <a href={url} target="_blank" rel="noreferrer" className="text-xs font-medium text-ink-soft underline hover:text-ink">
-          Open site
+          {openLabel}
         </a>
       </div>
 
@@ -86,7 +96,7 @@ export function SitePreview({ url }: { url: string }) {
             ) : null}
             <div className="relative" style={{ height: size.height * scale - (mode === "desktop" ? 24 : 0) }}>
               {!loaded ? (
-                <p className="absolute inset-0 grid place-items-center text-xs text-ink-faint">Loading the site…</p>
+                <p className="absolute inset-0 grid place-items-center text-xs text-ink-faint">Loading…</p>
               ) : null}
               <iframe
                 key={mode}

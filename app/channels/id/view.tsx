@@ -1,4 +1,6 @@
+import type { LiveId } from "@/lib/sites/id";
 import { Icon } from "../../_components/icons";
+import { SitePreview } from "../../_components/site-preview";
 
 /** The iD page's body, apart from the session and the database. */
 
@@ -8,7 +10,17 @@ const THEMES = [
   { name: "Minimal", note: "Just the Mark, the name and the links.", band: "bg-line", plate: "bg-surface" },
 ];
 
-export function IdChannelView({ name, logo, address }: { name: string; logo: string; address: string }) {
+export function IdChannelView({
+  name,
+  logo,
+  address,
+  live = null,
+}: {
+  name: string;
+  logo: string;
+  address: string;
+  live?: LiveId | null;
+}) {
   return (
     <>
       <h1 className="text-2xl font-semibold tracking-tight text-ink">iD</h1>
@@ -17,29 +29,33 @@ export function IdChannelView({ name, logo, address }: { name: string; logo: str
       </p>
 
       <section aria-label="Your iD" className="mt-6 overflow-hidden rounded-2xl border border-line bg-surface shadow-card">
-        {/* A drawing of the iD, not the iD itself: it is not live yet. */}
-        <div className="grid place-items-center bg-sunk px-4 py-10 sm:py-14">
-          <div className="w-full max-w-[300px] overflow-hidden rounded-[22px] border border-line bg-surface shadow-card-lg">
-            <div className="h-16 bg-brand" />
-            <div className="-mt-8 px-5 pb-6">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={logo}
-                alt=""
-                className="h-16 w-16 rounded-[6px] border-4 border-surface bg-surface object-contain"
-              />
-              <p className="mt-2 text-[17px] font-[650] tracking-[-0.01em] text-ink">{name}</p>
-              <p className="text-xs text-ink-faint">{address}</p>
-              <div className="mt-4 space-y-2" aria-hidden>
-                {["Website", "Book a call", "Instagram"].map((l) => (
-                  <div key={l} className="rounded-full border border-line-soft bg-sunk px-4 py-2 text-center text-[13px] font-[520] text-ink">
-                    {l}
-                  </div>
-                ))}
+        {live ? (
+          <SitePreview url={live.previewUrl} initialMode="phone" openLabel="Open preview" />
+        ) : (
+          /* A drawing of the iD, not the iD itself: this business has none yet. */
+          <div className="grid place-items-center bg-sunk px-4 py-10 sm:py-14">
+            <div className="w-full max-w-[300px] overflow-hidden rounded-[22px] border border-line bg-surface shadow-card-lg">
+              <div className="h-16 bg-brand" />
+              <div className="-mt-8 px-5 pb-6">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={logo}
+                  alt=""
+                  className="h-16 w-16 rounded-[6px] border-4 border-surface bg-surface object-contain"
+                />
+                <p className="mt-2 text-[17px] font-[650] tracking-[-0.01em] text-ink">{name}</p>
+                <p className="text-xs text-ink-faint">{address}</p>
+                <div className="mt-4 space-y-2" aria-hidden>
+                  {["Website", "Book a call", "Instagram"].map((l) => (
+                    <div key={l} className="rounded-full border border-line-soft bg-sunk px-4 py-2 text-center text-[13px] font-[520] text-ink">
+                      {l}
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           </div>
-        </div>
+        )}
 
         <div className="flex flex-wrap items-center gap-3 border-t border-line-soft px-4 py-3 sm:px-5">
           <p className="flex min-w-0 flex-1 items-center gap-2 text-sm font-medium text-ink">
@@ -47,16 +63,24 @@ export function IdChannelView({ name, logo, address }: { name: string; logo: str
             <span className="truncate">{address}</span>
           </p>
           <div className="flex gap-2">
-            <button type="button" disabled title="Coming soon" className={secondary}>
-              Launch iD
-            </button>
+            {live ? (
+              <a href={live.launchUrl} target="_blank" rel="noreferrer" className={secondary}>
+                Launch iD
+              </a>
+            ) : (
+              <button type="button" disabled title="Coming soon" className={secondary}>
+                Launch iD
+              </button>
+            )}
             <button type="button" disabled title="Coming soon" className={primary}>
               Edit iD
             </button>
           </div>
         </div>
       </section>
-      <p className="mt-2 text-xs text-ink-faint">Launching and editing your iD are coming soon.</p>
+      <p className="mt-2 text-xs text-ink-faint">
+        {live ? "Editing your iD is coming soon." : "Launching and editing your iD are coming soon."}
+      </p>
 
       <div className="mt-10 flex items-end justify-between gap-3">
         <div>
