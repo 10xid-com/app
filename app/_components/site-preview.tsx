@@ -62,6 +62,8 @@ export function SitePreview({
               type="button"
               aria-pressed={mode === m}
               onClick={() => {
+                // The same size keeps the same frame, which never loads again.
+                if (m === mode) return;
                 setLoaded(false);
                 setMode(m);
               }}
