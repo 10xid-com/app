@@ -72,6 +72,8 @@ export async function listConversations(owner: WorkspaceOwner, limit = 50) {
         title: conversations.title,
         mode: conversations.mode,
         engineMode: conversations.engineMode,
+        repositoryId: conversations.repositoryId,
+        branch: conversations.branch,
         updatedAt: conversations.updatedAt,
       })
       .from(conversations)
@@ -372,4 +374,25 @@ export async function withheldEngineModes(owner: WorkspaceOwner): Promise<Set<st
 
 function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+}
+
+/**
+ * A blog post Chat Boss proposed (lib/workspace/blog-tools.ts), read back by
+ * its receipt id when the person saves it or opens it in the editor. Through
+ * the owner transaction, so it is only ever this person's own proposal in this
+ * business: anyone else's receipt id reads as nothing.
+ */
+export async function getBlogDraftReceipt(
+  owner: WorkspaceOwner,
+  receiptId: number,
+): Promise<{ id: number; runId: string; detail: Record<string, unknown> } | null> {
+  if (!Number.isSafeInteger(receiptId) || receiptId <= 0) return null;
+  const rows = await run(owner, (tx) =>
+    tx
+      .select({ id: agentRunReceipts.id, runId: agentRunReceipts.runId, detail: agentRunReceipts.detail })
+      .from(agentRunReceipts)
+      .where(and(eq(agentRunReceipts.id, receiptId), sql`${agentRunReceipts.detail} ->> 'blogDraft' = 'true'`))
+      .limit(1),
+  );
+  return rows[0] ?? null;
 }

@@ -30,7 +30,8 @@ export type UiRun = {
   startedAt: string;
   /** "owner/name", the branch, and the commit read — null when no repository. */
   repository: { name: string; branch: string; commitSha: string } | null;
-  receipts: WireReceipt[];
+  /** Saved receipts carry their id, which a proposed blog post is saved by. */
+  receipts: (WireReceipt & { id?: number })[];
 };
 
 export type UiConversation = {

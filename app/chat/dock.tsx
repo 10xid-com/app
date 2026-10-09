@@ -10,6 +10,9 @@ import { useChatPanel } from "../portal-nav";
 import { newDockConversationAction } from "./actions";
 import { CsrfInput, CsrfProvider } from "./csrf";
 import { MessageText } from "./message-text";
+import { BlogDraftCard } from "./blog-draft-card";
+import { RepoChip, RepoPicker, type DockRepositories } from "./dock-repo";
+import type { BlogDraftView } from "@/lib/workspace/blog-draft";
 
 /**
  * Chat Boss on every page: the right-hand column of the frame.
@@ -18,7 +21,8 @@ import { MessageText } from "./message-text";
  * streaming endpoint, the same checks — reduced to one conversation and a
  * composer, so it fits beside whatever page is open. The workspace keeps
  * everything that needs room: switching conversations, the mode and engine,
- * repositories, and the receipts for what every answer saw. "Open workspace"
+ * the file browser, and the receipts for what every answer saw. A repository
+ * is added here, from "+" (./dock-repo.tsx). "Open workspace"
  * goes there, on this conversation.
  *
  * Who may use it is unchanged: the people on the Chat Boss list, on a business
@@ -36,11 +40,14 @@ export type ChatDockData =
         id: string;
         title: string;
         engine: { label: string; available: boolean; reason: string | null } | null;
+        repository: DockRepositories["current"];
       } | null;
       /** The most recent messages, oldest first. */
-      messages: { id: string; role: "user" | "assistant"; content: string; status: string }[];
+      messages: { id: string; role: "user" | "assistant"; content: string; status: string; drafts: BlogDraftView[] }[];
       /** How many earlier messages are only in the workspace. */
       earlier: number;
+      /** Linked to this business; null when the GitHub App is not set up here. */
+      repositories: DockRepositories["linked"] | null;
     };
 
 type Live = { userText: string; answer: string; activity: string | null; finished: boolean };
@@ -100,7 +107,7 @@ function Off() {
           It works on your business’s jobs and records with you. Ask your 10XiD contact to switch it on.
         </p>
       </div>
-      <Composer disabled draft="" setDraft={() => {}} onSend={() => {}} busy={false} onStop={() => {}} workspaceHref={null} />
+      <Composer disabled draft="" setDraft={() => {}} onSend={() => {}} busy={false} onStop={() => {}} repos={null} businessName="" />
     </>
   );
 }
@@ -228,14 +235,19 @@ function Conversation({ data }: { data: Extract<ChatDockData, { state: "on" }> }
             m.role === "user" ? (
               <UserBubble key={m.id} text={m.content} />
             ) : (
-              <Answer key={m.id}>
-                <MessageText text={m.content} />
-                {m.status !== "complete" ? (
-                  <p className="mt-2 text-xs text-warn">
-                    {m.status === "cut_off" ? "Stopped before the end." : "This answer failed part-way."}
-                  </p>
-                ) : null}
-              </Answer>
+              <div key={m.id} className="space-y-2">
+                <Answer>
+                  <MessageText text={m.content} />
+                  {m.status !== "complete" ? (
+                    <p className="mt-2 text-xs text-warn">
+                      {m.status === "cut_off" ? "Stopped before the end." : "This answer failed part-way."}
+                    </p>
+                  ) : null}
+                </Answer>
+                {m.drafts.map((d) => (
+                  <BlogDraftCard key={d.receiptId ?? d.slug} draft={d} />
+                ))}
+              </div>
             ),
           )}
           {live ? (
@@ -268,7 +280,12 @@ function Conversation({ data }: { data: Extract<ChatDockData, { state: "on" }> }
         onSend={() => void send()}
         busy={busy}
         onStop={() => abort.current?.abort()}
-        workspaceHref={`/chat?c=${conversation.id}`}
+        repos={
+          data.repositories
+            ? { conversationId: conversation.id, linked: data.repositories, current: conversation.repository }
+            : null
+        }
+        businessName={data.businessName}
       />
     </>
   );
@@ -276,8 +293,9 @@ function Conversation({ data }: { data: Extract<ChatDockData, { state: "on" }> }
 
 /**
  * The message box, with "+" for what can be added to a conversation: a GitHub
- * repository (linked in the workspace, where the picker and file browser are),
- * skills, and uploads. The last two are not built yet and say so.
+ * repository (picked here, in place), skills, and uploads. The last two are
+ * not built yet and say so. The repository on the conversation sits above the
+ * box as a chip.
  */
 function Composer({
   disabled,
@@ -286,7 +304,8 @@ function Composer({
   onSend,
   busy,
   onStop,
-  workspaceHref,
+  repos,
+  businessName,
 }: {
   disabled: boolean;
   draft: string;
@@ -294,18 +313,21 @@ function Composer({
   onSend: () => void;
   busy: boolean;
   onStop: () => void;
-  workspaceHref: string | null;
+  /** Null when the GitHub App is not set up here, or there is no conversation. */
+  repos: DockRepositories | null;
+  businessName: string;
 }) {
-  const [menu, setMenu] = useState(false);
+  // The "+" menu, or the repository picker that replaces it.
+  const [menu, setMenu] = useState<"closed" | "menu" | "repo">("closed");
   const wrap = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!menu) return;
+    if (menu === "closed") return;
     const onDown = (e: MouseEvent) => {
-      if (wrap.current && !wrap.current.contains(e.target as Node)) setMenu(false);
+      if (wrap.current && !wrap.current.contains(e.target as Node)) setMenu("closed");
     };
     const onKey = (e: globalThis.KeyboardEvent) => {
-      if (e.key === "Escape") setMenu(false);
+      if (e.key === "Escape") setMenu("closed");
     };
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
@@ -328,6 +350,7 @@ function Composer({
         className="rounded-2xl border border-line bg-surface shadow-card focus-within:border-brand
                    focus-within:outline-2 focus-within:outline-brand/30"
       >
+        {repos?.current ? <RepoChip key={`${repos.current.id}:${repos.current.branch}`} repos={{ ...repos, current: repos.current }} /> : null}
         <label className="sr-only" htmlFor="chat-dock-input">
           Message Chat Boss
         </label>
@@ -347,9 +370,9 @@ function Composer({
           <div ref={wrap} className="relative">
             <button
               type="button"
-              onClick={() => setMenu((v) => !v)}
+              onClick={() => setMenu((v) => (v === "closed" ? "menu" : "closed"))}
               disabled={disabled}
-              aria-expanded={menu}
+              aria-expanded={menu !== "closed"}
               aria-haspopup="menu"
               aria-label="Add to the conversation"
               className="grid h-8 w-8 place-items-center rounded-lg text-ink-soft transition-colors hover:bg-sunk
@@ -357,19 +380,28 @@ function Composer({
             >
               <Icon name="plus" className="h-[18px] w-[18px]" />
             </button>
-            {menu ? (
+            {menu === "repo" && repos ? (
+              <RepoPicker repos={repos} businessName={businessName} onClose={() => setMenu("closed")} />
+            ) : null}
+            {menu === "menu" ? (
               <div
                 role="menu"
                 className="absolute bottom-full left-0 z-10 mb-2 w-64 overflow-hidden rounded-xl border border-line
                            bg-surface py-1 shadow-card-lg"
               >
-                {workspaceHref ? (
-                  <Link role="menuitem" href={workspaceHref} className={addItem}>
+                {repos ? (
+                  <button type="button" role="menuitem" onClick={() => setMenu("repo")} className={addItem}>
                     <Icon name="github" className="h-4 w-4" />
                     <span className="flex-1">GitHub repository</span>
-                    <span className="text-[11px] text-ink-faint">in workspace</span>
-                  </Link>
-                ) : null}
+                    {repos.current ? <span className="text-[11px] text-ink-faint">change</span> : null}
+                  </button>
+                ) : (
+                  <span role="menuitem" aria-disabled className={`${addItem} cursor-not-allowed opacity-60`}>
+                    <Icon name="github" className="h-4 w-4" />
+                    <span className="flex-1">GitHub repository</span>
+                    <span className="text-[11px] text-ink-faint">not set up</span>
+                  </span>
+                )}
                 <span role="menuitem" aria-disabled className={`${addItem} cursor-not-allowed opacity-60`}>
                   <Icon name="sparkle" className="h-4 w-4" />
                   <span className="flex-1">Skills</span>

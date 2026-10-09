@@ -18,3 +18,8 @@ export const CsrfProvider = CsrfContext.Provider;
 export function CsrfInput() {
   return <input type="hidden" name={CSRF_FIELD} value={useContext(CsrfContext)} />;
 }
+
+/** The token itself, for a server action called from code rather than a form. */
+export function useCsrf() {
+  return useContext(CsrfContext);
+}

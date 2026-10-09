@@ -40,7 +40,7 @@ const FILTERS = ["", "published", "draft", "scheduled", "archived"] as const;
 export default async function PostsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; status?: string; p?: string }>;
+  searchParams: Promise<{ q?: string; status?: string; p?: string; error?: string }>;
 }) {
   const granted = await requirePage("pages.edit", { returnPath: "/channels/website/posts" });
   const owner = { organizationId: granted.businessId, userId: granted.ctx.userId };
@@ -119,6 +119,12 @@ export default async function PostsPage({
           </Link>
         ))}
       </nav>
+
+      {params.error === "draft" ? (
+        <p role="alert" className="mt-4 rounded-lg border border-bad/30 bg-bad/5 px-3 py-2 text-sm text-bad">
+          That Chat Boss draft could not be found. Drafts can only be saved by the person who asked for them.
+        </p>
+      ) : null}
 
       {problem ? (
         <p role="alert" className="mt-6 rounded-lg border border-bad/30 bg-bad/5 px-3 py-2 text-sm text-bad">

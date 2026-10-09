@@ -32,6 +32,7 @@ import {
 } from "./repo-tools";
 import { COMMAND_SPECS, MODE_SPECS, type CommandId } from "./commands";
 import { describeJob, jobTools } from "./tools";
+import { blogTools, type BlogContext } from "./blog-tools";
 import type { WireEvent } from "./wire";
 
 /**
@@ -66,6 +67,12 @@ export async function* runTurn(input: {
   fetch?: typeof fetch;
   /** For tests: how a linked repository is read. */
   readerFor?: ReaderFactory;
+  /**
+   * The business's connected website, when it has one and this person may
+   * edit it (pages.edit): the blog tools read it, and propose_blog_post
+   * proposes drafts for it. The caller decides; null means no blog tools.
+   */
+  blog?: BlogContext | null;
 }): AsyncGenerator<WireEvent> {
   const { access, command } = input;
   const owner = access.owner;
@@ -226,7 +233,13 @@ export async function* runTurn(input: {
 
   const canUseTools = engine.supports("tool_calling");
   const linked = canUseTools ? await listLinkedRepositories(owner) : [];
-  const tools = canUseTools ? [...jobTools(access.scope, record), ...repoTools({ linked, bound, record })] : [];
+  const tools = canUseTools
+    ? [
+        ...jobTools(access.scope, record),
+        ...repoTools({ linked, bound, record }),
+        ...(input.blog ? blogTools(input.blog, record) : []),
+      ]
+    : [];
   if (!canUseTools) {
     record({
       kind: "warning",
@@ -246,6 +259,11 @@ export async function* runTurn(input: {
       ? `REPOSITORY: ${fullName(bound.row)}, branch ${bound.snap.branch} at commit ${bound.snap.commitSha}. ` +
         "Use the repository tools to look before answering about code, cite files as path:line, and say when you have not read something. " +
         "You cannot change the repository; propose changes with create_patch_preview."
+      : null,
+    input.blog && canUseTools
+      ? `WEBSITE: ${input.blog.siteUrl}. Its blog can be read with list_blog_posts, read_blog_post and list_blog_categories. ` +
+        "You cannot change the website. When asked to write a blog post, look at what the blog already has first, then " +
+        "propose the post with propose_blog_post: that saves nothing, and the person decides whether to save it as a draft."
       : null,
     MODE_SPECS[mode].instruction,
     command ? COMMAND_SPECS[command].instruction : null,

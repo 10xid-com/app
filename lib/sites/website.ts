@@ -30,3 +30,39 @@ export type PostStatus = (typeof POST_STATUSES)[number];
 export function isLiveStatus(status: string): boolean {
   return status === "published" || status === "scheduled";
 }
+
+/**
+ * A Chat Boss draft laid over the site's new-post form (the site's
+ * /api/10xid/posts/new/), field by field, so everything the draft does not
+ * mention keeps the site's own default — index in search, the default author,
+ * the social image. Always a draft.
+ */
+export function formWithDraft(
+  base: Record<string, string | string[]>,
+  draft: {
+    title: string;
+    slug: string;
+    excerpt: string;
+    meta_description: string;
+    seo_title: string;
+    focus_keyword: string;
+    body_html: string;
+    category_ids: number[];
+    brand_ids: number[];
+    tags: string[];
+  },
+): Record<string, string | string[]> {
+  return {
+    ...base,
+    title: draft.title,
+    slug: draft.slug,
+    excerpt: draft.excerpt,
+    meta_description: draft.meta_description,
+    seo_title: draft.seo_title,
+    focus_keyword: draft.focus_keyword,
+    body_html: draft.body_html,
+    term: [...draft.category_ids, ...draft.brand_ids].map(String),
+    tag: draft.tags,
+    status: "draft",
+  };
+}
