@@ -480,6 +480,18 @@ export const PAGES: PageRecord[] = [
     group: "Machinery",
   },
   {
+    id: "api.website.images",
+    path: "/api/website/images",
+    name: "Blog image upload",
+    purpose:
+      "An image from the blog editor, passed to the business's own website to store; answers with where the site keeps it.",
+    audience: "member",
+    kind: "machinery",
+    file: "app/api/website/images/route.ts",
+    methods: ["POST"],
+    group: "Machinery",
+  },
+  {
     id: "api.workspace.repositories",
     path: "/api/workspace/repositories",
     name: "Repositories to link",

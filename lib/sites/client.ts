@@ -104,6 +104,8 @@ export async function siteRequest(input: {
   method: "GET" | "POST";
   path: string;
   form?: Record<string, string | string[]>;
+  /** A file upload: sent as multipart, and signed over its exact bytes like any other body. */
+  multipart?: FormData;
 }): Promise<{ status: number; body: Record<string, unknown> }> {
   const key = signingKeyFrom(process.env.SITE_SIGNING_KEY);
   if (!key) throw new SiteError("The portal has no site-signing key yet (SITE_SIGNING_KEY).");
@@ -121,6 +123,11 @@ export async function siteRequest(input: {
     for (const [k, v] of Object.entries(input.form)) for (const one of Array.isArray(v) ? v : [v]) params.append(k, one);
     body = Buffer.from(params.toString());
     headers["content-type"] = "application/x-www-form-urlencoded";
+  } else if (input.multipart) {
+    // Encoded once, here, so the bytes signed are the bytes sent.
+    const encoded = new Response(input.multipart);
+    body = Buffer.from(await encoded.arrayBuffer());
+    headers["content-type"] = encoded.headers.get("content-type") ?? "multipart/form-data";
   }
   Object.assign(headers, signRequest({ method: input.method, url, body, actor: input.actor, key }));
 
@@ -132,7 +139,8 @@ export async function siteRequest(input: {
       body: input.method === "GET" ? undefined : body,
       redirect: "manual",
       cache: "no-store",
-      signal: AbortSignal.timeout(20_000),
+      // An image takes longer to send than a form.
+      signal: AbortSignal.timeout(input.multipart ? 60_000 : 20_000),
     });
   } catch {
     throw new SiteError(`${url.host} did not answer.`);

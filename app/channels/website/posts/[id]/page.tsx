@@ -13,6 +13,8 @@ import { PortalShell } from "../../../../portal-shell";
 import { CsrfField } from "../../../../_components/csrf-field";
 import { savePostAction } from "../../actions";
 import { SubmitButton } from "../../../../_components/submit-button";
+import { FeaturedImageField, InsertImage } from "./image-tools";
+import { resolveIdentity } from "@/lib/auth/session";
 
 export const metadata: Metadata = { title: "Post" };
 
@@ -67,6 +69,9 @@ export default async function PostPage({
   const business = await organizationById(granted.businessId);
   const query = await searchParams;
   const mayPublish = allows(granted.role, "pages.publish", granted.via);
+  // For the image uploads, which go to /api/website/images from the browser.
+  const identity = await resolveIdentity();
+  const csrf = identity.state === "active" ? identity.csrfToken : "";
 
   let post: Loaded | null = null;
   let problem: string | null = null;
@@ -179,6 +184,7 @@ export default async function PostPage({
             <label className="grid gap-1.5 text-sm">
               <span className="font-medium text-ink">Body (HTML)</span>
               <textarea
+                id="post-body"
                 name="body_html"
                 rows={18}
                 defaultValue={one(f.body_html)}
@@ -198,6 +204,7 @@ export default async function PostPage({
                 <span className="text-xs text-warn">Saving rebuilds this post’s page from the text. Its original layout is replaced.</span>
               ) : null}
             </label>
+            {readOnly || (imported && !relayout) ? null : <InsertImage targetId="post-body" csrf={csrf} />}
             <label className="grid gap-1.5 text-sm">
               <span className="font-medium text-ink">Excerpt</span>
               <textarea name="excerpt" rows={3} maxLength={320} defaultValue={one(f.excerpt)} readOnly={readOnly} placeholder="Left blank, the first sentences are used." className={input} />
@@ -270,11 +277,10 @@ export default async function PostPage({
               <p className="text-xs text-ink-faint">Saved posts go live when the website is published.</p>
             </div>
 
-            <label className="grid gap-1.5 rounded-xl border border-line bg-surface p-4 text-sm shadow-card">
+            <div className="grid gap-1.5 rounded-xl border border-line bg-surface p-4 text-sm shadow-card">
               <span className="font-medium text-ink">Featured image</span>
-              <input name="featured" defaultValue={one(f.featured)} readOnly={readOnly} placeholder="/wp-content/uploads/…" className={input} />
-              <span className="text-xs text-ink-faint">The image’s path on the site. Uploading from here is coming soon.</span>
-            </label>
+              <FeaturedImageField defaultPath={one(f.featured)} readOnly={readOnly} csrf={csrf} inputClassName={input} />
+            </div>
 
             <fieldset className="grid gap-2 rounded-xl border border-line bg-surface p-4 text-sm shadow-card" disabled={readOnly}>
               <legend className="px-1 font-medium text-ink">Categories</legend>
