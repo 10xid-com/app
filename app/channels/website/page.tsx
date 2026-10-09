@@ -17,6 +17,7 @@ import { githubApp } from "@/lib/repo";
 import { RepoError } from "@/lib/repo/types";
 import { RefreshWhileRunning } from "./refresh";
 import { SitePreview } from "../../_components/site-preview";
+import { SubmitButton } from "../../_components/submit-button";
 
 export const metadata: Metadata = { title: "Website" };
 
@@ -232,12 +233,12 @@ export default async function WebsitePage({
                     its people can read it in Chat Boss.
                   </p>
                   <div className="flex items-center gap-3">
-                    <button
-                      type="submit"
-                      className="rounded-lg bg-brand-surface px-4 py-2 text-sm font-semibold text-brand-on-surface hover:bg-brand-surface-hover"
+                    <SubmitButton
+                      pendingLabel="Saving…"
+                      className="rounded-lg bg-brand-surface px-4 py-2 text-sm font-semibold text-brand-on-surface hover:bg-brand-surface-hover disabled:opacity-60"
                     >
                       Save repository
-                    </button>
+                    </SubmitButton>
                     <Link href="/channels/website" className="text-sm text-ink-soft underline hover:text-ink">
                       Cancel
                     </Link>
@@ -324,13 +325,13 @@ async function PublishButton({ live }: { live: Promise<SiteState> }) {
   return (
     <form action={publishWebsiteAction}>
       <CsrfField />
-      <button
-        type="submit"
+      <SubmitButton
+        pendingLabel="Starting…"
         disabled={running || !status.publishing}
         className="rounded-lg bg-brand-surface px-4 py-2 text-sm font-semibold text-brand-on-surface hover:bg-brand-surface-hover disabled:opacity-50"
       >
         {running ? "Publishing…" : "Publish"}
-      </button>
+      </SubmitButton>
     </form>
   );
 }

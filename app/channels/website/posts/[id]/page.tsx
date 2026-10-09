@@ -12,6 +12,7 @@ import { blogDraftSchema } from "@/lib/workspace/blog-tools";
 import { PortalShell } from "../../../../portal-shell";
 import { CsrfField } from "../../../../_components/csrf-field";
 import { savePostAction } from "../../actions";
+import { SubmitButton } from "../../../../_components/submit-button";
 
 export const metadata: Metadata = { title: "Post" };
 
@@ -259,9 +260,12 @@ export default async function PostPage({
                 {readOnly ? <input type="hidden" name="author_id" value={one(f.author_id)} /> : null}
               </label>
               {readOnly ? null : (
-                <button type="submit" className="rounded-lg bg-brand-surface px-4 py-2 text-sm font-semibold text-brand-on-surface hover:bg-brand-surface-hover">
+                <SubmitButton
+                  pendingLabel="Saving…"
+                  className="rounded-lg bg-brand-surface px-4 py-2 text-sm font-semibold text-brand-on-surface hover:bg-brand-surface-hover disabled:opacity-60"
+                >
                   {isNew ? "Save draft" : "Save"}
-                </button>
+                </SubmitButton>
               )}
               <p className="text-xs text-ink-faint">Saved posts go live when the website is published.</p>
             </div>
