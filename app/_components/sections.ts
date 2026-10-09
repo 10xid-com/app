@@ -108,7 +108,9 @@ export const SOON = {
 
 /**
  * Channels other than the iD itself, which has its own page. The sidebar lists
- * these; /channels/[channel] answers for exactly these names and no others.
+ * the ones a business has connected, and /channels (Add channel) all of them;
+ * /channels/[channel] answers, as a placeholder, for those without a page of
+ * their own (LinkedIn) and no other names.
  */
 export const CHANNELS = {
   website: {
@@ -122,8 +124,15 @@ export const CHANNELS = {
     href: "/channels/instagram",
     label: "Instagram",
     icon: "instagram",
-    blurb: "Post to Instagram and see what lands.",
+    blurb: "Post photos, Reels and carousels to Instagram and see what lands.",
     plans: ["Connect an account", "Schedule posts", "Messages and comments"],
+  },
+  facebook: {
+    href: "/channels/facebook",
+    label: "Facebook",
+    icon: "facebook",
+    blurb: "Post to your Facebook Page and see what lands.",
+    plans: ["Connect a Page", "Schedule posts", "Messages and comments"],
   },
   linkedin: {
     href: "/channels/linkedin",

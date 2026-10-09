@@ -2,9 +2,9 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { authorizeRequest } from "@/lib/auth/authorize";
 import { appOrigin } from "@/lib/auth/origin";
-import { connectInstagram, InstagramTakenError } from "@/lib/db/social";
+import { connectSocial, SocialAccountTakenError } from "@/lib/db/social";
 import { exchangeCode, InstagramError, instagramConfig, longLivedToken, profile } from "@/lib/integrations/instagram";
-import { IG_STATE_COOKIE, igStateCookieOptions, igStateMatches } from "@/lib/integrations/instagram-state";
+import { oauthCookieOptions, oauthStateMatches, stateCookieName } from "@/lib/integrations/oauth-state";
 
 /**
  * Instagram's sign-in comes back here (the redirect address registered with
@@ -21,11 +21,11 @@ export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
   const jar = await cookies();
-  const saved = jar.get(IG_STATE_COOKIE)?.value;
+  const saved = jar.get(stateCookieName("instagram"))?.value;
 
   const back = (query: string) => {
     const response = NextResponse.redirect(new URL(`/channels/instagram?${query}`, appOrigin()!));
-    response.cookies.set(IG_STATE_COOKIE, "", igStateCookieOptions(0));
+    response.cookies.set(stateCookieName("instagram"), "", oauthCookieOptions(0));
     return response;
   };
 
@@ -35,7 +35,7 @@ export async function GET(request: Request) {
   if (!config) return back("error=notconfigured");
 
   const url = new URL(request.url);
-  if (!igStateMatches(saved, url.searchParams.get("state"), decision.businessId)) return back("error=state");
+  if (!oauthStateMatches(saved, url.searchParams.get("state"), decision.businessId)) return back("error=state");
   // The person pressed Cancel on Instagram's screen.
   if (url.searchParams.get("error")) return back("error=cancelled");
   // Instagram appends #_ to the address; a browser keeps fragments to itself,
@@ -50,8 +50,9 @@ export async function GET(request: Request) {
     if (account.accountType && !["BUSINESS", "MEDIA_CREATOR", "CREATOR"].includes(account.accountType.toUpperCase())) {
       return back("error=personal");
     }
-    await connectInstagram(
+    await connectSocial(
       { organizationId: decision.businessId, userId: decision.ctx.userId },
+      "instagram",
       {
         accountId: account.accountId,
         scopedId: short.scopedId,
@@ -64,7 +65,7 @@ export async function GET(request: Request) {
     );
     return back("done=connected");
   } catch (err) {
-    if (err instanceof InstagramTakenError) return back("error=taken");
+    if (err instanceof SocialAccountTakenError) return back("error=taken");
     if (err instanceof InstagramError) return back(`error=instagram&detail=${encodeURIComponent(err.message.slice(0, 200))}`);
     throw err;
   }

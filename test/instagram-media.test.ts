@@ -71,13 +71,14 @@ beforeAll(async () => {
   vi.stubEnv("CHANNEL_TOKEN_KEY", randomBytes(32).toString("base64url"));
   vi.stubEnv("INSTAGRAM_APP_ID", "1234567890");
   vi.stubEnv("INSTAGRAM_APP_SECRET", "secret");
-  const { connectInstagram } = await import("@/lib/db/social");
+  const { connectSocial } = await import("@/lib/db/social");
   await db.query(
     `update social_connections set disconnected_at = now(), token_ciphertext = null, token_expires_at = null where organization_id = $1 and disconnected_at is null`,
     [ids.rotary],
   );
-  await connectInstagram(
+  await connectSocial(
     { organizationId: ids.rotary, userId: ids.paolo },
+    "instagram",
     {
       accountId: "17841400000000001",
       scopedId: "990000000000001",
@@ -108,13 +109,13 @@ const json = (url: string, body: unknown) =>
   new Request(`https://app.example.com${url}`, { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } });
 
 async function startVideo(byteSize: number, durationMs = 12_000) {
-  const { POST } = await import("@/app/api/instagram/videos/route");
-  const res = await POST(json("/api/instagram/videos", { contentType: "video/mp4", byteSize, width: 1080, height: 1920, durationMs }));
+  const { POST } = await import("@/app/api/social/videos/route");
+  const res = await POST(json("/api/social/videos", { contentType: "video/mp4", byteSize, width: 1080, height: 1920, durationMs }));
   return { res, body: (await res.json()) as { id: string; partBytes: number; error?: string } };
 }
 
 async function sendPart(id: string, part: number, bytes: Uint8Array<ArrayBuffer>) {
-  const { PUT } = await import("@/app/api/instagram/videos/[id]/parts/[part]/route");
+  const { PUT } = await import("@/app/api/social/videos/[id]/parts/[part]/route");
   const res = await PUT(new Request(`https://app.example.com/x`, { method: "PUT", body: bytes }), {
     params: Promise.resolve({ id, part: String(part) }),
   });
@@ -122,8 +123,8 @@ async function sendPart(id: string, part: number, bytes: Uint8Array<ArrayBuffer>
 }
 
 async function complete(id: string, parts: { part: number; etag: string }[]) {
-  const { POST } = await import("@/app/api/instagram/videos/[id]/complete/route");
-  const res = await POST(json(`/api/instagram/videos/${id}/complete`, { parts }), { params: Promise.resolve({ id }) });
+  const { POST } = await import("@/app/api/social/videos/[id]/complete/route");
+  const res = await POST(json(`/api/social/videos/${id}/complete`, { parts }), { params: Promise.resolve({ id }) });
   return { res, body: (await res.json()) as { id?: string; error?: string } };
 }
 
@@ -168,8 +169,8 @@ describe("a video upload", () => {
   test("is refused when it is not a video Instagram takes", async () => {
     expect((await startVideo(301 * 1024 * 1024)).res.status).toBe(400);
     expect((await startVideo(1000, 2000)).res.status).toBe(400);
-    const { POST } = await import("@/app/api/instagram/videos/route");
-    const webm = await POST(json("/api/instagram/videos", { contentType: "video/webm", byteSize: 10, width: 1, height: 1, durationMs: 5000 }));
+    const { POST } = await import("@/app/api/social/videos/route");
+    const webm = await POST(json("/api/social/videos", { contentType: "video/webm", byteSize: 10, width: 1, height: 1, durationMs: 5000 }));
     expect(webm.status).toBe(400);
   });
 
@@ -219,11 +220,11 @@ describe("posting", () => {
   });
 
   test("a carousel mixes photos and videos as carousel items", async () => {
-    const { POST } = await import("@/app/api/instagram/photos/route");
+    const { POST } = await import("@/app/api/social/photos/route");
     const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x04, 0x38, 0x04, 0x38, 0x03, 1, 0x22, 0, 2, 0x11, 1, 3, 0x11, 1, 0xff, 0xd9]);
     const form = new FormData();
     form.set("photo", new File([jpeg], "p.jpg", { type: "image/jpeg" }));
-    const photoRes = await POST(new Request("https://app.example.com/api/instagram/photos", { method: "POST", body: form }));
+    const photoRes = await POST(new Request("https://app.example.com/api/social/photos", { method: "POST", body: form }));
     expect(photoRes.status).toBe(200);
     const photoId = ((await photoRes.json()) as { id: string }).id;
     const videoId = await uploadWholeVideo(1000, 30_000);
@@ -258,16 +259,22 @@ describe("posting", () => {
 });
 
 describe("a photo", () => {
-  test("must be a JPEG of a shape Instagram's feed takes", async () => {
-    const { POST } = await import("@/app/api/instagram/photos/route");
+  test("must be a JPEG, and of a shape Instagram's feed takes to post there", async () => {
+    const { POST } = await import("@/app/api/social/photos/route");
     const send = (bytes: Buffer) => {
       const form = new FormData();
       form.set("photo", new File([new Uint8Array(bytes)], "p", { type: "image/jpeg" }));
-      return POST(new Request("https://app.example.com/api/instagram/photos", { method: "POST", body: form }));
+      return POST(new Request("https://app.example.com/api/social/photos", { method: "POST", body: form }));
     };
     expect((await send(Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4]))).status).toBe(415);
-    // 3000 × 1000 is 3:1, wider than 1.91:1.
+    // 3000 × 1000 is 3:1: a Facebook post can carry it; Instagram's feed (to 1.91:1) cannot.
     const wide = Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x03, 0xe8, 0x0b, 0xb8, 0x03, 1, 0x22, 0, 2, 0x11, 1, 3, 0x11, 1, 0xff, 0xd9]);
-    expect((await send(wide)).status).toBe(422);
+    const res = await send(wide);
+    expect(res.status).toBe(200);
+    const { id } = (await res.json()) as { id: string };
+    const asked = instagram();
+    const refused = await post({ caption: "", media: [id] });
+    expect(refused.res.status).toBe(422);
+    expect(asked).toHaveLength(0);
   });
 });

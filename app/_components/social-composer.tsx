@@ -11,15 +11,20 @@ import {
 } from "@/lib/integrations/video-limits";
 
 /**
- * Writing an Instagram post: one photo, one video (posted as a Reel), or a
- * carousel of up to ten photos and videos; a caption; and a preview of the
- * post as it will look.
+ * Writing a post for a social channel, with a preview of it as it will look.
+ *
+ * Instagram: one photo, one video (posted as a Reel), or a carousel of up to
+ * ten photos and videos, with a caption.
+ *
+ * Facebook (a Page): text on its own, text with up to ten photos, or text
+ * with one video. Photos keep their own shape.
  *
  * Photos: Instagram takes JPEG only, from 4:5 (tall) to 1.91:1 (wide), and
- * crops a carousel to its first item's shape. So the shape is chosen once for
- * the whole post, and each photo is cropped to it from the centre, scaled to
- * Instagram's 1440px and converted to JPEG here in the browser — the preview
- * shows that same crop.
+ * crops a carousel to its first item's shape. So for Instagram the shape is
+ * chosen once for the whole post, and each photo is cropped to it from the
+ * centre, scaled to Instagram's 1440px and converted to JPEG here in the
+ * browser — the preview shows that same crop. For Facebook a photo is only
+ * converted, and scaled to 2048px at most.
  *
  * Videos go up as they are (MP4 or MOV), in 8MB parts, and Instagram does
  * its own processing, which can take a few minutes. A video on its own is a
@@ -28,10 +33,13 @@ import {
  * Nothing leaves the browser until Post is pressed.
  */
 
-const CAPTION_LIMIT = 2200;
+export type SocialComposerChannel = "instagram" | "facebook";
+
+const RULES = {
+  instagram: { textLimit: 2200, maxHashtags: 30, width: 1440, endpoint: "/api/instagram/posts", name: "Instagram" },
+  facebook: { textLimit: 63_206, maxHashtags: Infinity, width: 2048, endpoint: "/api/facebook/posts", name: "Facebook" },
+} as const;
 const MAX_ITEMS = 10;
-const MAX_HASHTAGS = 30;
-const WIDTH = 1440;
 
 type Shape = "original" | "square" | "portrait" | "landscape";
 const SHAPES: { value: Shape; label: string }[] = [
@@ -91,9 +99,10 @@ function videoInfo(url: string): Promise<{ width: number; height: number; durati
   });
 }
 
-/** Centre-crop to the ratio, scale to Instagram's width, JPEG. */
-async function toJpeg(file: File, ratio: number): Promise<Blob> {
+/** Centre-crop to the ratio (or keep the photo's own, given null), scale to the width, JPEG. */
+async function toJpeg(file: File, wanted: number | null, maxWidth: number): Promise<Blob> {
   const bitmap = await createImageBitmap(file);
+  const ratio = wanted ?? bitmap.width / bitmap.height;
   let sx = 0;
   let sy = 0;
   let sw = bitmap.width;
@@ -105,7 +114,8 @@ async function toJpeg(file: File, ratio: number): Promise<Blob> {
     sh = Math.round(sw / ratio);
     sy = Math.round((bitmap.height - sh) / 2);
   }
-  const width = Math.min(WIDTH, sw);
+  // The longer side at most maxWidth, for a tall photo kept as it is.
+  const width = Math.min(sw, ratio >= 1 ? maxWidth : Math.round(maxWidth * ratio));
   const height = Math.round(width / ratio);
   const canvas = document.createElement("canvas");
   canvas.width = width;
@@ -138,7 +148,20 @@ const megabytes = (bytes: number) => `${(bytes / 1048576).toFixed(bytes < 10 * 1
 const button =
   "rounded-lg border border-line bg-surface px-3 py-1.5 text-[13px] font-semibold text-ink hover:bg-sunk disabled:opacity-50";
 
-export function Composer({ csrf, username }: { csrf: string; username: string }) {
+export function SocialComposer({
+  channel,
+  csrf,
+  username,
+  picture = null,
+}: {
+  channel: SocialComposerChannel;
+  csrf: string;
+  /** The Instagram username, or the Page's name. */
+  username: string;
+  picture?: string | null;
+}) {
+  const rules = RULES[channel];
+  const facebook = channel === "facebook";
   const router = useRouter();
   const picker = useRef<HTMLInputElement>(null);
   const reelVideo = useRef<HTMLVideoElement>(null);
@@ -159,8 +182,8 @@ export function Composer({ csrf, username }: { csrf: string; username: string })
     return () => held.forEach((u) => URL.revokeObjectURL(u));
   }, []);
 
-  const reel = items.length === 1 && items[0].kind === "video" ? items[0] : null;
-  const ratio = ratioFor(shape, items[0]);
+  const reel = !facebook && items.length === 1 && items[0].kind === "video" ? items[0] : null;
+  const ratio = facebook ? (items[0] ? items[0].width / items[0].height : 1.91) : ratioFor(shape, items[0]);
   const hashtags = (caption.match(/(^|\s)#[^\s#]+/g) ?? []).length;
   const busy = step !== null;
   const current = items[Math.min(shown, items.length - 1)];
@@ -236,10 +259,10 @@ export function Composer({ csrf, username }: { csrf: string; username: string })
   }
 
   async function uploadPhoto(item: Item): Promise<string> {
-    const jpeg = await toJpeg(item.file, ratio);
+    const jpeg = await toJpeg(item.file, facebook ? null : ratio, rules.width);
     const form = new FormData();
     form.set("photo", jpeg, "photo.jpg");
-    const res = await fetch("/api/instagram/photos", { method: "POST", headers: { [CSRF_HEADER]: csrf }, body: form });
+    const res = await fetch("/api/social/photos", { method: "POST", headers: { [CSRF_HEADER]: csrf }, body: form });
     const body = await asJson(res);
     if (!res.ok || typeof body.id !== "string") throw failed(body, `The photo did not upload (${res.status}).`);
     return body.id;
@@ -247,7 +270,7 @@ export function Composer({ csrf, username }: { csrf: string; username: string })
 
   async function uploadVideo(item: Item, label: string): Promise<string> {
     const json = { [CSRF_HEADER]: csrf, "content-type": "application/json" };
-    const start = await fetch("/api/instagram/videos", {
+    const start = await fetch("/api/social/videos", {
       method: "POST",
       headers: json,
       body: JSON.stringify({
@@ -271,7 +294,7 @@ export function Composer({ csrf, username }: { csrf: string; username: string })
       let etag: string | null = null;
       // A part that fails is sent again, twice, before giving up.
       for (let attempt = 0; attempt < 3 && !etag; attempt++) {
-        const res = await fetch(`/api/instagram/videos/${id}/parts/${part}`, {
+        const res = await fetch(`/api/social/videos/${id}/parts/${part}`, {
           method: "PUT",
           headers: { [CSRF_HEADER]: csrf, "content-type": "application/octet-stream" },
           body: chunk,
@@ -284,7 +307,7 @@ export function Composer({ csrf, username }: { csrf: string; username: string })
       parts.push({ part, etag });
     }
     setStep(`${label} 100%`);
-    const done = await fetch(`/api/instagram/videos/${id}/complete`, { method: "POST", headers: json, body: JSON.stringify({ parts }) });
+    const done = await fetch(`/api/social/videos/${id}/complete`, { method: "POST", headers: json, body: JSON.stringify({ parts }) });
     const body = await asJson(done);
     if (!done.ok) throw failed(body, `The video did not finish uploading (${done.status}).`);
     return id;
@@ -306,14 +329,18 @@ export function Composer({ csrf, username }: { csrf: string; username: string })
           ids.push(await uploadVideo(item, videos > 1 ? `Uploading video ${v} of ${videos}…` : "Uploading the video…"));
         }
       }
-      setStep(videos ? "Posting to Instagram… processing video can take a few minutes. Keep this page open." : "Posting to Instagram…");
-      const res = await fetch("/api/instagram/posts", {
+      setStep(
+        videos && !facebook
+          ? "Posting to Instagram… processing video can take a few minutes. Keep this page open."
+          : `Posting to ${rules.name}…`,
+      );
+      const res = await fetch(rules.endpoint, {
         method: "POST",
         headers: { [CSRF_HEADER]: csrf, "content-type": "application/json" },
         body: JSON.stringify({ caption, media: ids, ...(reel ? { reel: { shareToFeed, coverMs } } : {}) }),
       });
       const body = await asJson(res);
-      if (!res.ok) throw failed(body, `Instagram did not take the post (${res.status}).`);
+      if (!res.ok) throw failed(body, `${rules.name} did not take the post (${res.status}).`);
       items.forEach((p) => {
         URL.revokeObjectURL(p.url);
         urls.current.delete(p.url);
@@ -331,18 +358,23 @@ export function Composer({ csrf, username }: { csrf: string; username: string })
     }
   }
 
-  const longInCarousel = items.length > 1 && items.some((i) => i.kind === "video" && (i.durationMs ?? 0) > CAROUSEL_VIDEO_MAX_MS);
+  const longInCarousel = !facebook && items.length > 1 && items.some((i) => i.kind === "video" && (i.durationMs ?? 0) > CAROUSEL_VIDEO_MAX_MS);
+  const videoWithOthers = facebook && items.length > 1 && items.some((i) => i.kind === "video");
   const problem =
-    items.length === 0
-      ? "Add a photo or video to post."
+    items.length === 0 && !(facebook && caption.trim())
+      ? facebook
+        ? "Write something, or add photos or a video."
+        : "Add a photo or video to post."
       : longInCarousel
         ? "A video in a carousel can be up to a minute long. Post a longer one on its own, as a Reel."
-        : caption.length > CAPTION_LIMIT
-          ? `The caption is over ${CAPTION_LIMIT.toLocaleString("en-CA")} characters.`
-          : hashtags > MAX_HASHTAGS
-            ? `Instagram allows ${MAX_HASHTAGS} hashtags; this has ${hashtags}.`
-            : null;
-  const postLabel = reel ? "Post Reel" : items.length > 1 ? "Post carousel" : "Post";
+        : videoWithOthers
+          ? "On Facebook a video is posted on its own. Remove the other photos or videos, or post them separately."
+          : caption.length > rules.textLimit
+            ? `The text is over ${rules.textLimit.toLocaleString("en-CA")} characters.`
+            : hashtags > rules.maxHashtags
+              ? `Instagram allows ${rules.maxHashtags} hashtags; this has ${hashtags}.`
+              : null;
+  const postLabel = facebook ? "Post to Facebook" : reel ? "Post Reel" : items.length > 1 ? "Post carousel" : "Post";
 
   return (
     <div className="mt-4 grid gap-5 md:grid-cols-[minmax(0,1fr)_18rem]">
@@ -360,7 +392,11 @@ export function Composer({ csrf, username }: { csrf: string; username: string })
             <button type="button" disabled={busy || items.length >= MAX_ITEMS} onClick={() => picker.current?.click()} className={button}>
               {items.length ? "Add more" : "Add photos or videos"}
             </button>
-            <span className="text-xs text-ink-faint">One photo or video, or up to {MAX_ITEMS} for a carousel. Video: MP4 or MOV, up to 300MB.</span>
+            <span className="text-xs text-ink-faint">
+              {facebook
+                ? `Up to ${MAX_ITEMS} photos, or one video (MP4 or MOV, up to 300MB). Or just text.`
+                : `One photo or video, or up to ${MAX_ITEMS} for a carousel. Video: MP4 or MOV, up to 300MB.`}
+            </span>
           </div>
           {items.length ? (
             <ul className="flex flex-wrap gap-2">
@@ -401,7 +437,7 @@ export function Composer({ csrf, username }: { csrf: string; username: string })
           ) : null}
         </div>
 
-        {reel ? (
+        {facebook ? null : reel ? (
           <fieldset className="grid gap-3 rounded-xl border border-line p-3 text-sm" disabled={busy}>
             <legend className="px-1 font-medium text-ink">Reel</legend>
             <label className="grid gap-1.5">
@@ -442,17 +478,18 @@ export function Composer({ csrf, username }: { csrf: string; username: string })
         )}
 
         <label className="grid gap-1.5 text-sm">
-          <span className="font-medium text-ink">Caption</span>
+          <span className="font-medium text-ink">{facebook ? "Text" : "Caption"}</span>
           <textarea
             value={caption}
             onChange={(e) => setCaption(e.target.value)}
             rows={7}
             disabled={busy}
-            placeholder="Write a caption… #hashtags work here too"
+            placeholder={facebook ? "What do you want to say?" : "Write a caption… #hashtags work here too"}
             className="rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink placeholder:text-ink-faint"
           />
-          <span className={`text-xs ${caption.length > CAPTION_LIMIT || hashtags > MAX_HASHTAGS ? "text-bad" : "text-ink-faint"}`}>
-            {caption.length.toLocaleString("en-CA")} / {CAPTION_LIMIT.toLocaleString("en-CA")} · {hashtags} / {MAX_HASHTAGS} hashtags
+          <span className={`text-xs ${caption.length > rules.textLimit || hashtags > rules.maxHashtags ? "text-bad" : "text-ink-faint"}`}>
+            {caption.length.toLocaleString("en-CA")} / {rules.textLimit.toLocaleString("en-CA")}
+            {facebook ? "" : ` · ${hashtags} / ${rules.maxHashtags} hashtags`}
           </span>
         </label>
 
@@ -480,10 +517,10 @@ export function Composer({ csrf, username }: { csrf: string; username: string })
         ) : null}
         {posted !== undefined ? (
           <p role="status" className="rounded-lg border border-good/30 bg-good/5 px-3 py-2 text-sm text-good">
-            Posted to Instagram.{" "}
+            Posted to {rules.name}.{" "}
             {posted ? (
               <a href={posted} target="_blank" rel="noreferrer" className="font-semibold underline">
-                See it on Instagram
+                See it on {rules.name}
               </a>
             ) : null}
           </p>
@@ -494,11 +531,27 @@ export function Composer({ csrf, username }: { csrf: string; username: string })
         <span className="text-sm font-medium text-ink">Preview{reel ? " · Reel" : ""}</span>
         <article className="overflow-hidden rounded-xl border border-line bg-white text-[13px] text-neutral-900 shadow-card">
           <header className="flex items-center gap-2 px-3 py-2.5">
-            <span className="grid h-8 w-8 place-items-center rounded-full bg-gradient-to-tr from-amber-400 via-pink-500 to-purple-600 text-xs font-bold text-white">
-              {username.slice(0, 1).toUpperCase()}
+            {picture ? (
+              // eslint-disable-next-line @next/next/no-img-element -- the account's own picture
+              <img src={picture} alt="" className="h-8 w-8 rounded-full object-cover" />
+            ) : (
+              <span
+                className={`grid h-8 w-8 place-items-center rounded-full text-xs font-bold text-white ${facebook ? "bg-[#1877f2]" : "bg-gradient-to-tr from-amber-400 via-pink-500 to-purple-600"}`}
+              >
+                {username.slice(0, 1).toUpperCase()}
+              </span>
+            )}
+            <span className="grid leading-tight">
+              <span className="font-semibold">{username}</span>
+              {facebook ? <span className="text-[11px] text-neutral-500">Just now · 🌐</span> : null}
             </span>
-            <span className="font-semibold">{username}</span>
           </header>
+          {facebook ? (
+            <p className="whitespace-pre-wrap break-words px-3 pb-2">
+              {caption || <span className="text-neutral-400">What you write appears here</span>}
+            </p>
+          ) : null}
+          {facebook && items.length === 0 ? null : (
           <div className="relative bg-neutral-900" style={{ aspectRatio: String(reel ? 9 / 16 : ratio) }}>
             {reel ? (
               <video ref={reelVideo} src={reel.url} muted playsInline controls preload="auto" className="absolute inset-0 h-full w-full object-contain" />
@@ -524,6 +577,7 @@ export function Composer({ csrf, username }: { csrf: string; username: string })
               </>
             ) : null}
           </div>
+          )}
           {items.length > 1 ? (
             <div className="flex justify-center gap-1 pt-2">
               {items.map((p, i) => (
@@ -531,9 +585,17 @@ export function Composer({ csrf, username }: { csrf: string; username: string })
               ))}
             </div>
           ) : null}
-          <p className="whitespace-pre-wrap break-words px-3 pb-3 pt-2">
-            <span className="font-semibold">{username}</span> {caption || <span className="text-neutral-400">Your caption</span>}
-          </p>
+          {facebook ? (
+            <div className="mt-2 flex justify-around border-t border-neutral-200 py-1.5 text-[12px] font-semibold text-neutral-500">
+              <span>Like</span>
+              <span>Comment</span>
+              <span>Share</span>
+            </div>
+          ) : (
+            <p className="whitespace-pre-wrap break-words px-3 pb-3 pt-2">
+              <span className="font-semibold">{username}</span> {caption || <span className="text-neutral-400">Your caption</span>}
+            </p>
+          )}
         </article>
       </div>
     </div>

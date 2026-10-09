@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { authorizeRequest } from "@/lib/auth/authorize";
 import { appOrigin } from "@/lib/auth/origin";
 import { authorizeUrl, instagramConfig } from "@/lib/integrations/instagram";
-import { IG_STATE_COOKIE, igStateCookieOptions, newIgState } from "@/lib/integrations/instagram-state";
+import { newOAuthState, oauthCookieOptions, stateCookieName } from "@/lib/integrations/oauth-state";
 
 /**
  * "Connect Instagram": off to Instagram's own sign-in, with a state value
@@ -20,8 +20,8 @@ export async function GET(request: Request) {
   const config = instagramConfig();
   if (!config) return back("error=notconfigured");
 
-  const { state, cookie } = newIgState(decision.businessId);
+  const { state, cookie } = newOAuthState(decision.businessId);
   const response = NextResponse.redirect(authorizeUrl(config, state));
-  response.cookies.set(IG_STATE_COOKIE, cookie, igStateCookieOptions());
+  response.cookies.set(stateCookieName("instagram"), cookie, oauthCookieOptions());
   return response;
 }
