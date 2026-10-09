@@ -6,8 +6,10 @@ import { requireAction } from "@/lib/auth/authorize";
 import { CSRF_FIELD } from "@/lib/auth/csrf-names";
 import { organizationById } from "@/lib/db/identity";
 import { recordAudit } from "@/lib/db/audit";
-import { listLinkedRepositories } from "@/lib/db/repositories";
-import { SiteTakenError, connectWebsite, disconnectWebsite, websiteFor } from "@/lib/db/sites";
+import { AlreadyLinkedError, linkRepository, listLinkedRepositories } from "@/lib/db/repositories";
+import { SiteTakenError, connectWebsite, disconnectWebsite, setWebsiteRepository, websiteFor } from "@/lib/db/sites";
+import { githubApp } from "@/lib/repo";
+import { RepoError } from "@/lib/repo/types";
 import { SiteError, siteOriginFrom, siteRequest } from "@/lib/sites/client";
 import { formWithDraft, isLiveStatus, siteActorFor } from "@/lib/sites/website";
 import { getBlogDraftReceipt } from "@/lib/db/workspace";
@@ -20,6 +22,7 @@ import { blogDraftSchema } from "@/lib/workspace/blog-tools";
  * and the business's own live connection.
  *
  *   connect, disconnect   domains.manage — owners only, never through an agency
+ *   website's repository  domains.manage
  *   save a post           pages.edit — and pages.publish for anything live
  *   publish               pages.publish
  */
@@ -56,6 +59,70 @@ export async function disconnectWebsiteAction(formData: FormData) {
   const id = z.uuid().parse(formData.get("connectionId"));
   await disconnectWebsite(owner, id, granted.via?.grantId ?? null);
   redirect(`${BACK}?done=disconnected`);
+}
+
+/**
+ * Attach the GitHub repository the website is built from, change it, or take
+ * it off — without disconnecting the site. The form names one choice:
+ *
+ *   linked:<id>     a repository already linked to this business
+ *   github:<id>     one the GitHub App can see, by GitHub's id; it is linked to
+ *                   this business first, from GitHub's own answer (owner, name,
+ *                   installation), never from the form
+ *   none            no repository
+ *
+ * A repository linked to another business cannot be linked here; the
+ * database refuses it and the page says so.
+ */
+export async function setWebsiteRepositoryAction(formData: FormData) {
+  const granted = await requireAction("domains.manage", formData, { returnPath: BACK });
+  const owner = { organizationId: granted.businessId, userId: granted.ctx.userId };
+  const grant = granted.via?.grantId ?? null;
+  const site = await websiteFor(owner);
+  if (!site) redirect(`${BACK}?error=notconnected`);
+
+  const choice = String(formData.get("repository") ?? "");
+  let repositoryId: string | null = null;
+  let label = "none";
+
+  if (choice.startsWith("linked:")) {
+    const row = (await listLinkedRepositories(owner)).find((r) => r.id === choice.slice(7));
+    if (!row) redirect(`${BACK}?error=repo`);
+    repositoryId = row.id;
+    label = `${row.owner}/${row.name}`;
+  } else if (choice.startsWith("github:")) {
+    const externalId = Number(choice.slice(7));
+    const app = githubApp();
+    if (!app || !Number.isSafeInteger(externalId) || externalId <= 0) redirect(`${BACK}?error=repo`);
+    // Picked from a list read a moment ago: it may have been linked here since.
+    const already = (await listLinkedRepositories(owner)).find((r) => r.externalId === externalId);
+    if (already) {
+      repositoryId = already.id;
+      label = `${already.owner}/${already.name}`;
+    } else {
+      let found;
+      try {
+        found = (await app.listAccessibleRepositories()).find((r) => r.externalId === externalId);
+      } catch (err) {
+        if (!(err instanceof RepoError)) throw err;
+        redirect(`${BACK}?error=github`);
+      }
+      if (!found) redirect(`${BACK}?error=repo`);
+      try {
+        const row = await linkRepository(owner, found);
+        repositoryId = row.id;
+        label = `${row.owner}/${row.name}`;
+      } catch (err) {
+        if (err instanceof AlreadyLinkedError) redirect(`${BACK}?error=elsewhere`);
+        throw err;
+      }
+    }
+  } else if (choice !== "none") {
+    redirect(`${BACK}?error=repo`);
+  }
+
+  await setWebsiteRepository(owner, { connectionId: site.id, repositoryId, label, agencyGrantId: grant });
+  redirect(`${BACK}?done=${repositoryId ? "repo" : "norepo"}`);
 }
 
 /**

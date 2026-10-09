@@ -1,7 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { Client } from "pg";
-import { SiteTakenError, connectWebsite, disconnectWebsite, websiteFor, type SiteOwner } from "@/lib/db/sites";
+import {
+  SiteTakenError,
+  connectWebsite,
+  disconnectWebsite,
+  setWebsiteRepository,
+  websiteFor,
+  type SiteOwner,
+} from "@/lib/db/sites";
+import { linkRepository, unlinkRepository } from "@/lib/db/repositories";
 import { closePool } from "@/lib/db/connection";
 
 /**
@@ -11,6 +19,7 @@ import { closePool } from "@/lib/db/connection";
  *   one live website per business            a second connect is refused
  *   one business per site                    a site connected elsewhere cannot be taken
  *   disconnecting frees it, on the record    and the audit says who did what
+ *   its repository can change in place       only to one linked to the same business
  */
 
 const owner = new Client({ connectionString: process.env.DATABASE_URL });
@@ -84,5 +93,42 @@ describe("site connections", () => {
       [rotary, row.siteUrl],
     );
     expect(rows.map((r) => r.action)).toEqual(["site.connected", "site.disconnected"]);
+  });
+
+  test("the website's repository is set and cleared in place, only to the business's own", async () => {
+    // Rotary has no website by now: the test above moved its address to Northstar.
+    const site = await connect(at(rotary));
+    const here = at(rotary);
+    const there = at(northstar);
+    const n = Math.floor(Math.random() * 1e9) + 1e9;
+    const mine = await linkRepository(here, { installationId: 1, externalId: n, owner: "acme", name: "site", defaultBranch: "main" });
+    const theirs = await linkRepository(there, { installationId: 1, externalId: n + 1, owner: "acme", name: "other", defaultBranch: "main" });
+    try {
+      const set = (repositoryId: string | null, o = here) =>
+        setWebsiteRepository(o, { connectionId: site.id, repositoryId, label: "acme/site", agencyGrantId: null });
+
+      expect(await set(mine.id)).toBe(true);
+      expect((await websiteFor(here))?.repositoryId).toBe(mine.id);
+
+      // Another business's repository: the composite key refuses it.
+      await expect(set(theirs.id)).rejects.toThrow();
+      expect((await websiteFor(here))?.repositoryId).toBe(mine.id);
+
+      // Another business cannot reach this connection at all.
+      expect(await set(null, there)).toBe(false);
+      expect((await websiteFor(here))?.repositoryId).toBe(mine.id);
+
+      expect(await set(null)).toBe(true);
+      expect((await websiteFor(here))?.repositoryId).toBeNull();
+
+      const { rows } = await owner.query(
+        `select target from audit_events where organization_id = $1 and action = 'site.repository_set' and target like $2 order by id`,
+        [site.organizationId, `${site.siteUrl}%`],
+      );
+      expect(rows.map((r) => r.target)).toEqual([`${site.siteUrl} → acme/site`, `${site.siteUrl} → none`]);
+    } finally {
+      await unlinkRepository(here, mine.id);
+      await unlinkRepository(there, theirs.id);
+    }
   });
 });

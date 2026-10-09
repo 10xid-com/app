@@ -10,7 +10,9 @@ import { siteActorFor } from "@/lib/sites/website";
 import { PortalShell } from "../../portal-shell";
 import { CsrfField } from "../../_components/csrf-field";
 import { Icon } from "../../_components/icons";
-import { connectWebsiteAction, disconnectWebsiteAction, publishWebsiteAction } from "./actions";
+import { connectWebsiteAction, disconnectWebsiteAction, publishWebsiteAction, setWebsiteRepositoryAction } from "./actions";
+import { githubApp } from "@/lib/repo";
+import { RepoError } from "@/lib/repo/types";
 import { RefreshWhileRunning } from "./refresh";
 import { SitePreview } from "../../_components/site-preview";
 
@@ -33,11 +35,15 @@ const ERRORS: Record<string, string> = {
   connected: "A website is already connected. Disconnect it first.",
   taken: "That site is already connected to another business.",
   notconnected: "Connect the website first.",
+  elsewhere: "That repository is linked to another business. Unlink it there first.",
+  github: "GitHub could not be reached. Try again in a moment.",
 };
 const DONE: Record<string, string> = {
   connected: "Website connected.",
   disconnected: "Website disconnected. Nothing on the site was changed.",
   published: "Publishing started. The site rebuilds and goes live in a few minutes.",
+  repo: "Repository saved. Chat Boss can now read the website’s code.",
+  norepo: "Repository removed from the website.",
 };
 
 type Status = {
@@ -49,7 +55,7 @@ type Run = { status: string; conclusion: string | null; startedAt: string; url: 
 export default async function WebsitePage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string; detail?: string; done?: string }>;
+  searchParams: Promise<{ error?: string; detail?: string; done?: string; repo?: string }>;
 }) {
   const granted = await requirePage("business.view", { returnPath: "/channels/website" });
   const { ctx, businessId, role, via } = granted;
@@ -60,7 +66,28 @@ export default async function WebsitePage({
   const mayConnect = allows(role, "domains.manage", via);
   const mayEdit = allows(role, "pages.edit", via);
   const mayPublish = allows(role, "pages.publish", via);
-  const repositories = mayConnect && !site ? await listLinkedRepositories(owner) : [];
+  // Linked repositories: offered when connecting, and named on the card once
+  // connected. What else the GitHub App can see is asked of GitHub only when
+  // an owner opens the repository form, so the page never waits on it.
+  const repositories = mayConnect || site ? await listLinkedRepositories(owner) : [];
+  const siteRepo = site?.repositoryId ? repositories.find((r) => r.id === site.repositoryId) : undefined;
+  const editingRepo = Boolean(site && mayConnect && params.repo === "edit");
+  let onGitHub: { externalId: number; name: string; private: boolean }[] = [];
+  let gitHubProblem: string | null = null;
+  const app = editingRepo ? githubApp() : null;
+  if (editingRepo && !app) gitHubProblem = "The GitHub App is not set up on this server.";
+  if (app) {
+    try {
+      const linked = new Set(repositories.map((r) => r.externalId));
+      onGitHub = (await app.listAccessibleRepositories())
+        .filter((r) => !linked.has(r.externalId))
+        .map((r) => ({ externalId: r.externalId, name: `${r.owner}/${r.name}`, private: r.private }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+    } catch (err) {
+      if (!(err instanceof RepoError)) throw err;
+      gitHubProblem = "GitHub could not be reached, so only repositories already linked are listed.";
+    }
+  }
   const signing = siteSigningConfigured();
 
   // What the site says about itself. Only for people who may edit: the site
@@ -178,6 +205,76 @@ export default async function WebsitePage({
                   </button>
                 </form>
               ) : null}
+            </div>
+
+            <div className="border-b border-line-soft px-5 py-3 text-sm">
+              {editingRepo ? (
+                <form action={setWebsiteRepositoryAction} className="grid gap-3 sm:max-w-md">
+                  <CsrfField />
+                  <label className="grid gap-1.5">
+                    <span className="font-medium text-ink">Repository the website is built from</span>
+                    <select
+                      name="repository"
+                      defaultValue={siteRepo ? `linked:${siteRepo.id}` : (onGitHub.length || repositories.length ? "" : "none")}
+                      required
+                      className="rounded-lg border border-line bg-surface px-3 py-2 text-ink"
+                    >
+                      <option value="" disabled>
+                        Choose a repository
+                      </option>
+                      {repositories.length ? (
+                        <optgroup label={`Linked to ${business?.name ?? "this business"}`}>
+                          {repositories.map((r) => (
+                            <option key={r.id} value={`linked:${r.id}`}>
+                              {r.owner}/{r.name}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ) : null}
+                      {onGitHub.length ? (
+                        <optgroup label="On GitHub, not linked yet">
+                          {onGitHub.map((r) => (
+                            <option key={r.externalId} value={`github:${r.externalId}`}>
+                              {r.name}
+                              {r.private ? " (private)" : ""}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ) : null}
+                      <option value="none">None</option>
+                    </select>
+                  </label>
+                  {gitHubProblem ? <p className="text-xs text-warn">{gitHubProblem}</p> : null}
+                  <p className="text-xs text-ink-faint">
+                    Read-only. A repository picked from GitHub is linked to {business?.name ?? "this business"}, and only
+                    its people can read it in Chat Boss.
+                  </p>
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="submit"
+                      className="rounded-lg bg-brand-surface px-4 py-2 text-sm font-semibold text-brand-on-surface hover:bg-brand-surface-hover"
+                    >
+                      Save repository
+                    </button>
+                    <Link href="/channels/website" className="text-sm text-ink-soft underline hover:text-ink">
+                      Cancel
+                    </Link>
+                  </div>
+                </form>
+              ) : (
+                <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-ink-soft">
+                  <Icon name="github" className="h-4 w-4" />
+                  <span>Repository:</span>
+                  <span className={siteRepo ? "font-medium text-ink" : "text-ink-faint"}>
+                    {siteRepo ? `${siteRepo.owner}/${siteRepo.name}` : site.repositoryId ? "no longer linked" : "none"}
+                  </span>
+                  {mayConnect ? (
+                    <Link href="/channels/website?repo=edit" className="font-medium text-brand hover:underline">
+                      {siteRepo ? "Change" : "Add one"}
+                    </Link>
+                  ) : null}
+                </p>
+              )}
             </div>
 
             <SitePreview url={site.siteUrl} />
