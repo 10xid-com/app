@@ -16,6 +16,7 @@ import { blogDraftFrom } from "@/lib/workspace/blog-draft";
 import { modeOptions } from "@/lib/ai/engine/registry";
 import { listLinkedRepositories } from "@/lib/db/repositories";
 import { githubApp } from "@/lib/repo";
+import { websiteFor } from "@/lib/db/sites";
 import { workspaceAccess } from "@/lib/workspace/access";
 
 /**
@@ -259,14 +260,16 @@ async function chatDockData(ctx: SessionContext | null): Promise<ChatDockData> {
 
   const [latest] = await listConversations(access.owner, 1);
   if (!latest) {
-    return { state: "on", csrf, businessName: access.client.name, conversation: null, messages: [], earlier: 0, repositories: null };
+    return { state: "on", csrf, businessName: access.client.name, conversation: null, messages: [], earlier: 0, website: null };
   }
-  const [messages, withheld, runs, linked] = await Promise.all([
+  const [messages, withheld, runs, linked, site] = await Promise.all([
     listMessages(access.owner, latest.id),
     withheldEngineModes(access.owner),
     listRuns(access.owner, latest.id),
     listLinkedRepositories(access.owner),
+    websiteFor(access.owner),
   ]);
+  const siteRepo = site?.repositoryId ? linked.find((r) => r.id === site.repositoryId) : undefined;
   const current = latest.repositoryId ? linked.find((r) => r.id === latest.repositoryId) : undefined;
   // Blog posts Chat Boss proposed, as cards under the answers that proposed them.
   const draftsByRun = new Map(
@@ -293,9 +296,15 @@ async function chatDockData(ctx: SessionContext | null): Promise<ChatDockData> {
       drafts: m.runId ? (draftsByRun.get(m.runId) ?? []) : [],
     })),
     earlier: messages.length - recent.length,
-    // For the "+" menu's repository picker. Names only; nothing inside is read here.
-    repositories: githubApp()
-      ? linked.map((r) => ({ id: r.id, externalId: r.externalId, name: `${r.owner}/${r.name}`, defaultBranch: r.defaultBranch }))
+    // For the "+" menu: the website's repository, the only one offered there.
+    // Names only; nothing inside is read here.
+    website: githubApp()
+      ? {
+          connected: site !== null,
+          repository: siteRepo
+            ? { id: siteRepo.id, name: `${siteRepo.owner}/${siteRepo.name}`, defaultBranch: siteRepo.defaultBranch }
+            : null,
+        }
       : null,
   };
 }
