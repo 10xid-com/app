@@ -191,12 +191,12 @@ export async function sendExpiryReminder(input: { to: string; subject: string; t
 /**
  * Tell somebody a job has been handed to them.
  *
- * Carries no credential: the link opens the job, signed in, like any other
- * page. The note is what a teammate typed and is sent as plain text. A
- * failure is the caller's to swallow: the handover stands without it, and
- * the job is under "Assigned to me" either way.
+ * Carries no credential: the button opens the job, signed in, like any other
+ * page. The note is what a teammate typed: escaped in the HTML, and sent as
+ * it was in the text. A failure is the caller's to swallow: the handover
+ * stands without it, and the job is under "Assigned to me" either way.
  */
-export async function sendHandoverNotice(input: {
+export type HandoverNotice = {
   to: string;
   fromName: string;
   businessName: string;
@@ -204,24 +204,75 @@ export async function sendHandoverNotice(input: {
   jobTitle: string;
   note: string | null;
   jobUrl: string;
-}): Promise<void> {
+};
+
+/** The message, as text and as HTML. Pure, so it can be tested without sending. */
+export function handoverMessage(input: HandoverNotice): { subject: string; text: string; html: string } {
+  return {
+    subject: `${input.fromName} handed you ${input.jobRef}: ${input.jobTitle}`,
+    text: [
+      `${input.fromName} handed you a job at ${input.businessName} on 10XiD.`,
+      ``,
+      `  ${input.jobRef}  ${input.jobTitle}`,
+      ...(input.note ? [``, `Their note:`, ...input.note.split("\n").map((line) => `  ${line}`)] : []),
+      ``,
+      `Open the job: ${input.jobUrl}`,
+      ``,
+      HANDOVER_FOOTER,
+    ].join("\n"),
+    html: handoverHtml(input),
+  };
+}
+
+const HANDOVER_FOOTER =
+  "You will be asked to sign in if you are not already. It is under \u201cAssigned to me\u201d on your Jobs page too.";
+
+const escapeHtml = (v: string) =>
+  v.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+
+/**
+ * The same message as HTML, in the sign-in code emails' card (login's
+ * lib/auth/mailer.ts): the job in a box, the note quoted, a button to the job.
+ * Plain inline styles only.
+ */
+function handoverHtml(input: HandoverNotice): string {
+  const note = input.note
+    ? `
+      <tr><td style="padding:0 28px 4px;font-size:12px;font-weight:600;color:#5b625e">${escapeHtml(input.fromName)}\u2019s note</td></tr>
+      <tr><td style="padding:0 28px 8px">
+        <div style="border-left:3px solid #244a80;background:#f5f6f4;border-radius:0 8px 8px 0;padding:10px 14px;font-size:14px;line-height:1.5;color:#1c1f1d">${escapeHtml(input.note).replace(/\r?\n/g, "<br>")}</div>
+      </td></tr>`
+    : "";
+  return `<!doctype html>
+<html><body style="margin:0;padding:24px;background:#f5f6f4;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1c1f1d">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:440px;background:#ffffff;border:1px solid #e3e6e1;border-radius:16px">
+      <tr><td style="padding:28px 28px 8px;font-size:12px;font-weight:600;letter-spacing:.06em;color:#244a80">10XiD</td></tr>
+      <tr><td style="padding:0 28px;font-size:15px;line-height:1.5"><strong>${escapeHtml(input.fromName)}</strong> handed you a job at ${escapeHtml(input.businessName)}.</td></tr>
+      <tr><td style="padding:16px 28px">
+        <div style="border:1px solid #e3e6e1;border-radius:10px;padding:12px 14px">
+          <div style="font-size:12px;letter-spacing:.06em;color:#5b625e;font-family:ui-monospace,Menlo,Consolas,monospace">${escapeHtml(input.jobRef)}</div>
+          <div style="padding-top:2px;font-size:17px;font-weight:700;line-height:1.35">${escapeHtml(input.jobTitle)}</div>
+        </div>
+      </td></tr>${note}
+      <tr><td style="padding:12px 28px 16px">
+        <a href="${escapeHtml(input.jobUrl)}" style="display:inline-block;background:#244a80;color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;padding:12px 20px;border-radius:8px">Open the job</a>
+      </td></tr>
+      <tr><td style="padding:0 28px 28px;font-size:13px;line-height:1.5;color:#5b625e">${escapeHtml(HANDOVER_FOOTER)}</td></tr>
+    </table>
+  </td></tr></table>
+</body></html>`;
+}
+
+export async function sendHandoverNotice(input: HandoverNotice): Promise<void> {
   const apiKey = process.env.RESEND_API_KEY;
-  const subject = `${input.fromName} handed you ${input.jobRef}: ${input.jobTitle}`;
-  const body = [
-    `${input.fromName} handed you a job at ${input.businessName} on 10XiD.`,
-    ``,
-    `  ${input.jobRef}  ${input.jobTitle}`,
-    ...(input.note ? [``, `Their note:`, ...input.note.split("\n").map((line) => `  ${line}`)] : []),
-    ``,
-    `To open it, sign in and go to:`,
-    `  ${input.jobUrl}`,
-  ].join("\n");
+  const message = handoverMessage(input);
 
   if (!apiKey) {
     if (process.env.NODE_ENV === "production") {
       throw new Error("RESEND_API_KEY is not set, so handover notices cannot be delivered.");
     }
-    await appendFile(DEV_CODE_SINK, `${new Date().toISOString()}\t${input.to}\tHANDOVER\t${subject}\n`, "utf8");
+    await appendFile(DEV_CODE_SINK, `${new Date().toISOString()}\t${input.to}\tHANDOVER\t${message.subject}\n`, "utf8");
     return;
   }
 
@@ -230,8 +281,7 @@ export async function sendHandoverNotice(input: {
   const { error } = await resend.emails.send({
     from: process.env.MAIL_FROM ?? "10XiD <no-reply@10xid.com>",
     to: input.to,
-    subject,
-    text: body,
+    ...message,
   });
   if (error) throw new Error(`Resend refused the handover notice: ${error.message}`);
 }
