@@ -123,16 +123,25 @@ describe("every page, route and server action is authorized", () => {
   });
 });
 
+/** Client-side forms outside Chat Boss, each with why it cannot be a server form. */
+const CLIENT_FORMS: Record<string, string> = {
+  "app/channels/website/form-key.tsx":
+    "Makes a website form key and shows it once. The key comes back in the action's answer so it never travels in the address (browser history, request logs).",
+};
+
 describe("every form posting to a server action carries the CSRF token", () => {
   const withForms = files.filter((f) => f.path.endsWith(".tsx") && /<form\b[^>]*\baction=\{/.test(f.source));
 
   test.each(withForms.map((f) => [f.path, f.source]))("%s", (path, source) => {
-    // Client components cannot render the server-side field. Chat Boss's are
-    // the only ones, and they carry the token the page handed them instead
-    // (app/chat/csrf.tsx).
+    // Client components cannot render the server-side field. Chat Boss's
+    // carry the token the page handed them instead (app/chat/csrf.tsx), and
+    // so does each form listed in CLIENT_FORMS, with its reason.
     const client = /^\s*["']use client["']/.test(source);
     if (client) {
-      expect(path.startsWith("app/chat/"), `${path}: a client-side form outside Chat Boss`).toBe(true);
+      expect(
+        path.startsWith("app/chat/") || Object.hasOwn(CLIENT_FORMS, path),
+        `${path}: a client-side form outside Chat Boss and not in CLIENT_FORMS`,
+      ).toBe(true);
     }
     const field = client ? "<CsrfInput />" : "<CsrfField />";
     const forms = [...source.matchAll(/<form\b[^>]*\baction=\{[\s\S]*?<\/form>/g)].map((m) => m[0]);

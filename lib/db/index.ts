@@ -83,13 +83,18 @@ export type JobRow = typeof jobs.$inferSelect;
  */
 export async function listJobs(
   scope: Scope,
-  opts: { assignedTo?: string } = {},
+  opts: { assignedTo?: string; kind?: JobRow["kind"] } = {},
 ): Promise<JobRow[]> {
   return inTenantTransaction(scope.organizationId, isSurveying(scope), (tx) =>
     tx
       .select()
       .from(jobs)
-      .where(opts.assignedTo ? eq(jobs.assignedTo, opts.assignedTo) : undefined)
+      .where(
+        and(
+          opts.assignedTo ? eq(jobs.assignedTo, opts.assignedTo) : undefined,
+          opts.kind ? eq(jobs.kind, opts.kind) : undefined,
+        ),
+      )
       .orderBy(desc(jobs.createdAt))
       .limit(200),
   );
@@ -119,6 +124,8 @@ export async function getJob(
 export type NewJob = {
   title: string;
   direction: "from_client" | "to_client";
+  /** Quote, estimate or job (login's 0033). A job unless said otherwise. */
+  kind?: JobRow["kind"];
   dueAt?: Date | null;
   assignedTo?: string | null;
   /**
@@ -150,6 +157,7 @@ export async function createJob(
         ref,
         title: input.title.trim(),
         direction: input.direction,
+        kind: input.kind ?? "job",
         status: "open",
         createdBy: scope.userId,
         assignedTo: input.assignedTo ?? null,
@@ -160,6 +168,7 @@ export async function createJob(
     await recordEvent(tx, scope, job, "created", null, {
       title: job.title,
       direction: job.direction,
+      kind: job.kind,
       status: job.status,
       ...(input.details ? { details: input.details } : {}),
     });
@@ -308,6 +317,36 @@ export async function handOverJob(
     const note = body ? await insertNote(tx, scope, after, body, input.to) : null;
 
     return { job: after, note };
+  });
+}
+
+/**
+ * Make a job a quote, an estimate or a job — a quote the customer accepts
+ * becomes a job. Like a status change: locked, applied only if the job is
+ * still the kind the person was looking at, and recorded in its history.
+ */
+export async function setJobKind(
+  scope: Scope,
+  jobId: string,
+  kind: JobRow["kind"],
+  from: JobRow["kind"],
+): Promise<JobRow | null> {
+  const organizationId = requireWritableOrg(scope);
+
+  return inTenantTransaction(organizationId, false, async (tx) => {
+    const before = (
+      await tx.select().from(jobs).where(eq(jobs.id, jobId)).limit(1).for("update")
+    )[0];
+    if (!before || before.kind !== from) return null;
+
+    const [after] = await tx
+      .update(jobs)
+      .set({ kind, updatedAt: new Date() })
+      .where(eq(jobs.id, jobId))
+      .returning();
+
+    await recordEvent(tx, scope, after, "kind_changed", { kind: before.kind }, { kind: after.kind });
+    return after;
   });
 }
 

@@ -3,16 +3,17 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { addJobNote, createJob, handOverJob, ScopeError, setJobStatus } from "@/lib/db";
+import { addJobNote, createJob, handOverJob, ScopeError, setJobKind, setJobStatus } from "@/lib/db";
 import { organizationById, teamFor } from "@/lib/db/identity";
 import { requireAction } from "@/lib/auth/authorize";
 import { sendHandoverNotice } from "@/lib/auth/mailer";
 import { appOrigin } from "@/lib/auth/origin";
-import { JOB_STATUSES, statusChangeAction } from "@/lib/auth/permissions";
+import { JOB_KINDS, JOB_STATUSES, statusChangeAction } from "@/lib/auth/permissions";
 
 const newJobSchema = z.object({
   title: z.string().trim().min(3).max(200),
   direction: z.enum(["from_client", "to_client"]),
+  kind: z.enum(JOB_KINDS).default("job"),
   dueAt: z.string().trim().optional(),
 });
 
@@ -22,6 +23,7 @@ export async function createJobAction(formData: FormData) {
   const parsed = newJobSchema.safeParse({
     title: formData.get("title"),
     direction: formData.get("direction"),
+    kind: formData.get("kind") ?? undefined,
     dueAt: formData.get("dueAt") ?? undefined,
   });
 
@@ -36,6 +38,7 @@ export async function createJobAction(formData: FormData) {
     await createJob(ctx.scope, {
       title: parsed.data.title,
       direction: parsed.data.direction,
+      kind: parsed.data.kind,
       dueAt: due && !Number.isNaN(due.getTime()) ? due : null,
     });
   } catch (error) {
@@ -78,6 +81,41 @@ export async function setJobStatusAction(formData: FormData) {
     // The central function has already checked the job belongs to this
     // business; row-level security would refuse it underneath regardless.
     changed = await setJobStatus(ctx.scope, jobId, status, from);
+  } catch (error) {
+    if (error instanceof ScopeError) redirect("/jobs?error=noclient");
+    throw error;
+  }
+
+  revalidatePath("/jobs");
+  redirect(changed ? `/jobs/${jobId}` : `/jobs/${jobId}?error=moved`);
+}
+
+const kindSchema = z.object({
+  jobId: z.uuid(),
+  kind: z.enum(JOB_KINDS),
+  /** The kind the person was looking at. The change only applies if it still is. */
+  from: z.enum(JOB_KINDS),
+});
+
+/** Quote, estimate or job: moving the work along, so `jobs.update_status`. */
+export async function setJobKindAction(formData: FormData) {
+  const parsed = kindSchema.safeParse({
+    jobId: formData.get("jobId"),
+    kind: formData.get("kind"),
+    from: formData.get("from"),
+  });
+  if (!parsed.success) redirect("/jobs");
+  const { jobId, kind, from } = parsed.data;
+  if (kind === from) redirect(`/jobs/${jobId}`);
+
+  const { ctx } = await requireAction("jobs.update_status", formData, {
+    returnPath: `/jobs/${jobId}`,
+    resource: { type: "job", id: jobId },
+  });
+
+  let changed;
+  try {
+    changed = await setJobKind(ctx.scope, jobId, kind, from);
   } catch (error) {
     if (error instanceof ScopeError) redirect("/jobs?error=noclient");
     throw error;

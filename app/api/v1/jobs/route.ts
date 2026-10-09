@@ -3,6 +3,7 @@ import { z } from "zod";
 import { createJob, jobsFiledSince, type Scope } from "@/lib/db";
 import { identifyKey, touchKey } from "@/lib/db/api-keys";
 import { API_KEY_RATE } from "@/lib/auth/policy";
+import { JOB_KINDS } from "@/lib/auth/permissions";
 
 /**
  * File a job from a machine.
@@ -43,6 +44,11 @@ const bodySchema = z.object({
    * so, because the default is the one that is nearly always right.
    */
   direction: z.enum(["from_client", "to_client"]).default("from_client"),
+  /**
+   * Quote, estimate or job (login's 0033). A website's quote form says
+   * "quote"; a sender that says nothing files a job, as before.
+   */
+  kind: z.enum(JOB_KINDS).default("job"),
   /**
    * Whatever the form collected. Values are flattened to strings and capped so
    * that a sender cannot use this as free storage; the keys are kept as sent so
@@ -116,13 +122,14 @@ export async function POST(request: Request) {
   const job = await createJob(scope, {
     title: parsed.data.title,
     direction: parsed.data.direction,
+    kind: parsed.data.kind,
     details: parsed.data.details ?? null,
   });
 
   await touchKey(key.organizationId, key.keyId);
 
   return NextResponse.json(
-    { id: job.id, ref: job.ref, status: job.status },
+    { id: job.id, ref: job.ref, kind: job.kind, status: job.status },
     { status: 201 },
   );
 }

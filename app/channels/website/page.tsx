@@ -12,7 +12,11 @@ import type { SiteActor } from "@/lib/sites/sign";
 import { PortalShell } from "../../portal-shell";
 import { CsrfField } from "../../_components/csrf-field";
 import { Icon } from "../../_components/icons";
-import { connectWebsiteAction, disconnectWebsiteAction, publishWebsiteAction, setWebsiteRepositoryAction } from "./actions";
+import { connectWebsiteAction, disconnectWebsiteAction, publishWebsiteAction, revokeFormKeyAction, setWebsiteRepositoryAction } from "./actions";
+import { MintFormKey } from "./form-key";
+import { listKeys } from "@/lib/db/api-keys";
+import { resolveIdentity } from "@/lib/auth/session";
+import { appOrigin } from "@/lib/auth/origin";
 import { githubApp } from "@/lib/repo";
 import { RepoError } from "@/lib/repo/types";
 import { RefreshWhileRunning } from "./refresh";
@@ -47,6 +51,7 @@ const DONE: Record<string, string> = {
   published: "Publishing started. The site rebuilds and goes live in a few minutes.",
   repo: "Repository saved. Chat Boss can now read the website’s code.",
   norepo: "Repository removed from the website.",
+  keyrevoked: "Key revoked. The website can no longer send enquiries with it.",
 };
 
 type Status = {
@@ -92,6 +97,9 @@ export default async function WebsitePage({
     }
   }
   const signing = siteSigningConfigured();
+  // The keys the website's forms file enquiries with: owners only.
+  const [keys, identity] = site && mayConnect ? await Promise.all([listKeys(ctx.scope), resolveIdentity()]) : [[], null];
+  const liveKeys = keys.filter((k) => !k.revokedAt);
 
   // What the site says about itself. Only for people who may edit: the site
   // answers nobody else. It is asked now and NOT awaited: the parts of the page
@@ -279,6 +287,50 @@ export default async function WebsitePage({
             <Suspense fallback={null}>
               <Tiles live={live} />
             </Suspense>
+          ) : null}
+
+          {mayConnect ? (
+            <section id="forms" className="mt-6 scroll-mt-6 rounded-2xl border border-line bg-surface p-5 shadow-card">
+              <h2 className="text-base font-semibold text-ink">Website forms</h2>
+              <p className="mt-1 max-w-prose text-sm text-ink-soft">
+                Enquiries from the website&rsquo;s forms land in Jobs as quotes and estimates, with everything the
+                customer typed. The website sends them with a key made here; only owners see this.
+              </p>
+
+              {liveKeys.length ? (
+                <ul className="mt-4 divide-y divide-line-soft rounded-xl border border-line">
+                  {liveKeys.map((k) => (
+                    <li key={k.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3 text-sm">
+                      <span className="min-w-0 flex-1 truncate font-medium text-ink">{k.label}</span>
+                      <code className="font-mono text-xs text-ink-faint">{k.prefix}…</code>
+                      <span className="text-xs text-ink-faint">
+                        {k.lastUsedAt ? `Last used ${k.lastUsedAt.toISOString().slice(0, 10)}` : "Not used yet"}
+                        {" · "}
+                        {k.jobsFiled} {k.jobsFiled === 1 ? "enquiry" : "enquiries"}
+                      </span>
+                      <form action={revokeFormKeyAction}>
+                        <CsrfField />
+                        <input type="hidden" name="keyId" value={k.id} />
+                        <button type="submit" className="text-xs font-medium text-ink-faint underline hover:text-bad">
+                          Revoke
+                        </button>
+                      </form>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-4 text-sm text-ink-faint">No key yet, so the website&rsquo;s forms are not sending anything here.</p>
+              )}
+
+              <div className="mt-4">
+                {identity?.state === "active" ? <MintFormKey csrfToken={identity.csrfToken} /> : null}
+              </div>
+              <p className="mt-3 text-xs text-ink-faint">
+                The website posts each enquiry from its server to{" "}
+                <code className="font-mono">{appOrigin() ?? ""}/api/v1/jobs</code>. A key can only add work here; it
+                cannot read anything.
+              </p>
+            </section>
           ) : null}
 
           {mayConnect ? (
