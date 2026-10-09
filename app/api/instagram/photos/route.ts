@@ -4,4 +4,6 @@
  * still open in someone's browser, keeps working: it is the same handler,
  * with the same guard, not a second one.
  */
-export { POST, dynamic } from "@/app/api/social/photos/route";
+export { POST } from "@/app/api/social/photos/route";
+
+export const dynamic = "force-dynamic";
