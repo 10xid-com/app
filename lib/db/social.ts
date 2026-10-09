@@ -9,7 +9,7 @@ import { InstagramError, openToken, refreshToken, sealToken } from "@/lib/integr
 
 /**
  * A business's Instagram account, and the photos and videos it is about to
- * post (0034).
+ * post (0034 connections, 0035 bucket uploads).
  *
  * Read and written through the owner transaction, so row-level security
  * filters by business underneath. The access token is sealed before it is
@@ -231,12 +231,15 @@ export async function deleteSocialMedia(owner: SocialOwner, ids: string[]): Prom
 
 /** This business's files past their 24 hours: forgotten here, returned for the store to delete. */
 export async function takeExpiredSocialMedia(owner: SocialOwner): Promise<Pick<SocialMediaRow, "storageKey" | "uploadId">[]> {
-  return inOwnerTransaction(owner.organizationId, owner.userId, (tx) =>
-    tx
+  return inOwnerTransaction(owner.organizationId, owner.userId, async (tx) => {
+    // 0034 photos stay usable during rollout; retire them only after their
+    // original expiration. The legacy table has the same business RLS policy.
+    await tx.execute(sql`delete from social_media where expires_at < now()`);
+    return tx
       .delete(socialMedia)
       .where(lt(socialMedia.expiresAt, new Date()))
-      .returning({ storageKey: socialMedia.storageKey, uploadId: socialMedia.uploadId }),
-  );
+      .returning({ storageKey: socialMedia.storageKey, uploadId: socialMedia.uploadId });
+  });
 }
 
 /**

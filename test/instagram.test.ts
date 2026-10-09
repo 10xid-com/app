@@ -254,6 +254,26 @@ describe("photos and videos waiting to be posted", () => {
     expect((await takeExpiredSocialMedia(at(rotary))).map((r) => r.storageKey)).toContain(old.storageKey);
     expect(await socialMediaById(at(rotary), old.id)).toBeNull();
   });
+
+  test("sweeps expired legacy photos only for this business", async () => {
+    const ids: string[] = [];
+    try {
+      for (const [org, expired] of [[rotary, true], [northstar, true], [rotary, false]] as const) {
+        const row = await owner.query(`
+          insert into social_media (organization_id, uploaded_by, token_hash, content_type, bytes, width, height, expires_at)
+          values ($1, $2, $3, 'image/jpeg', $4, 1080, 1080, $5) returning id
+        `, [org, paolo, randomBytes(32).toString("hex"), jpegOf(1080, 1080), new Date(Date.now() + (expired ? -1000 : 86_400_000))]);
+        ids.push(row.rows[0].id);
+      }
+      await takeExpiredSocialMedia(at(rotary));
+      const remaining = (await owner.query("select id from social_media where id = any($1::uuid[])", [ids])).rows.map((r) => r.id);
+      expect(remaining).not.toContain(ids[0]);
+      expect(remaining).toContain(ids[1]);
+      expect(remaining).toContain(ids[2]);
+    } finally {
+      await owner.query("delete from social_media where id = any($1::uuid[])", [ids]);
+    }
+  });
 });
 
 describe("the sign-in round trip", () => {
