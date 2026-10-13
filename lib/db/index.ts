@@ -598,7 +598,7 @@ export async function recentRequests(
           details: sql<unknown>`(
             select e.after -> 'details'
               from job_events e
-             where e.job_id = ${jobs.id} and e.action = 'created'
+             where e.job_id = jobs.id and e.action = 'created'
              order by e.id asc
              limit 1
           )`,
@@ -631,6 +631,132 @@ function narrowDetails(value: unknown): Record<string, string> | null {
     if (typeof v === "string" && v.length > 0) out[key] = v;
   }
   return Object.keys(out).length > 0 ? out : null;
+}
+
+/* ------------------------------------------------------------------ */
+/* Customers and analytics                                             */
+/* ------------------------------------------------------------------ */
+
+export type Submission = {
+  id: string;
+  ref: string;
+  title: string;
+  kind: JobRow["kind"];
+  status: JobRow["status"];
+  createdAt: Date;
+  details: Record<string, string> | null;
+};
+
+/**
+ * Everything sent in, with what the sender typed, newest first: the rows the
+ * Customers screen groups into people. The details are read off the creation
+ * event, as on the requests board, so they are the submission as it was made.
+ */
+export async function submissions(scope: Scope, limit = 2000): Promise<Submission[]> {
+  const rows = await inTenantTransaction(scope.organizationId, isSurveying(scope), (tx) =>
+    tx
+      .select({
+        id: jobs.id,
+        ref: jobs.ref,
+        title: jobs.title,
+        kind: jobs.kind,
+        status: jobs.status,
+        createdAt: jobs.createdAt,
+        details: sql<unknown>`(
+          select e.after -> 'details'
+            from job_events e
+           where e.job_id = jobs.id and e.action = 'created'
+           order by e.id asc
+           limit 1
+        )`,
+      })
+      .from(jobs)
+      .where(and(eq(jobs.direction, "from_client"), isNull(jobs.archivedAt)))
+      .orderBy(desc(jobs.createdAt))
+      .limit(limit),
+  );
+  return rows.map((r) => ({ ...r, details: narrowDetails(r.details) }));
+}
+
+export type MonthlyIntake = { month: string; quotes: number; jobs: number };
+
+/** How much arrived each month, for the last `months` months, quotes apart from jobs. */
+export async function monthlyIntake(scope: Scope, months = 6): Promise<MonthlyIntake[]> {
+  const rows = await inTenantTransaction(scope.organizationId, isSurveying(scope), (tx) =>
+    tx
+      .select({
+        month: sql<string>`to_char(date_trunc('month', ${jobs.createdAt}), 'YYYY-MM')`,
+        quotes: sql<number>`count(*) filter (where ${jobs.kind} <> 'job')::int`,
+        jobs: sql<number>`count(*) filter (where ${jobs.kind} = 'job')::int`,
+      })
+      .from(jobs)
+      .where(
+        and(
+          isNull(jobs.archivedAt),
+          sql`${jobs.createdAt} >= date_trunc('month', now()) - make_interval(months => ${months - 1})`,
+        ),
+      )
+      .groupBy(sql`1`),
+  );
+  // Every month in the window, the empty ones included, oldest first.
+  const byMonth = new Map(rows.map((r) => [r.month, r]));
+  const now = new Date();
+  return Array.from({ length: months }, (_, i) => {
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - (months - 1 - i), 1));
+    const month = d.toISOString().slice(0, 7);
+    return byMonth.get(month) ?? { month, quotes: 0, jobs: 0 };
+  });
+}
+
+export type WorkOutcomes = {
+  /** Raised as a quote or an estimate (login's 0033 onwards). */
+  quoted: number;
+  /** Of those, how many are jobs now. */
+  won: number;
+  completed: number;
+  /** From raised to completed, the middle of the completed ones. */
+  medianDaysToComplete: number | null;
+};
+
+export async function workOutcomes(scope: Scope): Promise<WorkOutcomes> {
+  return inTenantTransaction(scope.organizationId, isSurveying(scope), async (tx) => {
+    const [quoted] = await tx
+      .select({
+        quoted: sql<number>`count(*)::int`,
+        won: sql<number>`count(*) filter (where ${jobs.kind} = 'job')::int`,
+      })
+      .from(jobs)
+      .where(
+        and(
+          isNull(jobs.archivedAt),
+          sql`exists (
+            select 1 from job_events e
+             where e.job_id = jobs.id and e.action = 'created'
+               and e.after ->> 'kind' in ('quote', 'estimate')
+          )`,
+        ),
+      );
+    const [done] = await tx
+      .select({
+        completed: sql<number>`count(*)::int`,
+        median: sql<number | null>`percentile_cont(0.5) within group (
+          order by extract(epoch from (
+            (select max(e.created_at) from job_events e
+              where e.job_id = jobs.id and e.action = 'status_changed'
+                and e.after ->> 'status' = 'completed')
+            - jobs.created_at
+          )) / 86400
+        )`,
+      })
+      .from(jobs)
+      .where(and(isNull(jobs.archivedAt), eq(jobs.status, "completed")));
+    return {
+      quoted: quoted?.quoted ?? 0,
+      won: quoted?.won ?? 0,
+      completed: done?.completed ?? 0,
+      medianDaysToComplete: done?.median === null || done?.median === undefined ? null : Number(done.median),
+    };
+  });
 }
 
 /**

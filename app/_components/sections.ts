@@ -26,6 +26,14 @@ export type ComingSoon = NavLink & {
   plans: string[];
 };
 
+/** Sections that are built: a nav row each, and their own page. */
+export const BUILT = {
+  customers: { href: "/customers", label: "Customers", icon: "customers" },
+  content: { href: "/content", label: "Content", icon: "content" },
+  analytics: { href: "/analytics", label: "Analytics", icon: "analytics" },
+  settings: { href: "/settings", label: "Settings", icon: "settings" },
+} satisfies Record<string, NavLink>;
+
 export const SOON = {
   orders: {
     href: "/orders",
@@ -41,13 +49,6 @@ export const SOON = {
     blurb: "What you sell: the catalogue every channel draws from.",
     plans: ["Products, variants and prices", "Photos and descriptions", "Stock levels"],
   },
-  customers: {
-    href: "/customers",
-    label: "Customers",
-    icon: "customers",
-    blurb: "The people who buy from you, and what they have bought.",
-    plans: ["Customer list and history", "Segments", "Notes and contact details"],
-  },
   growth: {
     href: "/growth",
     label: "Growth",
@@ -62,13 +63,6 @@ export const SOON = {
     blurb: "Codes and automatic offers.",
     plans: ["Discount codes", "Automatic offers", "How often each is used"],
   },
-  content: {
-    href: "/content",
-    label: "Content",
-    icon: "content",
-    blurb: "Pages, posts, files and media, in one library.",
-    plans: ["Pages and blog posts", "Images and files", "Menus"],
-  },
   markets: {
     href: "/markets",
     label: "Markets",
@@ -82,20 +76,6 @@ export const SOON = {
     icon: "finance",
     blurb: "Payouts, billing and the money side of the business.",
     plans: ["Payouts", "Invoices and billing", "Tax settings"],
-  },
-  analytics: {
-    href: "/analytics",
-    label: "Analytics",
-    icon: "analytics",
-    blurb: "How the business is doing, in numbers.",
-    plans: ["Sales and traffic", "Reports", "Live view"],
-  },
-  settings: {
-    href: "/settings",
-    label: "Settings",
-    icon: "settings",
-    blurb: "The business's details and how the portal works for it.",
-    plans: ["Business details and branding", "Domains", "Notifications"],
   },
   channels: {
     href: "/channels",

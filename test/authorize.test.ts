@@ -199,6 +199,7 @@ describe("the order of checks", () => {
 const O = "owner", M = "manager", E = "editor", P = "publisher", A = "asset_manager", V = "viewer";
 const EXPECTED: Record<BusinessAction, readonly RoleTemplate[]> = {
   "business.view": [O, M, E, P, A, V],
+  "business.edit": [O, M],
   "jobs.read": [O, M, E, P, A, V],
   "jobs.create": [O, M, E, P, A],
   "jobs.update_status": [O, M, E, P],

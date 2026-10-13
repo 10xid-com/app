@@ -59,6 +59,9 @@ export const ROLE_LABELS: Record<RoleTemplate, string> = {
 export const BUSINESS_ACTIONS = [
   // The portal today.
   "business.view",
+  // The business's own details on /settings: name, brand colour, logo, who
+  // may see whom.
+  "business.edit",
   "jobs.read",
   "jobs.create",
   "jobs.update_status",
@@ -121,6 +124,7 @@ const GRANTS: Record<RoleTemplate, readonly BusinessAction[]> = {
   owner: BUSINESS_ACTIONS,
   manager: [
     ...EDITOR,
+    "business.edit",
     "jobs.approve",
     "jobs.attach_drive_folder",
     "staff.manage",

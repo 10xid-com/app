@@ -316,7 +316,7 @@ export const PAGES: PageRecord[] = [
     path: "/customers",
     name: "Customers",
     purpose:
-      "Placeholder until it is built. The people who buy from the business, and what they have bought.",
+      "The people who send the business requests, worked out from what they typed into its forms, with everything each one asked for.",
     audience: "member",
     kind: "page",
     file: "app/customers/page.tsx",
@@ -349,7 +349,7 @@ export const PAGES: PageRecord[] = [
     path: "/content",
     name: "Content",
     purpose:
-      "Placeholder until it is built. Pages, posts, files and media, in one library.",
+      "The website's blog, read live from the site, and the social accounts the business posts to, in one place.",
     audience: "member",
     kind: "page",
     file: "app/content/page.tsx",
@@ -382,7 +382,7 @@ export const PAGES: PageRecord[] = [
     path: "/analytics",
     name: "Analytics",
     purpose:
-      "Placeholder until it is built. Sales, traffic and reports for the business.",
+      "The business in numbers, from its quotes and jobs: what came in each month, quotes won, time to complete, everything by status.",
     audience: "member",
     kind: "page",
     file: "app/analytics/page.tsx",
@@ -393,7 +393,7 @@ export const PAGES: PageRecord[] = [
     path: "/settings",
     name: "Settings",
     purpose:
-      "Placeholder until it is built. The business's details, domains and notifications, with links to the settings that already live elsewhere.",
+      "The business's details (name, brand colour, logo, who the team can see), editable by owners and managers, with links to the settings that live elsewhere.",
     audience: "member",
     kind: "page",
     file: "app/settings/page.tsx",

@@ -7,7 +7,7 @@ import { CsrfField } from "./_components/csrf-field";
 import { exitClientAction } from "./staff/actions";
 import { PortalFrame, menuItemClass, type NavGroup } from "./portal-nav";
 import { ChatDock, type ChatDockData } from "./chat/dock";
-import { CHANNELS, ID_CHANNEL, SOON, type NavLink } from "./_components/sections";
+import { BUILT, CHANNELS, ID_CHANNEL, SOON, type NavLink } from "./_components/sections";
 import { openableBusinesses } from "@/lib/auth/policy";
 import { ROLE_LABELS, isRoleTemplate } from "@/lib/auth/permissions";
 import { organizationById } from "@/lib/db/identity";
@@ -106,13 +106,13 @@ export async function PortalShell({
         { href: "/quotes", label: "Quotes", icon: "quotes" } satisfies NavLink,
         { href: "/jobs", label: "Jobs", icon: "jobs" } satisfies NavLink,
         SOON.products,
-        SOON.customers,
+        BUILT.customers,
         SOON.growth,
         SOON.discounts,
-        SOON.content,
+        BUILT.content,
         SOON.markets,
         SOON.finance,
-        SOON.analytics,
+        BUILT.analytics,
       ].map(link),
     },
     {
@@ -139,7 +139,7 @@ export async function PortalShell({
           { href: "/staff/keys", label: "Keys", icon: "keys" as const },
         ]
       : []),
-    link(SOON.settings),
+    BUILT.settings,
   ];
 
   const layout = await cookies();

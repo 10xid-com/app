@@ -1,6 +1,7 @@
 import "server-only";
 import { and, desc, eq, gt, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { db } from "./connection";
+import { writeAudit } from "./audit";
 import {
   identities,
   memberships,
@@ -694,6 +695,48 @@ export async function organizationById(id: string) {
     .where(eq(organizations.id, id))
     .limit(1);
   return rows[0] ?? null;
+}
+
+export type BusinessDetails = {
+  name: string;
+  brandPrimaryHex: string | null;
+  brandLogoUrl: string | null;
+  memberVisibility: "open" | "closed";
+};
+
+/**
+ * Change the open business's own details (/settings), and say so in its audit
+ * log: which fields changed, by whom.
+ *
+ * `organizations` has no row-level security (login's 0001 grants it whole), so
+ * the WHERE on the business id from the authorized session is the only thing
+ * keeping this to one business. The id must never come from the form.
+ */
+export async function updateBusinessDetails(
+  businessId: string,
+  actor: { userId: string; agencyGrantId: string | null },
+  details: BusinessDetails,
+): Promise<string[]> {
+  return db.transaction(async (tx) => {
+    const [before] = await tx.select().from(organizations).where(eq(organizations.id, businessId)).for("update");
+    if (!before) return [];
+    const changed = (Object.keys(details) as (keyof BusinessDetails)[]).filter((k) => before[k] !== details[k]);
+    if (changed.length === 0) return [];
+    await tx
+      .update(organizations)
+      .set({ ...details, updatedAt: new Date() })
+      .where(eq(organizations.id, businessId));
+    await writeAudit(tx, [
+      {
+        organizationId: businessId,
+        actorUserId: actor.userId,
+        agencyGrantId: actor.agencyGrantId,
+        action: "business.details_changed",
+        target: changed.join(", "),
+      },
+    ]);
+    return changed;
+  });
 }
 
 export async function createStaffGrant(input: {
