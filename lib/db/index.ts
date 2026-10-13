@@ -425,7 +425,10 @@ export type JobStats = {
  * is arithmetic over all of them — without a second, differently-shaped query
  * that could disagree with the list it sits above.
  */
-export async function jobStats(scope: Scope): Promise<JobStats> {
+export async function jobStats(
+  scope: Scope,
+  opts: { kind?: readonly JobRow["kind"][] } = {},
+): Promise<JobStats> {
   return inTenantTransaction(
     scope.organizationId,
     isSurveying(scope),
@@ -441,7 +444,7 @@ export async function jobStats(scope: Scope): Promise<JobStats> {
           )::int`,
         })
         .from(jobs)
-        .where(sql`${jobs.archivedAt} is null`)
+        .where(and(sql`${jobs.archivedAt} is null`, opts.kind ? inArray(jobs.kind, [...opts.kind]) : undefined))
         .groupBy(jobs.status, jobs.direction);
 
       const total = rows.reduce((sum, r) => sum + r.n, 0);
@@ -487,7 +490,11 @@ export async function jobStats(scope: Scope): Promise<JobStats> {
   );
 }
 
-export async function recentJobs(scope: Scope, limit = 6) {
+export async function recentJobs(
+  scope: Scope,
+  limit = 6,
+  opts: { kind?: readonly JobRow["kind"][] } = {},
+) {
   return inTenantTransaction(scope.organizationId, isSurveying(scope), (tx) =>
     tx
       .select({
@@ -502,6 +509,7 @@ export async function recentJobs(scope: Scope, limit = 6) {
       })
       .from(jobs)
       .innerJoin(organizations, eq(organizations.id, jobs.organizationId))
+      .where(opts.kind ? inArray(jobs.kind, [...opts.kind]) : undefined)
       .orderBy(desc(jobs.createdAt))
       .limit(limit),
   );
