@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { inTenantTransaction, type Transaction } from "./connection";
 import { jobEvents, jobNotes, jobs, organizations } from "./schema";
 import { uuidv7 } from "../ids";
@@ -83,8 +83,9 @@ export type JobRow = typeof jobs.$inferSelect;
  */
 export async function listJobs(
   scope: Scope,
-  opts: { assignedTo?: string; kind?: JobRow["kind"] } = {},
+  opts: { assignedTo?: string; kind?: JobRow["kind"] | readonly JobRow["kind"][] } = {},
 ): Promise<JobRow[]> {
+  const kinds = opts.kind === undefined ? undefined : typeof opts.kind === "string" ? [opts.kind] : [...opts.kind];
   return inTenantTransaction(scope.organizationId, isSurveying(scope), (tx) =>
     tx
       .select()
@@ -92,7 +93,7 @@ export async function listJobs(
       .where(
         and(
           opts.assignedTo ? eq(jobs.assignedTo, opts.assignedTo) : undefined,
-          opts.kind ? eq(jobs.kind, opts.kind) : undefined,
+          kinds ? inArray(jobs.kind, kinds) : undefined,
         ),
       )
       .orderBy(desc(jobs.createdAt))
