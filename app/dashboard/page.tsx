@@ -5,6 +5,7 @@ import { requirePage } from "@/lib/auth/authorize";
 import { roleAllows } from "@/lib/auth/permissions";
 import { driveIsConfigured } from "@/lib/integrations/google-drive";
 import { PortalShell } from "../portal-shell";
+import { SECTION_KINDS, type Section } from "../jobs/section";
 import { Requests } from "./requests";
 
 export const metadata: Metadata = { title: "Dashboard" };
@@ -105,11 +106,18 @@ export default async function DashboardPage({
   const params = await searchParams;
   const notice = NOTICES[params.done ?? params.error ?? ""] ?? null;
 
-  const [stats, recent, requests] = await Promise.all([
-    jobStats(ctx.scope),
-    recentJobs(ctx.scope, 6),
+  // The figures are the jobs, as on /jobs. Quotes and estimates waiting on a
+  // reply get their own line, pointing at /quotes, where they are listed.
+  const [stats, quoteStats, recent, requests] = await Promise.all([
+    jobStats(ctx.scope, { kind: SECTION_KINDS.jobs }),
+    jobStats(ctx.scope, { kind: SECTION_KINDS.quotes }),
+    recentJobs(ctx.scope, 6, { kind: SECTION_KINDS.jobs }),
     recentRequests(ctx.scope, 12),
   ]);
+  const awaiting: Array<{ section: Section; n: number; oldestDays: number | null; noun: [string, string] }> = [
+    { section: "quotes", n: quoteStats.awaitingUs, oldestDays: quoteStats.oldestAwaitingDays, noun: ["quote or estimate", "quotes and estimates"] },
+    { section: "jobs", n: stats.awaitingUs, oldestDays: stats.oldestAwaitingDays, noun: ["job", "jobs"] },
+  ];
 
 
   const decided = stats.completed + (stats.byStatus.find((s) => s.status === "cancelled")?.n ?? 0);
@@ -163,33 +171,35 @@ export default async function DashboardPage({
         </p>
       ) : null}
 
-      {stats.awaitingUs > 0 ? (
-        <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-bad/30 bg-bad/5 px-4 py-3">
+      {awaiting.filter((a) => a.n > 0).map((a) => (
+        <div
+          key={a.section}
+          className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-bad/30 bg-bad/5 px-4 py-3"
+        >
           <p className="text-sm text-ink">
             <span aria-hidden className="mr-2 text-bad">
               ⚠
             </span>
             <strong>
-              {stats.awaitingUs} {stats.awaitingUs === 1 ? "job" : "jobs"} awaiting
-              a response
+              {a.n} {a.noun[a.n === 1 ? 0 : 1]} awaiting a response
             </strong>
-            {stats.oldestAwaitingDays !== null ? (
+            {a.oldestDays !== null ? (
               <span className="text-ink-soft">
                 {" "}
-                — oldest is {stats.oldestAwaitingDays}{" "}
-                {stats.oldestAwaitingDays === 1 ? "day" : "days"} old
+                — oldest is {a.oldestDays}{" "}
+                {a.oldestDays === 1 ? "day" : "days"} old
               </span>
             ) : null}
           </p>
           <Link
-            href="/jobs"
+            href={`/${a.section}`}
             className="flex-none text-xs font-semibold uppercase tracking-wider
                        text-bad transition-colors hover:text-ink"
           >
             Review →
           </Link>
         </div>
-      ) : null}
+      ))}
 
       <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <Tile

@@ -39,23 +39,37 @@ afterAll(async () => {
 });
 
 describe("auth_session_touch", () => {
-  test("a live sign-in past the authenticator: its hard end, seven days from sign-in at most", async () => {
+  /** Rewrite a session's clocks as an operator would, past the triggers. */
+  async function backdate(id: string, set: string) {
+    await owner.query("begin");
+    await owner.query("set local session_replication_role = replica");
+    await owner.query(`update auth_sessions set ${set} where id = $1`, [id]);
+    await owner.query("commit");
+  }
+
+  test("a live sign-in past the authenticator: its end, moved 400 days out once it is used again", async () => {
     const id = await session({ verified: true });
+    // Touched within the minute: the end stands as written.
     const end = await touchAuthSession(id);
     expect(end).toBeInstanceOf(Date);
-    expect(end!.getTime()).toBeLessThanOrEqual(Date.now() + 7 * 86_400_000 + 1000);
-    expect(end!.getTime()).toBeGreaterThan(Date.now() + 7 * 86_400_000 - 60_000);
+    expect(end!.getTime()).toBeLessThanOrEqual(Date.now() + 30 * 86_400_000 + 1000);
+
+    // Used again later: signed in until signed out, 400 days at a time (login's 0037).
+    await backdate(id, "last_active_at = now() - interval '2 days'");
+    const moved = await touchAuthSession(id);
+    expect(moved!.getTime()).toBeLessThanOrEqual(Date.now() + 400 * 86_400_000 + 1000);
+    expect(moved!.getTime()).toBeGreaterThan(Date.now() + 400 * 86_400_000 - 60_000);
   });
 
-  test("not past the authenticator, unknown, or idle 48 hours: nothing", async () => {
+  test("not past the authenticator, unknown, or past its end: nothing. Idle is not an end", async () => {
     expect(await touchAuthSession(await session({ verified: false }))).toBeNull();
     expect(await touchAuthSession("no-such-session")).toBeNull();
     const idle = await session({ verified: true });
-    await owner.query("begin");
-    await owner.query("set local session_replication_role = replica");
-    await owner.query("update auth_sessions set last_active_at = now() - interval '49 hours' where id = $1", [idle]);
-    await owner.query("commit");
-    expect(await touchAuthSession(idle)).toBeNull();
+    await backdate(idle, "last_active_at = now() - interval '30 days'");
+    expect(await touchAuthSession(idle)).toBeInstanceOf(Date);
+    const ended = await session({ verified: true });
+    await backdate(ended, "expires_at = now() - interval '1 minute'");
+    expect(await touchAuthSession(ended)).toBeNull();
   });
 });
 

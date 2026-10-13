@@ -102,6 +102,8 @@ export async function PortalShell({
       links: [
         { href: "/dashboard", label: "Home", icon: "home" } satisfies NavLink,
         SOON.orders,
+        // Quotes and estimates are work still being priced; Jobs is the work.
+        { href: "/quotes", label: "Quotes", icon: "quotes" } satisfies NavLink,
         { href: "/jobs", label: "Jobs", icon: "jobs" } satisfies NavLink,
         SOON.products,
         SOON.customers,

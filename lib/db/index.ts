@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { inTenantTransaction, type Transaction } from "./connection";
 import { jobEvents, jobNotes, jobs, organizations } from "./schema";
 import { uuidv7 } from "../ids";
@@ -83,8 +83,9 @@ export type JobRow = typeof jobs.$inferSelect;
  */
 export async function listJobs(
   scope: Scope,
-  opts: { assignedTo?: string; kind?: JobRow["kind"] } = {},
+  opts: { assignedTo?: string; kind?: JobRow["kind"] | readonly JobRow["kind"][] } = {},
 ): Promise<JobRow[]> {
+  const kinds = opts.kind === undefined ? undefined : typeof opts.kind === "string" ? [opts.kind] : [...opts.kind];
   return inTenantTransaction(scope.organizationId, isSurveying(scope), (tx) =>
     tx
       .select()
@@ -92,7 +93,7 @@ export async function listJobs(
       .where(
         and(
           opts.assignedTo ? eq(jobs.assignedTo, opts.assignedTo) : undefined,
-          opts.kind ? eq(jobs.kind, opts.kind) : undefined,
+          kinds ? inArray(jobs.kind, kinds) : undefined,
         ),
       )
       .orderBy(desc(jobs.createdAt))
@@ -424,7 +425,10 @@ export type JobStats = {
  * is arithmetic over all of them — without a second, differently-shaped query
  * that could disagree with the list it sits above.
  */
-export async function jobStats(scope: Scope): Promise<JobStats> {
+export async function jobStats(
+  scope: Scope,
+  opts: { kind?: readonly JobRow["kind"][] } = {},
+): Promise<JobStats> {
   return inTenantTransaction(
     scope.organizationId,
     isSurveying(scope),
@@ -440,7 +444,7 @@ export async function jobStats(scope: Scope): Promise<JobStats> {
           )::int`,
         })
         .from(jobs)
-        .where(sql`${jobs.archivedAt} is null`)
+        .where(and(sql`${jobs.archivedAt} is null`, opts.kind ? inArray(jobs.kind, [...opts.kind]) : undefined))
         .groupBy(jobs.status, jobs.direction);
 
       const total = rows.reduce((sum, r) => sum + r.n, 0);
@@ -486,7 +490,11 @@ export async function jobStats(scope: Scope): Promise<JobStats> {
   );
 }
 
-export async function recentJobs(scope: Scope, limit = 6) {
+export async function recentJobs(
+  scope: Scope,
+  limit = 6,
+  opts: { kind?: readonly JobRow["kind"][] } = {},
+) {
   return inTenantTransaction(scope.organizationId, isSurveying(scope), (tx) =>
     tx
       .select({
@@ -501,6 +509,7 @@ export async function recentJobs(scope: Scope, limit = 6) {
       })
       .from(jobs)
       .innerJoin(organizations, eq(organizations.id, jobs.organizationId))
+      .where(opts.kind ? inArray(jobs.kind, [...opts.kind]) : undefined)
       .orderBy(desc(jobs.createdAt))
       .limit(limit),
   );

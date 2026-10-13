@@ -9,6 +9,14 @@ import { requireAction } from "@/lib/auth/authorize";
 import { sendHandoverNotice } from "@/lib/auth/mailer";
 import { appOrigin } from "@/lib/auth/origin";
 import { JOB_KINDS, JOB_STATUSES, statusChangeAction } from "@/lib/auth/permissions";
+import { workPath } from "./section";
+
+/** Both lists, and both addresses a row can be shown at: Jobs and Quotes. */
+function revalidateWork(jobId?: string) {
+  for (const list of ["/jobs", "/quotes"]) {
+    revalidatePath(jobId ? `${list}/${jobId}` : list);
+  }
+}
 
 const newJobSchema = z.object({
   title: z.string().trim().min(3).max(200),
@@ -18,7 +26,9 @@ const newJobSchema = z.object({
 });
 
 export async function createJobAction(formData: FormData) {
-  const { ctx } = await requireAction("jobs.create", formData, { returnPath: "/jobs" });
+  // Back to the list it was sent from: Quotes for a quote or an estimate.
+  const list = workPath(JOB_KINDS.find((k) => k === formData.get("kind")) ?? "job");
+  const { ctx } = await requireAction("jobs.create", formData, { returnPath: list });
 
   const parsed = newJobSchema.safeParse({
     title: formData.get("title"),
@@ -27,7 +37,7 @@ export async function createJobAction(formData: FormData) {
     dueAt: formData.get("dueAt") ?? undefined,
   });
 
-  if (!parsed.success) redirect("/jobs?error=title");
+  if (!parsed.success) redirect(`${list}?error=title`);
 
   const due = parsed.data.dueAt ? new Date(parsed.data.dueAt) : null;
 
@@ -42,12 +52,12 @@ export async function createJobAction(formData: FormData) {
       dueAt: due && !Number.isNaN(due.getTime()) ? due : null,
     });
   } catch (error) {
-    if (error instanceof ScopeError) redirect("/jobs?error=noclient");
+    if (error instanceof ScopeError) redirect(`${list}?error=noclient`);
     throw error;
   }
 
-  revalidatePath("/jobs");
-  redirect("/jobs");
+  revalidateWork();
+  redirect(list);
 }
 
 const statusSchema = z.object({
@@ -86,7 +96,9 @@ export async function setJobStatusAction(formData: FormData) {
     throw error;
   }
 
-  revalidatePath("/jobs");
+  revalidateWork();
+  revalidateWork(jobId);
+  // /jobs/[id] sends a quote or an estimate on to /quotes/[id].
   redirect(changed ? `/jobs/${jobId}` : `/jobs/${jobId}?error=moved`);
 }
 
@@ -106,7 +118,7 @@ export async function setJobKindAction(formData: FormData) {
   });
   if (!parsed.success) redirect("/jobs");
   const { jobId, kind, from } = parsed.data;
-  if (kind === from) redirect(`/jobs/${jobId}`);
+  if (kind === from) redirect(workPath(from, jobId));
 
   const { ctx } = await requireAction("jobs.update_status", formData, {
     returnPath: `/jobs/${jobId}`,
@@ -121,8 +133,10 @@ export async function setJobKindAction(formData: FormData) {
     throw error;
   }
 
-  revalidatePath("/jobs");
-  redirect(changed ? `/jobs/${jobId}` : `/jobs/${jobId}?error=moved`);
+  revalidateWork();
+  revalidateWork(jobId);
+  // A quote that becomes a job moves from Quotes to Jobs, and back.
+  redirect(changed ? workPath(kind, jobId) : `${workPath(from, jobId)}?error=moved`);
 }
 
 /** "keep" leaves the job with whoever has it; "nobody" takes it off them. */
@@ -189,7 +203,7 @@ export async function sendJobNoteAction(_prev: NoteState, formData: FormData): P
       if (error instanceof ScopeError) redirect("/jobs?error=noclient");
       throw error;
     }
-    revalidatePath(page);
+    revalidateWork(jobId);
     return said(null);
   }
 
@@ -209,8 +223,8 @@ export async function sendJobNoteAction(_prev: NoteState, formData: FormData): P
     if (error instanceof ScopeError) redirect("/jobs?error=noclient");
     throw error;
   }
-  revalidatePath(page);
-  revalidatePath("/jobs");
+  revalidateWork(jobId);
+  revalidateWork();
   if (!handed) return said("moved");
 
   // Handing a job to yourself needs no email.
