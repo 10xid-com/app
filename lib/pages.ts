@@ -145,6 +145,17 @@ export const PAGES: PageRecord[] = [
     group: "The work",
   },
   {
+    id: "website-records",
+    path: "/website-records",
+    name: "Website records",
+    purpose:
+      "A read-only copy of the jobs, clients, stock, posts and social posts kept on the business's own website, refreshed by the scheduled website copy. The website is the master copy and the page links to its admin.",
+    audience: "member",
+    kind: "page",
+    file: "app/website-records/page.tsx",
+    group: "The work",
+  },
+  {
     id: "job",
     path: "/jobs/[id]",
     name: "One job",
@@ -494,6 +505,18 @@ export const PAGES: PageRecord[] = [
     audience: "public",
     kind: "machinery",
     file: "app/api/v1/cron/agency-reminders/route.ts",
+    methods: ["POST"],
+    group: "Machinery",
+  },
+  {
+    id: "api.site-copy",
+    path: "/api/v1/cron/site-copy",
+    name: "Website copy",
+    purpose:
+      "POST only, for the scheduler every few minutes, with the CRON_SECRET as a bearer token; a 404 until that secret is set. Fetches every live website connection's signed export and replaces that business's read-only copy (login's 0038). Answers with counts and the sites that failed.",
+    audience: "public",
+    kind: "machinery",
+    file: "app/api/v1/cron/site-copy/route.ts",
     methods: ["POST"],
     group: "Machinery",
   },
