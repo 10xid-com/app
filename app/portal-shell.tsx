@@ -105,8 +105,6 @@ export async function PortalShell({
         // Quotes and estimates are work still being priced; Jobs is the work.
         { href: "/quotes", label: "Quotes", icon: "quotes" } satisfies NavLink,
         { href: "/jobs", label: "Jobs", icon: "jobs" } satisfies NavLink,
-        // A copy of the website's own records (login's 0038), for a business with one.
-        ...(connected.has("website") ? [{ href: "/website-records", label: "Website records", icon: "website" } satisfies NavLink] : []),
         SOON.products,
         SOON.customers,
         SOON.growth,
