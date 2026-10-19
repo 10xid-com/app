@@ -14,6 +14,12 @@ import { AwsClient } from "aws4fetch";
  * pass the portal's 10MB request limit. So the bucket needs no CORS rules and
  * the browser never holds a bucket credential.
  *
+ * Inventory photos (login's 0048) live here too, under `inventory/<business>/`,
+ * and are the opposite of social media: evidence, kept. Nothing in this module
+ * deletes them (deleteObject refuses their keys), and they are read back only
+ * through the inventory routes, which check the business first — never by a
+ * presigned address.
+ *
  * Configuration, on the app service, as references to the bucket's own
  * variables:
  *   MEDIA_BUCKET_ENDPOINT          ${{social-media.ENDPOINT}}
@@ -92,7 +98,16 @@ export async function putObject(key: string, body: Uint8Array<ArrayBuffer>, cont
   await send(b, objectUrl(b, key), { method: "PUT", body, headers: { "content-type": contentType } }, "the upload");
 }
 
+/**
+ * Keys nothing may delete: inventory photos are a business's evidence of what
+ * it holds (login's 0048), not files waiting to be posted.
+ */
+export function isEvidenceKey(key: string): boolean {
+  return key.startsWith("inventory/");
+}
+
 export async function deleteObject(key: string): Promise<void> {
+  if (isEvidenceKey(key)) throw new BucketError("Inventory photos are evidence and are never deleted from the media store.");
   const b = need();
   const url = objectUrl(b, key);
   try {
@@ -112,6 +127,16 @@ export async function objectSize(key: string): Promise<number | null> {
   if (response.status === 404) return null;
   if (!response.ok) throw new BucketError(`The media store refused a lookup (${response.status}).`);
   return Number(response.headers.get("content-length") ?? "0");
+}
+
+/**
+ * The object's bytes. For the inventory routes, which check the business owns
+ * the document before asking (app/api/inventory/documents, the label reader).
+ */
+export async function getObject(key: string): Promise<Uint8Array<ArrayBuffer>> {
+  const b = need();
+  const response = await send(b, objectUrl(b, key), { method: "GET" }, "a download");
+  return new Uint8Array(await response.arrayBuffer());
 }
 
 /** A time-limited address anyone holding it can download the object from. */
