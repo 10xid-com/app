@@ -987,18 +987,105 @@ describe("the quick screen", () => {
     expect(await n(`select count(*) as n from inventory_document_links where capture_id = $1`, [next])).toBe(0);
   });
 
-  test("the next item is never someone else's, nor one already holding a photo", async () => {
+  const nextOf = (redirect: string | null) => {
+    const m = /^\/inventory\/capture\/([0-9a-f-]{36})\?saved=[0-9a-f-]{36}$/.exec(redirect ?? "");
+    if (!m) throw new Error(`not a next item: ${redirect}`);
+    return m[1];
+  };
+
+  /** A photo still on its way to the next item: its document and link exist, the file has not arrived. */
+  async function photoOnItsWay(captureId: string) {
+    const doc = (await db.query(
+      `insert into inventory_documents (organization_id, capture_id, kind, content_type, storage_key, byte_size, sha256, uploaded_by, state)
+       values ($1, $2, 'photo', 'image/jpeg', $3, 1000, $4, $5, 'pending') returning id`,
+      [A.organizationId, captureId, `inventory/${A.organizationId}/${randomBytes(24).toString("base64url")}.jpg`, randomBytes(32), A.userId],
+    )).rows[0].id;
+    await db.query(`insert into inventory_document_links (organization_id, document_id, capture_id) values ($1, $2, $3)`, [A.organizationId, doc, captureId]);
+  }
+
+  test("a retry returns the same next item after photos were added to it: the association is kept, not searched for", async () => {
+    const { nextCaptureAfter, nextCaptureId } = await import("@/lib/db/inventory");
     const capture = await newCapture();
-    // Another person's empty item in this business, started after the save would be.
-    const values = { productName: "Test quick next, others", status: "sealed", amount: "auto", then: "next" };
-    const first = await save(capture, values);
-    const next = /^\/inventory\/capture\/([0-9a-f-]{36})/.exec(first.redirect ?? "")![1];
-    const others = (await db.query(`insert into inventory_captures (organization_id, created_by) values ($1, $2) returning id`, [A.organizationId, B.userId])).rows[0].id;
-    await upload(next, jpeg(`quick-next-${RUN}`));
-    const later = await save(capture, values);
-    const again = /^\/inventory\/capture\/([0-9a-f-]{36})/.exec(later.redirect ?? "")![1];
-    expect([next, others]).not.toContain(again);
-    expect(later.redirect).toMatch(/\?saved=/);
+    expect((await upload(capture, jpeg(`quick-kept-own-${RUN}`))).status).toBe(200);
+    const values = { productName: "Test quick next, photos", status: "sealed", amount: "auto", then: "next" };
+    const next = nextOf((await save(capture, values)).redirect);
+    expect(next).toBe(nextCaptureId(A.organizationId, A.userId, capture));
+
+    // The next item gets a stored photo and one still on its way.
+    expect((await upload(next, jpeg(`quick-kept-next-${RUN}`))).status).toBe(200);
+    await photoOnItsWay(next);
+    expect(nextOf((await save(capture, values)).redirect)).toBe(next);
+    expect(await nextCaptureAfter(owner(A), capture)).toBe(next);
+    expect(await nextCaptureAfter(owner(A), capture.toUpperCase())).toBe(next);
+
+    // Each item keeps its own photos.
+    expect(await n(`select count(*) as n from inventory_document_links where capture_id = $1`, [capture])).toBe(1);
+    expect(await n(`select count(*) as n from inventory_document_links where capture_id = $1`, [next])).toBe(2);
+  });
+
+  test("an unrelated empty item is never taken for the next one, and two saved items never share one", async () => {
+    const { nextCaptureAfter } = await import("@/lib/db/inventory");
+    const [a, b] = [await newCapture(), await newCapture()];
+    savedContainer((await save(a, { productName: "Test quick next A", status: "sealed", amount: "auto" })).redirect);
+    savedContainer((await save(b, { productName: "Test quick next B", status: "sealed", amount: "auto" })).redirect);
+    // Started after both saves, empty here — its photos may still be in a phone's queue.
+    const unrelated = await newCapture();
+
+    const [nextA, nextB] = [await nextCaptureAfter(owner(A), a), await nextCaptureAfter(owner(A), b)];
+    expect(nextA).not.toBe(nextB);
+    expect([nextA, nextB]).not.toContain(unrelated);
+    expect([await nextCaptureAfter(owner(A), b), await nextCaptureAfter(owner(A), a)]).toEqual([nextB, nextA]);
+    expect((await db.query(`select status from inventory_captures where id = $1`, [unrelated])).rows[0].status).toBe("open");
+
+    // Pressed on two phones at once: one next item, the same for both.
+    const c = await newCapture();
+    savedContainer((await save(c, { productName: "Test quick next C", status: "sealed", amount: "auto" })).redirect);
+    const [x, y] = await Promise.all([nextCaptureAfter(owner(A), c), nextCaptureAfter(owner(A), c)]);
+    expect(x).toBe(y);
+    expect(await n(`select count(*) as n from inventory_captures where id = $1`, [x])).toBe(1);
+  });
+
+  test("a next item already saved or discarded is still the one a retry returns; its page says which", async () => {
+    const { abandonCapture } = await import("@/lib/db/inventory");
+    const values = { status: "sealed", amount: "auto", then: "next" };
+
+    const a = await newCapture();
+    const nextA = nextOf((await save(a, { ...values, productName: "Test quick next, then saved" })).redirect);
+    nextOf((await save(nextA, { ...values, productName: "Test quick next, saved too" })).redirect);
+    expect(nextOf((await save(a, { ...values, productName: "Test quick next, then saved" })).redirect)).toBe(nextA);
+    expect((await db.query(`select status from inventory_captures where id = $1`, [nextA])).rows[0].status).toBe("confirmed");
+
+    const b = await newCapture();
+    const nextB = nextOf((await save(b, { ...values, productName: "Test quick next, then discarded" })).redirect);
+    expect(await abandonCapture(owner(A), nextB)).toBe(true);
+    expect(nextOf((await save(b, { ...values, productName: "Test quick next, then discarded" })).redirect)).toBe(nextB);
+    expect((await db.query(`select status from inventory_captures where id = $1`, [nextB])).rows[0].status).toBe("abandoned");
+  });
+
+  test("the next item is this person's own, in this business; anything else is never handed over and the save stands", async () => {
+    const { nextCaptureAfter, nextCaptureId } = await import("@/lib/db/inventory");
+    const capture = await newCapture();
+    // Another person pressing it on the same saved item would get an item of their own.
+    expect(nextCaptureId(A.organizationId, B.userId, capture)).not.toBe(nextCaptureId(A.organizationId, A.userId, capture));
+
+    // Where this person's next item should be, someone else's item already is: it is not handed over.
+    const taken = nextCaptureId(A.organizationId, A.userId, capture);
+    await db.query(`insert into inventory_captures (id, organization_id, created_by) values ($1, $2, $3)`, [taken, A.organizationId, B.userId]);
+    const r = await save(capture, { productName: "Test quick next, not handed over", status: "sealed", amount: "auto", then: "next" });
+    const container = savedContainer(r.redirect);
+    expect((await db.query(`select status, container_id from inventory_captures where id = $1`, [capture])).rows[0]).toEqual({
+      status: "confirmed",
+      container_id: container,
+    });
+    expect((await db.query(`select created_by from inventory_captures where id = $1`, [taken])).rows[0].created_by).toBe(B.userId);
+
+    // Another business cannot continue from this one's saved item, and nothing is started for it.
+    as(B);
+    await expect(nextCaptureAfter(owner(B), capture)).rejects.toThrow(/not saved/);
+    expect(await n(`select count(*) as n from inventory_captures where id = $1`, [nextCaptureId(B.organizationId, B.userId, capture)])).toBe(0);
+    // Nor from one that is not saved yet.
+    as(A);
+    await expect(nextCaptureAfter(owner(A), await newCapture())).rejects.toThrow(/not saved/);
   });
 });
 

@@ -1,4 +1,5 @@
 import "server-only";
+import { createHash } from "node:crypto";
 import { sql, type SQL } from "drizzle-orm";
 import { DatabaseError } from "pg";
 import { inOwnerTransaction, type Transaction } from "./connection";
@@ -1046,34 +1047,53 @@ export function unitLabel(code: string | null): string {
 }
 
 /**
+ * Name-based ids (RFC 9562, version 5) for "the item after a saved item", in
+ * a namespace of their own so they can never be mistaken for, or collide
+ * with, any other derived id.
+ */
+const NEXT_CAPTURE_NAMESPACE = Buffer.from("2bbe7b48b1784c289a67b7a74f47c791", "hex");
+
+/**
+ * The id of the item that follows `savedCaptureId` for this person in this
+ * business: the same three ids always give the same item, and anything else
+ * gives another. Ids are compared in lower case, as the database prints them.
+ */
+export function nextCaptureId(organizationId: string, userId: string, savedCaptureId: string): string {
+  const name = ["10XiD inventory: the item after a saved item, v1", organizationId, userId, savedCaptureId]
+    .map((s) => s.toLowerCase())
+    .join("\u0000");
+  const h = createHash("sha1").update(NEXT_CAPTURE_NAMESPACE).update(name, "utf8").digest().subarray(0, 16);
+  h[6] = (h[6] & 0x0f) | 0x50;
+  h[8] = (h[8] & 0x3f) | 0x80;
+  const x = h.toString("hex");
+  return `${x.slice(0, 8)}-${x.slice(8, 12)}-${x.slice(12, 16)}-${x.slice(16, 20)}-${x.slice(20)}`;
+}
+
+/**
  * The item to photograph next, after `savedCaptureId` was saved with "Save
- * and add another". A repeated tap or a retried request must not leave a
- * trail of empty items: under the saved capture's lock, this person's item
- * started after that save and still without a photo is the next one; only
- * when there is none is a new one started.
+ * and add another". It is bound to that saved item and to this person, never
+ * found by searching: its id is derived from the business, the person and the
+ * saved item (nextCaptureId), and it is started the first time and found every
+ * time after. So a repeated tap or a retried request returns the same item
+ * whatever has happened to it since — photos queued or uploaded, saved, or
+ * discarded (its page says which) — two saved items never share a next item,
+ * and an unrelated item that happens to be empty is never taken for it. Each
+ * phone's photo queue stays bound to the item it was taken for.
  */
 export async function nextCaptureAfter(owner: InventoryOwner, savedCaptureId: string): Promise<string> {
+  const nextId = nextCaptureId(owner.organizationId, owner.userId, savedCaptureId);
   return run(owner, async (tx) => {
-    const saved = await one<{ confirmed_at: string | null }>(
-      tx,
-      sql`select confirmed_at from inventory_captures where id = ${savedCaptureId} and status = 'confirmed' for update`,
+    const saved = await one<{ status: string }>(tx, sql`select status from inventory_captures where id = ${savedCaptureId}`);
+    if (saved?.status !== "confirmed") throw new InventoryError("That item is not saved.", "not_found");
+    await tx.execute(
+      sql`insert into inventory_captures (id, organization_id, created_by)
+          values (${nextId}, ${owner.organizationId}, ${owner.userId})
+          on conflict (id) do nothing`,
     );
-    if (!saved?.confirmed_at) throw new InventoryError("That item is not saved.", "not_found");
-    const waiting = await one<{ id: string }>(
-      tx,
-      sql`select c.id from inventory_captures c
-           where c.status = 'open' and c.created_by = ${owner.userId} and c.created_at >= ${saved.confirmed_at}::timestamptz
-             and not exists (select 1 from inventory_document_links l
-                              where l.organization_id = c.organization_id and l.capture_id = c.id)
-           order by c.created_at, c.id
-           limit 1`,
-    );
-    if (waiting) return waiting.id;
-    const made = await one<{ id: string }>(
-      tx,
-      sql`insert into inventory_captures (organization_id, created_by) values (${owner.organizationId}, ${owner.userId}) returning id`,
-    );
-    return made!.id;
+    const next = await one<{ created_by: string }>(tx, sql`select created_by from inventory_captures where id = ${nextId}`);
+    // Only ever this person's own item in this business.
+    if (next?.created_by !== owner.userId) throw new InventoryError("The next item could not be started.", "not_found");
+    return nextId;
   });
 }
 

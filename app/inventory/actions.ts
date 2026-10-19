@@ -106,8 +106,14 @@ export async function saveCaptureAction(_prev: ReviewState, formData: FormData):
   }
   revalidatePath("/inventory");
   if (formData.get("then") === "next") {
-    const next = await nextCaptureAfter(owner, parsed.data.captureId);
-    redirect(`/inventory/capture/${next}?saved=${containerId}`);
+    // The save stands either way; without a next item, show it in the list.
+    let next: string | null = null;
+    try {
+      next = await nextCaptureAfter(owner, parsed.data.captureId);
+    } catch (err) {
+      if (!(err instanceof InventoryError)) throw err;
+    }
+    if (next) redirect(`/inventory/capture/${next}?saved=${containerId}`);
   }
   redirect(`/inventory?saved=${containerId}`);
 }
