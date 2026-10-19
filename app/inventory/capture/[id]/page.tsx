@@ -5,10 +5,10 @@ import { z } from "zod";
 import { requirePage } from "@/lib/auth/authorize";
 import { allows } from "@/lib/auth/permissions";
 import { resolveIdentity } from "@/lib/auth/session";
-import { getCapture, productChoices, unitLabel } from "@/lib/db/inventory";
+import { containerName, getCapture, productChoices, unitLabel } from "@/lib/db/inventory";
 import { inventoryEnabledFor, visionUnavailability } from "@/lib/inventory/config";
 import { MAX_IMAGES } from "@/lib/inventory/label-reader";
-import { suggestionsFrom, type ReviewField } from "@/lib/inventory/review";
+import { suggestionsFrom, unusableReadings, type ReviewField } from "@/lib/inventory/review";
 import { PortalShell } from "../../../portal-shell";
 import { CsrfField } from "../../../_components/csrf-field";
 import { discardCaptureAction, removePhotoAction } from "../../actions";
@@ -29,7 +29,13 @@ export const metadata: Metadata = { title: "Catalogue an item" };
  * inventory.read to look, inventory.write (owners) to add photos and save; on
  * a business INVENTORY_BUSINESSES switches it on for, else a 404.
  */
-export default async function CapturePage({ params }: { params: Promise<{ id: string }> }) {
+export default async function CapturePage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ saved?: string }>;
+}) {
   const { id } = await params;
   if (!z.uuid().safeParse(id).success) notFound();
   const returnPath = `/inventory/capture/${id}`;
@@ -81,6 +87,10 @@ export default async function CapturePage({ params }: { params: Promise<{ id: st
   const reader = visionUnavailability();
   const fields = capture.extraction?.status === "needs_review" ? capture.extraction.fields : [];
   const suggested = suggestionsFrom(fields);
+  const unusable = unusableReadings(fields);
+  // Arrived here with "Save and add another": say what was just saved.
+  const { saved } = await searchParams;
+  const savedName = saved && z.uuid().safeParse(saved).success ? await containerName(owner, saved) : null;
   const sure = (name: string) => {
     const f = fields.find((x) => x.field === name);
     return f ? f.confidence : undefined;
@@ -148,6 +158,15 @@ export default async function CapturePage({ params }: { params: Promise<{ id: st
 
   return shell(
     <>
+      {savedName && saved ? (
+        <p role="status" className="mt-3 rounded-lg border border-good/30 bg-good/5 px-3 py-2 text-sm text-good">
+          Saved:{" "}
+          <a href={`/inventory/containers/${saved}`} className="font-medium underline">
+            {savedName}
+          </a>
+          . Now the next one.
+        </p>
+      ) : null}
       <h1 className="mt-2 text-2xl font-semibold tracking-tight text-ink">Catalogue an item</h1>
       <p className="mt-1 max-w-prose text-sm text-ink-soft">One container: photograph it, check what was read, save it.</p>
 
@@ -204,6 +223,7 @@ export default async function CapturePage({ params }: { params: Promise<{ id: st
             csrf={csrf}
             initial={initial}
             read={read}
+            unusable={unusable}
             products={products}
             evidenceWarning={evidenceWarning}
           />
