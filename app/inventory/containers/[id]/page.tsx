@@ -324,7 +324,12 @@ function PurchaseCard({ c, purchase, mayWrite, csrf }: { c: ContainerView; purch
           {cur?.vendor ? (
             <>
               {cur.vendor.name}
-              {cur.vendor.idCode ? <span className="ml-2 rounded bg-sunk px-1.5 py-0.5 font-mono text-xs">iD {cur.vendor.idCode}</span> : null}
+              {cur.vendor.idCode ? (
+                <>
+                  {" "}
+                  <span className="ml-1 rounded bg-sunk px-1.5 py-0.5 font-mono text-xs">iD {cur.vendor.idCode}</span>
+                </>
+              ) : null}
             </>
           ) : (
             <NotRecorded />
