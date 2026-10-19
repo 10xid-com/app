@@ -933,3 +933,94 @@ describe("the label reader", () => {
     expect(calls).toEqual([]);
   });
 });
+
+/* ------------------------------------------------------------------ */
+/* The quick screen: Sealed / Opened, the amount, Save and add another */
+/* ------------------------------------------------------------------ */
+
+describe("the quick screen", () => {
+  const opening = async (container: string) =>
+    (await db.query(`select kind, quantity::text, unit, basis from inventory_movements where container_id = $1`, [container])).rows;
+
+  test("sealed with a valid label amount is saved at it; without one it is unknown — never 0", async () => {
+    const withLabel = await newCapture();
+    const a = savedContainer((await save(withLabel, { productName: "Test quick sealed", labelQuantity: "250", labelUnit: "g", status: "sealed", amount: "auto" })).redirect);
+    expect(await opening(a)).toEqual([{ kind: "opening", quantity: "250.0000", unit: "g", basis: "labelled_unopened" }]);
+
+    const bare = await newCapture();
+    const b = savedContainer((await save(bare, { productName: "Test quick sealed, no label", status: "sealed", amount: "auto" })).redirect);
+    expect(await opening(b)).toEqual([{ kind: "opening", quantity: null, unit: null, basis: "unknown" }]);
+  });
+
+  test("a label amount that is not a number is refused on its field, never dropped", async () => {
+    const capture = await newCapture();
+    const refused = await save(capture, { productName: "Test quick bad label", labelQuantity: "about 250", labelUnit: "g", status: "sealed", amount: "auto" });
+    expect(refused.state).toMatchObject({ field: "labelQuantity" });
+    expect(refused.state?.values?.labelQuantity).toBe("about 250");
+    expect((await db.query(`select status from inventory_captures where id = $1`, [capture])).rows[0].status).toBe("open");
+  });
+
+  test("opened needs a choice: weighed, about, or not known — never the sealed label default", async () => {
+    const capture = await newCapture();
+    expect((await save(capture, { productName: "Test quick opened", status: "open", amount: "" })).state).toMatchObject({ field: "amount" });
+    expect(
+      (await save(capture, { productName: "Test quick opened", labelQuantity: "250", labelUnit: "g", status: "open", amount: "auto" })).state,
+    ).toMatchObject({ field: "amount" });
+    const container = savedContainer((await save(capture, { productName: "Test quick opened", status: "open", amount: "unknown" })).redirect);
+    expect(await opening(container)).toEqual([{ kind: "opening", quantity: null, unit: null, basis: "unknown" }]);
+  });
+
+  test("Save and add another: one container and one next item, however often it is pressed — together or again later", async () => {
+    const capture = await newCapture();
+    const values = { productName: "Test quick next", status: "sealed", amount: "auto", then: "next" };
+    const first = await save(capture, values);
+    const m = new RegExp(`^/inventory/capture/([0-9a-f-]{36})\\?saved=([0-9a-f-]{36})$`).exec(first.redirect ?? "");
+    expect(m, first.redirect ?? "").toBeTruthy();
+    const [, next, container] = m!;
+    expect(next).not.toBe(capture);
+
+    const again = await Promise.all([save(capture, values), save(capture, values)]);
+    for (const r of again) expect(r.redirect).toBe(`/inventory/capture/${next}?saved=${container}`);
+    expect(await n(`select count(*) as n from inventory_containers c join inventory_captures k on k.container_id = c.id where k.id = $1`, [capture])).toBe(1);
+    expect(await n(`select count(*) as n from inventory_captures where status = 'open' and created_by = $1 and created_at >= (select confirmed_at from inventory_captures where id = $2)`, [A.userId, capture])).toBe(1);
+    // The next item starts empty: nothing of the saved item comes with it.
+    expect(await n(`select count(*) as n from inventory_document_links where capture_id = $1`, [next])).toBe(0);
+  });
+
+  test("the next item is never someone else's, nor one already holding a photo", async () => {
+    const capture = await newCapture();
+    // Another person's empty item in this business, started after the save would be.
+    const values = { productName: "Test quick next, others", status: "sealed", amount: "auto", then: "next" };
+    const first = await save(capture, values);
+    const next = /^\/inventory\/capture\/([0-9a-f-]{36})/.exec(first.redirect ?? "")![1];
+    const others = (await db.query(`insert into inventory_captures (organization_id, created_by) values ($1, $2) returning id`, [A.organizationId, B.userId])).rows[0].id;
+    await upload(next, jpeg(`quick-next-${RUN}`));
+    const later = await save(capture, values);
+    const again = /^\/inventory\/capture\/([0-9a-f-]{36})/.exec(later.redirect ?? "")![1];
+    expect([next, others]).not.toContain(again);
+    expect(later.redirect).toMatch(/\?saved=/);
+  });
+});
+
+describe("what the reader read but cannot be used as it is", () => {
+  test("is listed with what it read, beside its field — and a day that does not exist is not passed to a date field", async () => {
+    const { unusableReadings, suggestionsFrom } = await import("@/lib/inventory/review");
+    const fields = [
+      { field: "net_quantity", value: { amount: "about 250", unit: "g" }, rawText: "NET WT ABOUT 250 G" },
+      { field: "gtin", value: "12-34", rawText: null },
+      { field: "expiry", value: { date: "2026-02-30", kind: "best_before" }, rawText: "BB 30 FEB 2026" },
+      { field: "form", value: "goo", rawText: null },
+      { field: "product_name", value: "Test cacao", rawText: null },
+    ];
+    expect(unusableReadings(fields)).toEqual([
+      { field: "labelQuantity", read: "NET WT ABOUT 250 G" },
+      { field: "gtin", read: "12-34" },
+      { field: "expiryDate", read: "2026-02-30" },
+      { field: "form", read: "goo" },
+    ]);
+    const suggested = suggestionsFrom(fields);
+    expect(suggested.expiry).toEqual({ date: null, kind: "best_before", printed: "BB 30 FEB 2026" });
+    expect(suggested.netQuantity).toBeUndefined();
+    expect(suggested.productName).toBe("Test cacao");
+  });
+});
