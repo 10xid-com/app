@@ -208,6 +208,17 @@ export const PAGES: PageRecord[] = [
     group: "The work",
   },
   {
+    id: "inventory-container",
+    path: "/inventory/containers/[id]",
+    name: "One container",
+    purpose:
+      "One catalogued container: its photos, what it is and who makes it, lot and date, what is in it now beside its label amount, and its history. Owners can record what is left (about how much, or weighed), mark it opened, and say where it is.",
+    audience: "member",
+    kind: "page",
+    file: "app/inventory/containers/[id]/page.tsx",
+    group: "The work",
+  },
+  {
     id: "team",
     path: "/team",
     name: "Team",

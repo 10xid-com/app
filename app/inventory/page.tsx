@@ -17,7 +17,8 @@ export const metadata: Metadata = { title: "Inventory" };
  * What the business has on hand: every sealed or open container, what it
  * holds and how that is known, its lot and date, where it is.
  *
- * Each container was catalogued from phone photos (/inventory/capture). An
+ * Each container was catalogued from phone photos (/inventory/capture), and
+ * opens on its own page (/inventory/containers/[id]). An
  * amount nobody knows yet says "Unknown", never 0 — the difference between
  * "out" and "not counted" is the whole point of an inventory.
  *
@@ -45,7 +46,11 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
 
       {savedRow ? (
         <p role="status" className="mt-4 rounded-lg border border-good/30 bg-good/5 px-3 py-2 text-sm text-good">
-          Saved: {savedRow.productName}.
+          Saved:{" "}
+          <a href={`/inventory/containers/${savedRow.containerId}`} className="font-medium underline">
+            {savedRow.productName}
+          </a>
+          .
         </p>
       ) : null}
 
@@ -121,46 +126,52 @@ function ContainerCard({ row }: { row: InventoryRow }) {
   const expired = row.expiryDate !== null && row.expiryDate < today;
   const amount = describeBalance(row.balance, row.balanceBasis, row.baseUnit);
   return (
-    <li className="flex gap-3 rounded-xl border border-line bg-surface p-3 shadow-card">
-      {row.photoId ? (
-        // eslint-disable-next-line @next/next/no-img-element -- a private, per-request image; next/image would cache it
-        <img
-          src={`/api/inventory/documents/${row.photoId}`}
-          alt=""
-          loading="lazy"
-          className="h-16 w-16 flex-none rounded-lg bg-sunk object-cover"
-        />
-      ) : (
-        <span className="grid h-16 w-16 flex-none place-items-center rounded-lg bg-sunk text-ink-faint">
-          <Icon name="inventory" />
-        </span>
-      )}
-      <div className="min-w-0 flex-1">
-        <p className="truncate font-semibold text-ink">{row.productName}</p>
-        {row.brand ? <p className="truncate text-sm text-ink-soft">{row.brand}</p> : null}
-        <p className="mt-1 text-sm text-ink">
-          <span className={row.balanceBasis === "unknown" ? "text-ink-soft" : "font-medium"}>{amount}</span>
-          {row.balanceBasis !== "unknown" ? <span className="text-ink-faint"> · {BASIS_LABELS[row.balanceBasis] ?? row.balanceBasis}</span> : null}
-          {row.nominalQuantity && row.nominalUnit && row.balanceBasis !== "labelled_unopened" ? (
-            <span className="whitespace-nowrap text-ink-faint">
-              {" "}
-              · label {Number(row.nominalQuantity)} {unitLabel(row.nominalUnit)}
-            </span>
-          ) : null}
-        </p>
-        <p className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-ink-soft">
-          <span className="rounded-full bg-sunk px-2 py-0.5">{row.status === "sealed" ? "Sealed" : "Open"}</span>
-          {row.expiryDate ? (
-            <span className={expired ? "font-semibold text-bad" : undefined}>
-              {EXPIRY_LABEL[row.expiryKind ?? "unknown"] ?? "Date"} {formatDate(row.expiryDate)}
-              {expired ? " — past" : ""}
-            </span>
-          ) : null}
-          {row.lotCode ? <span>Lot {row.lotCode}</span> : null}
-          {row.location ? <span>{row.location}</span> : null}
-          {row.hold !== "none" ? <span className="font-semibold text-warn">On hold</span> : null}
-        </p>
-      </div>
+    <li>
+      <a
+        href={`/inventory/containers/${row.containerId}`}
+        className="flex gap-3 rounded-xl border border-line bg-surface p-3 shadow-card hover:bg-sunk focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
+      >
+        {row.photoId ? (
+          // eslint-disable-next-line @next/next/no-img-element -- a private, per-request image; next/image would cache it
+          <img
+            src={`/api/inventory/documents/${row.photoId}`}
+            alt=""
+            loading="lazy"
+            className="h-16 w-16 flex-none rounded-lg bg-sunk object-cover"
+          />
+        ) : (
+          <span className="grid h-16 w-16 flex-none place-items-center rounded-lg bg-sunk text-ink-faint">
+            <Icon name="inventory" />
+          </span>
+        )}
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-semibold text-ink">{row.productName}</p>
+          {row.brand ? <p className="truncate text-sm text-ink-soft">{row.brand}</p> : null}
+          <p className="mt-1 text-sm text-ink">
+            <span className={row.balanceBasis === "unknown" ? "text-ink-soft" : "font-medium"}>{amount}</span>
+            {row.balanceBasis !== "unknown" ? <span className="text-ink-faint"> · {BASIS_LABELS[row.balanceBasis] ?? row.balanceBasis}</span> : null}
+            {row.nominalQuantity && row.nominalUnit && row.balanceBasis !== "labelled_unopened" ? (
+              <span className="whitespace-nowrap text-ink-faint">
+                {" "}
+                · label {Number(row.nominalQuantity)} {unitLabel(row.nominalUnit)}
+              </span>
+            ) : null}
+          </p>
+          <p className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-ink-soft">
+            <span className="rounded-full bg-sunk px-2 py-0.5">{row.status === "sealed" ? "Sealed" : "Open"}</span>
+            {row.expiryDate ? (
+              <span className={expired ? "font-semibold text-bad" : undefined}>
+                {EXPIRY_LABEL[row.expiryKind ?? "unknown"] ?? "Date"} {formatDate(row.expiryDate)}
+                {expired ? " — past" : ""}
+              </span>
+            ) : null}
+            {row.lotCode ? <span>Lot {row.lotCode}</span> : null}
+            {row.location ? <span>{row.location}</span> : null}
+            {row.hold !== "none" ? <span className="font-semibold text-warn">On hold</span> : null}
+          </p>
+        </div>
+        <Icon name="chevron-right" className="h-4 w-4 flex-none self-center text-ink-faint" />
+      </a>
     </li>
   );
 }

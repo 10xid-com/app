@@ -155,6 +155,8 @@ const CLIENT_FORMS: Record<string, string> = {
     "Makes a website form key and shows it once. The key comes back in the action's answer so it never travels in the address (browser history, request logs).",
   "app/inventory/capture/[id]/review-form.tsx":
     "Saving a catalogued item is a long form on a phone. Refused, it must give back everything typed and say beside the field what is wrong; a server form's redirect would throw the typing away.",
+  "app/inventory/containers/[id]/container-forms.tsx":
+    "What is left in a container, opening it, and where it is: refused (a stale page, a form already sent, a weighing without the empty weight), each must keep what was typed and say why; a server form's redirect would throw the typing away.",
 };
 
 describe("every form posting to a server action carries the CSRF token", () => {

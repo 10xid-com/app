@@ -6,10 +6,12 @@ import {
   BASE_UNIT,
   UNITS,
   normalizeUnit,
+  type Dimension,
   type ExtractedFieldName,
   type OpeningPlan,
   type ReviewInput,
 } from "@/lib/inventory/review";
+import { planCount, type AmountInput, type CountPlan } from "@/lib/inventory/container";
 
 /**
  * A business's inventory as the capture screens use it (login's 0048).
@@ -33,6 +35,11 @@ import {
  *                         opening event, in one transaction, once
  *   listInventory         every container and what it holds, unknown as
  *                         unknown
+ *   getContainer          one container: what it is, its photos, what is in
+ *                         it now and every event that says so
+ *   recordContainerAmount a later amount (a new count; nothing earlier is
+ *                         changed), or opening it
+ *   updateContainerDetails  where it is, and its notes
  */
 
 export type InventoryOwner = { organizationId: string; userId: string };
@@ -40,7 +47,7 @@ export type InventoryOwner = { organizationId: string; userId: string };
 export class InventoryError extends Error {
   constructor(
     message: string,
-    readonly code: "not_found" | "closed" | "saved" | "invalid" | "unsent",
+    readonly code: "not_found" | "closed" | "saved" | "invalid" | "unsent" | "conflict",
     readonly field?: string,
   ) {
     super(message);
@@ -70,6 +77,8 @@ function refusal(err: unknown): InventoryError | null {
   const cause = err instanceof DatabaseError ? err : (err as { cause?: unknown } | null)?.cause;
   if (!(cause instanceof DatabaseError)) return null;
   if (cause.code?.startsWith("22")) return new InventoryError("One of the values is not one the inventory can hold. Check the dates and numbers.", "invalid");
+  // The same request key reached the ledger by two paths at once (two containers): the second is refused.
+  if (cause.code === "23505" && cause.constraint === "inventory_movements_idempotency") return new InventoryError(ALREADY_SENT, "conflict");
   if (cause.code !== "23514") return null;
   return new InventoryError(cause.message.startsWith("new row") ? "The database refused that combination." : cause.message, "invalid");
 }
@@ -1034,4 +1043,489 @@ export async function listInventory(owner: InventoryOwner): Promise<InventoryRow
 export function unitLabel(code: string | null): string {
   if (!code) return "";
   return code in UNITS ? UNITS[code as keyof typeof UNITS].label : code;
+}
+
+/* ------------------------------------------------------------------ */
+/* One container                                                       */
+/* ------------------------------------------------------------------ */
+
+/** The page that sent a change saw the container as it was before someone else's change. */
+export const CHANGED_SINCE =
+  "This item changed after this page was opened (here or on another phone or tab). Reload the page to see it as it is now, then try again.";
+/** A request key comes with exactly one request: the same container, the same change, the same values. */
+export const ALREADY_SENT = "This form was already sent. Reload the page to see what was recorded.";
+
+/**
+ * A container's version, as the forms carry it: the row's last change to the
+ * microsecond (exact: epoch is numeric, never a float or a JavaScript Date),
+ * and its ledger — how many events, and the latest by when it was written —
+ * reversals included, since they change what is in it too. For a container
+ * row aliased `c`.
+ *
+ * Read it in the SAME statement as whatever the page shows next to it: under
+ * read committed each statement sees its own snapshot, and a version read a
+ * statement later than the fields could already include someone else's change
+ * to them — a page holding old notes and a new version would then save over
+ * the newer notes.
+ */
+const VERSION = sql`'v1.' || (extract(epoch from c.updated_at) * 1000000)::bigint::text
+  || '.' || (select count(*) from inventory_movements m
+              where m.organization_id = c.organization_id and m.container_id = c.id)::text
+  || '.' || coalesce((select m.id::text from inventory_movements m
+                       where m.organization_id = c.organization_id and m.container_id = c.id
+                       order by m.created_at desc, m.id desc
+                       limit 1), '-')`;
+
+/**
+ * The version now, for a write that holds the container's row lock: its own
+ * statement, after the lock, so it sees every change committed before the
+ * lock was granted (the locking statement itself may have started earlier).
+ */
+async function versionOf(tx: Transaction, containerId: string): Promise<string | undefined> {
+  const row = await one<{ version: string }>(tx, sql`select ${VERSION} as version from inventory_containers c where c.id = ${containerId}`);
+  return row?.version;
+}
+
+/** Who changed a container and how, beside the ledger: append-only (0025). */
+async function audit(tx: Transaction, owner: InventoryOwner, containerId: string, action: string): Promise<void> {
+  await tx.execute(
+    sql`insert into audit_events (organization_id, actor_user_id, action, target)
+        values (${owner.organizationId}, ${owner.userId}, ${action}, ${`inventory_containers:${containerId}`})`,
+  );
+}
+
+/**
+ * Every write here moves the version forward: the clock at the moment of the
+ * write (a transaction that waited for the row is later than the one it waited
+ * for), and never backwards even if the clock does.
+ */
+const TOUCHED = sql`updated_at = greatest(clock_timestamp(), updated_at + interval '1 microsecond')`;
+
+export type ContainerMovement = {
+  id: string;
+  kind: string;
+  occurredAt: Date;
+  quantity: string | null;
+  unit: string | null;
+  basis: string | null;
+  note: string | null;
+  byYou: boolean;
+  measurement: { grossG: string | null; tareG: string | null; tareBasis: string | null; netG: string | null; confidence: string } | null;
+  /** This event voids that one. */
+  reverses: string | null;
+  /** This event was voided. */
+  voided: boolean;
+};
+
+export type ContainerView = {
+  id: string;
+  version: string;
+  status: string;
+  dimension: Dimension;
+  baseUnit: string;
+  /** Null when not known. Never 0 for unknown. */
+  balance: string | null;
+  balanceBasis: string;
+  balanceAsOf: Date | null;
+  nominal: { quantity: string; unit: string } | null;
+  tare: { g: string; basis: "measured" | "estimated" } | null;
+  openedOn: string | null;
+  location: string | null;
+  notes: string | null;
+  createdAt: Date;
+  lot: {
+    code: string | null;
+    expiryPrinted: string | null;
+    expiryKind: string | null;
+    expiryDate: string | null;
+    acquiredOn: string | null;
+    hold: string;
+    holdReason: string | null;
+  };
+  product: {
+    name: string;
+    variant: string | null;
+    form: string;
+    gtin: string | null;
+    packageQuantity: string | null;
+    packageUnit: string | null;
+    brand: string | null;
+    maker: { name: string; idCode: string | null } | null;
+    /** The one ingredient it is, when it is one. */
+    material: string | null;
+  };
+  photos: { id: string; contentType: string }[];
+  movements: ContainerMovement[];
+  /** Changes beside the ledger (opened, place, notes, a photo added after saving), from the audit record. */
+  changes: { id: string; action: string; at: Date; byYou: boolean }[];
+};
+
+/** One container of this business, with everything the container page shows. Null when it is not this business's. */
+export async function getContainer(owner: InventoryOwner, containerId: string): Promise<ContainerView | null> {
+  return run(owner, async (tx) => {
+    const c = await one<{
+      id: string;
+      status: string;
+      dimension: Dimension;
+      base_unit: string;
+      balance: string | null;
+      balance_basis: string;
+      balance_as_of: string | null;
+      nominal_quantity: string | null;
+      nominal_unit: string | null;
+      tare_g: string | null;
+      tare_basis: string;
+      opened_on: string | null;
+      location: string | null;
+      notes: string | null;
+      created_at: string;
+      lot_code: string | null;
+      expiry_printed: string | null;
+      expiry_kind: string | null;
+      expiry_date: string | null;
+      acquired_on: string | null;
+      hold: string;
+      hold_reason: string | null;
+      product_id: string;
+      product_name: string;
+      variant: string | null;
+      form: string;
+      gtin: string | null;
+      composition: string;
+      package_quantity: string | null;
+      package_unit: string | null;
+      brand: string | null;
+      maker_name: string | null;
+      maker_code: string | null;
+      version: string;
+    }>(
+      tx,
+      sql`select c.id, c.status, c.dimension, b.base_unit, b.balance::text, b.balance_basis, b.balance_as_of, ${VERSION} as version,
+                 c.nominal_quantity::text, c.nominal_unit, c.tare_g::text, c.tare_basis, c.opened_on::text,
+                 loc.name as location, c.notes, c.created_at,
+                 lo.lot_code, lo.expiry_printed, lo.expiry_kind, lo.expiry_date::text, lo.acquired_on::text,
+                 lo.hold, lo.hold_reason,
+                 p.id as product_id, p.name as product_name, p.variant, p.form, p.gtin, p.composition,
+                 p.package_quantity::text, p.package_unit, br.name as brand,
+                 dir.name as maker_name, dir.id_code as maker_code
+            from inventory_containers c
+            join inventory_container_balances b on b.organization_id = c.organization_id and b.container_id = c.id
+            join inventory_lots lo on lo.organization_id = c.organization_id and lo.id = c.lot_id
+            join inventory_products p on p.organization_id = lo.organization_id and p.id = lo.product_id
+            left join inventory_brands br on br.organization_id = p.organization_id and br.id = p.brand_id
+            left join inventory_business_directory dir on dir.organization_id = p.organization_id and dir.business_id = p.manufacturer_id
+            left join inventory_locations loc on loc.organization_id = c.organization_id and loc.id = c.location_id
+           where c.id = ${containerId}`,
+    );
+    if (!c) return null;
+
+    const material =
+      c.composition === "single"
+        ? await one<{ name: string }>(
+            tx,
+            sql`select m.name from inventory_product_components pc
+                  join inventory_materials m on m.organization_id = pc.organization_id and m.id = pc.material_id
+                 where pc.product_id = ${c.product_id}
+                 order by pc.created_at
+                 limit 1`,
+          )
+        : undefined;
+    const photos = await all<{ id: string; content_type: string }>(
+      tx,
+      sql`select d.id, d.content_type
+            from inventory_document_links l
+            join inventory_documents d on d.organization_id = l.organization_id and d.id = l.document_id
+           where l.container_id = ${containerId} and d.state = 'stored'
+           order by d.created_at, d.id`,
+    );
+    const movements = await all<{
+      id: string;
+      kind: string;
+      occurred_at: string;
+      quantity: string | null;
+      unit: string | null;
+      basis: string | null;
+      note: string | null;
+      recorded_by: string | null;
+      reverses_id: string | null;
+      voided: boolean;
+      gross_g: string | null;
+      tare_g: string | null;
+      tare_basis: string | null;
+      net_g: string | null;
+      confidence: string | null;
+      measurement_id: string | null;
+    }>(
+      tx,
+      sql`select m.id, m.kind, m.occurred_at, m.quantity::text, m.unit, m.basis, m.note, m.recorded_by, m.reverses_id,
+                 exists (select 1 from inventory_movements r
+                          where r.organization_id = m.organization_id and r.reverses_id = m.id) as voided,
+                 ms.id as measurement_id, ms.gross_g::text, ms.tare_g::text, ms.tare_basis, ms.net_g::text, ms.confidence
+            from inventory_movements m
+            left join inventory_measurements ms on ms.organization_id = m.organization_id and ms.id = m.measurement_id
+           where m.container_id = ${containerId}
+           order by m.occurred_at desc, m.created_at desc, m.id desc`,
+    );
+
+    // Who opened it, moved it, changed its notes, added a photo after it was saved.
+    const changes = await all<{ id: string; action: string; created_at: string; actor_user_id: string | null }>(
+      tx,
+      sql`select id::text, action, created_at, actor_user_id from audit_events
+           where target = ${`inventory_containers:${containerId}`} and action like 'inventory.%'
+           order by created_at desc, id desc`,
+    );
+
+    return {
+      id: c.id,
+      version: c.version,
+      status: c.status,
+      dimension: c.dimension,
+      baseUnit: c.base_unit,
+      balance: c.balance,
+      balanceBasis: c.balance_basis,
+      balanceAsOf: whenOrNull(c.balance_as_of),
+      nominal: c.nominal_quantity && c.nominal_unit ? { quantity: c.nominal_quantity, unit: c.nominal_unit } : null,
+      tare: c.tare_g !== null && (c.tare_basis === "measured" || c.tare_basis === "estimated") ? { g: c.tare_g, basis: c.tare_basis } : null,
+      openedOn: c.opened_on,
+      location: c.location,
+      notes: c.notes,
+      createdAt: when(c.created_at),
+      lot: {
+        code: c.lot_code,
+        expiryPrinted: c.expiry_printed,
+        expiryKind: c.expiry_kind,
+        expiryDate: c.expiry_date,
+        acquiredOn: c.acquired_on,
+        hold: c.hold,
+        holdReason: c.hold_reason,
+      },
+      product: {
+        name: c.product_name,
+        variant: c.variant,
+        form: c.form,
+        gtin: c.gtin,
+        packageQuantity: c.package_quantity,
+        packageUnit: c.package_unit,
+        brand: c.brand,
+        maker: c.maker_name ? { name: c.maker_name, idCode: c.maker_code } : null,
+        material: material?.name ?? null,
+      },
+      photos: photos.map((p) => ({ id: p.id, contentType: p.content_type })),
+      movements: movements.map((m) => ({
+        id: m.id,
+        kind: m.kind,
+        occurredAt: when(m.occurred_at),
+        quantity: m.quantity,
+        unit: m.unit,
+        basis: m.basis,
+        note: m.note,
+        byYou: m.recorded_by === owner.userId,
+        measurement: m.measurement_id
+          ? { grossG: m.gross_g, tareG: m.tare_g, tareBasis: m.tare_basis, netG: m.net_g, confidence: m.confidence ?? "estimated" }
+          : null,
+        reverses: m.reverses_id,
+        voided: m.voided,
+      })),
+      changes: changes.map((e) => ({ id: e.id, action: e.action, at: when(e.created_at), byYou: e.actor_user_id === owner.userId })),
+    };
+  });
+}
+
+export type AmountRequest = {
+  containerId: string;
+  /** The version the page showed (versionOf). */
+  version: string;
+  /** Made when the page was drawn; binds this request to its container, change and values. */
+  requestKey: string;
+  /** "amount": a new count. "open": mark it opened, with a new count when one is given. */
+  intent: "amount" | "open";
+  /** How the amount is known and what it is; `amount` unset only for opening without a new amount. */
+  input: Pick<AmountInput, "amount" | "estimateQuantity" | "estimateUnit" | "grossG" | "tareG" | "tareBasis">;
+  /** YYYY-MM-DD, for the day it was opened. */
+  openedOn: string;
+};
+
+/**
+ * A later amount, or opening a sealed container — one transaction with the
+ * container's row locked.
+ *
+ *   * The ledger only grows: a count is appended (with its weighing, when
+ *     weighed); the opening and every earlier event and weighing are left as
+ *     they were, true when they were recorded. 0048 checks the basis again.
+ *   * The request key binds one request: sent again with the same container,
+ *     change and values it is answered as done and nothing more is written;
+ *     with anything different it is refused, never taken for the old success.
+ *   * A page that saw an older version of the container is refused, with
+ *     nothing written: someone changed it since.
+ *   * Opening a package whose amount is its sealed label needs a new amount
+ *     with it, so an opened package never shows its label weight as what is
+ *     in it. Opening one whose amount is an estimate or a weighing keeps that
+ *     amount; one whose amount is unknown stays unknown.
+ */
+export async function recordContainerAmount(owner: InventoryOwner, req: AmountRequest): Promise<{ replayed: boolean }> {
+  try {
+    return await run(owner, async (tx) => {
+      const c = await one<{ status: string; dimension: Dimension }>(
+        tx,
+        sql`select status, dimension from inventory_containers where id = ${req.containerId} for update`,
+      );
+      if (!c) throw new InventoryError("That item is not in this inventory.", "not_found");
+
+      // What the amount is, for a container of this kind (grams, ml or items).
+      let plan: CountPlan | null = null;
+      if (req.input.amount) {
+        const planned = planCount(req.input as AmountInput, c.dimension);
+        if (!planned.ok) throw new InventoryError(planned.error, "invalid", planned.field);
+        plan = planned.plan;
+      }
+
+      const keyFor = (intent: AmountRequest["intent"]) => `container:${intent}:${req.requestKey}`;
+      const earlier = await one<{
+        container_id: string;
+        idempotency_key: string;
+        quantity: string | null;
+        unit: string | null;
+        basis: string | null;
+        gross_g: string | null;
+        tare_g: string | null;
+        tare_basis: string | null;
+      }>(
+        tx,
+        sql`select m.container_id, m.idempotency_key, m.quantity::text, m.unit, m.basis,
+                   ms.gross_g::text, ms.tare_g::text, ms.tare_basis
+              from inventory_movements m
+              left join inventory_measurements ms on ms.organization_id = m.organization_id and ms.id = m.measurement_id
+             where m.idempotency_key in (${keyFor("amount")}, ${keyFor("open")})`,
+      );
+      if (earlier) {
+        if (earlier.container_id !== req.containerId || earlier.idempotency_key !== keyFor(req.intent) || !sameCount(earlier, plan)) {
+          throw new InventoryError(ALREADY_SENT, "conflict");
+        }
+        return { replayed: true };
+      }
+
+      // Opened already, with nothing more to say: done, whoever opened it.
+      if (req.intent === "open" && !plan && c.status === "open") return { replayed: true };
+      if ((await versionOf(tx, req.containerId)) !== req.version) throw new InventoryError(CHANGED_SINCE, "conflict");
+      if (c.status !== "sealed" && c.status !== "open") throw new InventoryError("This container is no longer on the shelf.", "invalid");
+
+      if (req.intent === "open") {
+        if (c.status !== "sealed") throw new InventoryError("This container is already open.", "invalid");
+        const now = await one<{ balance_basis: string }>(
+          tx,
+          sql`select balance_basis from inventory_container_balances where container_id = ${req.containerId}`,
+        );
+        if (now?.balance_basis === "labelled_unopened" && !plan) {
+          throw new InventoryError("Once it is open, the label no longer says what is in it. Say about how much is in it now, or weigh it.", "invalid", "amount");
+        }
+      } else if (!plan) {
+        throw new InventoryError("Choose how you know the amount: about how much, or weighed.", "invalid", "amount");
+      }
+
+      if (plan) {
+        const p = plan;
+        if (UNITS[p.count.unit].dimension !== c.dimension) {
+          throw new InventoryError(`This container is measured by ${c.dimension}; use a unit of the same kind.`, "invalid", "estimateUnit");
+        }
+        let measurement: { id: string; net_g: string | null } | undefined;
+        if (p.measurement) {
+          const m = p.measurement;
+          measurement = await one<{ id: string; net_g: string | null }>(
+            tx,
+            sql`insert into inventory_measurements
+                  (organization_id, container_id, gross_g, tare_g, tare_basis, net_g, method, confidence, measured_by)
+                values
+                  (${owner.organizationId}, ${req.containerId}, ${m.grossG}::numeric, ${m.tareG}::numeric, ${m.tareBasis},
+                   ${m.grossG}::numeric - ${m.tareG}::numeric, 'scale', ${m.confidence}, ${owner.userId})
+                returning id, net_g::text`,
+          );
+        }
+        const quantity = p.count.quantity === "net" ? (measurement?.net_g ?? null) : p.count.quantity;
+        if (quantity === null) throw new Error("A weighed count needs the weighing's net.");
+        await tx.execute(
+          sql`insert into inventory_movements
+                (organization_id, container_id, kind, quantity, unit, basis, measurement_id, idempotency_key, recorded_by)
+              values
+                (${owner.organizationId}, ${req.containerId}, 'count', ${quantity}::numeric, ${p.count.unit}, ${p.count.basis},
+                 ${measurement?.id ?? null}, ${keyFor(req.intent)}, ${owner.userId})`,
+        );
+      }
+
+      if (req.intent === "open") {
+        await tx.execute(
+          sql`update inventory_containers set status = 'open', opened_on = ${req.openedOn}::date, ${TOUCHED}
+               where id = ${req.containerId}`,
+        );
+        await audit(tx, owner, req.containerId, "inventory.container.opened");
+      } else {
+        await tx.execute(sql`update inventory_containers set ${TOUCHED} where id = ${req.containerId}`);
+      }
+      return { replayed: false };
+    });
+  } catch (err) {
+    throw refusal(err) ?? err;
+  }
+}
+
+/** Whether the count already recorded under a request key is the one this request asks for. */
+function sameCount(
+  earlier: { quantity: string | null; unit: string | null; basis: string | null; gross_g: string | null; tare_g: string | null; tare_basis: string | null },
+  plan: CountPlan | null,
+): boolean {
+  if (!plan) return false;
+  if (earlier.basis !== plan.count.basis) return false;
+  if (plan.measurement) {
+    const m = plan.measurement;
+    return (
+      earlier.gross_g !== null &&
+      Number(earlier.gross_g) === Number(m.grossG) &&
+      earlier.tare_g !== null &&
+      Number(earlier.tare_g) === Number(m.tareG) &&
+      earlier.tare_basis === m.tareBasis &&
+      earlier.unit === "g"
+    );
+  }
+  return (
+    earlier.gross_g === null &&
+    plan.count.quantity !== "net" &&
+    earlier.unit === plan.count.unit &&
+    earlier.quantity !== null &&
+    Number(earlier.quantity) === Number(plan.count.quantity)
+  );
+}
+
+export type DetailsRequest = { containerId: string; version: string; location: string | null; notes: string | null };
+
+/**
+ * Where it is, and its notes. A place is found by name (any capitals) or
+ * made. Sent again with what is already there, it is done; changed on a page
+ * that saw an older version, it is refused with nothing written.
+ */
+export async function updateContainerDetails(owner: InventoryOwner, req: DetailsRequest): Promise<{ changed: boolean }> {
+  try {
+    return await run(owner, async (tx) => {
+      const c = await one<{ location: string | null; notes: string | null }>(
+        tx,
+        sql`select loc.name as location, c.notes
+              from inventory_containers c
+              left join inventory_locations loc on loc.organization_id = c.organization_id and loc.id = c.location_id
+             where c.id = ${req.containerId}
+             for update of c`,
+      );
+      if (!c) throw new InventoryError("That item is not in this inventory.", "not_found");
+      const sameLocation = (c.location ?? "").toLowerCase() === (req.location ?? "").toLowerCase();
+      if (sameLocation && (c.notes ?? null) === req.notes) return { changed: false };
+      if ((await versionOf(tx, req.containerId)) !== req.version) throw new InventoryError(CHANGED_SINCE, "conflict");
+      const locationId = req.location ? await locationFor(tx, owner, req.location) : null;
+      await tx.execute(
+        sql`update inventory_containers set location_id = ${locationId}, notes = ${req.notes}, ${TOUCHED}
+             where id = ${req.containerId}`,
+      );
+      if (!sameLocation) await audit(tx, owner, req.containerId, "inventory.container.place_changed");
+      if ((c.notes ?? null) !== req.notes) await audit(tx, owner, req.containerId, "inventory.container.notes_changed");
+      return { changed: true };
+    });
+  } catch (err) {
+    throw refusal(err) ?? err;
+  }
 }

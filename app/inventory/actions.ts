@@ -4,12 +4,30 @@ import { notFound, redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireAction } from "@/lib/auth/authorize";
-import { InventoryError, abandonCapture, confirmCapture, createCapture, removeCapturePhoto } from "@/lib/db/inventory";
+import {
+  InventoryError,
+  abandonCapture,
+  confirmCapture,
+  createCapture,
+  recordContainerAmount,
+  removeCapturePhoto,
+  updateContainerDetails,
+} from "@/lib/db/inventory";
 import { inventoryEnabledFor } from "@/lib/inventory/config";
+import {
+  AMOUNT_FIELDS,
+  DETAILS_FIELDS,
+  amountSchema,
+  detailsSchema,
+  fieldsOf,
+  openedOn,
+  type AmountField,
+} from "@/lib/inventory/container";
 import { REVIEW_FIELDS, formValues, planOpening, reviewSchema, type ReviewField } from "@/lib/inventory/review";
 
 /**
- * Inventory's server actions: start an item, save it, discard it.
+ * Inventory's server actions: start an item, save it, discard it; and, once
+ * saved, say what is in a container now, open it, and say where it is.
  *
  * The business is the session's, never the form's; the central authorization
  * function decides who may (inventory.write, owners), and Inventory must be
@@ -117,4 +135,94 @@ export async function removePhotoAction(formData: FormData) {
   }
   revalidatePath(`/inventory/capture/${captureId}`);
   redirect(`/inventory/capture/${captureId}`);
+}
+
+/* ------------------------------------------------------------------ */
+/* A container, once catalogued                                        */
+/* ------------------------------------------------------------------ */
+
+export type ContainerFormState = {
+  error: string | null;
+  field: string | null;
+  /** What was typed, given back so a refusal costs nothing. */
+  values: Record<string, string> | null;
+  at: number;
+};
+
+const AMOUNT_ERRORS: Partial<Record<AmountField, string>> = {
+  estimateQuantity: "The amount is a number, like 250 or 12.5.",
+  estimateUnit: "Choose a unit.",
+  grossG: "The scale's weight is a number of grams.",
+  tareG: "The empty weight is a number of grams.",
+};
+
+const OUT_OF_DATE = "This page is out of date. Reload it and try again.";
+
+/**
+ * Say what is in a container now (a new count; nothing earlier changes), or
+ * open it. The same request sent twice is answered once; one sent from a page
+ * that is out of date, or again with other values, is refused
+ * (lib/db/inventory.ts recordContainerAmount).
+ */
+export async function recordAmountAction(_prev: ContainerFormState, formData: FormData): Promise<ContainerFormState> {
+  const values = fieldsOf(formData, AMOUNT_FIELDS);
+  const valid = z.uuid().safeParse(values.containerId).success;
+  const page = valid ? `/inventory/containers/${values.containerId}` : "/inventory";
+  const owner = await requireInventoryWriter(formData, page);
+  if (!valid) notFound();
+  const refused = (field: string | null, error: string): ContainerFormState => ({ error, field, values, at: Date.now() });
+
+  const parsed = amountSchema.safeParse(values);
+  if (!parsed.success) {
+    const field = (parsed.error.issues[0]?.path[0] as AmountField | undefined) ?? null;
+    if (field === "version" || field === "requestKey" || field === "intent") return refused(null, OUT_OF_DATE);
+    return refused(field, (field && AMOUNT_ERRORS[field]) ?? "Something in the form needs another look.");
+  }
+  const input = parsed.data;
+  try {
+    await recordContainerAmount(owner, {
+      containerId: input.containerId,
+      version: input.version,
+      requestKey: input.requestKey,
+      intent: input.intent,
+      input,
+      openedOn: openedOn(input.today),
+    });
+  } catch (err) {
+    if (err instanceof InventoryError) {
+      if (err.code === "not_found") notFound();
+      return refused(err.field ?? null, err.message);
+    }
+    throw err;
+  }
+  revalidatePath("/inventory");
+  redirect(`${page}?done=${input.intent === "open" ? "opened" : "amount"}`);
+}
+
+/** Where a container is, and its notes. */
+export async function saveContainerDetailsAction(_prev: ContainerFormState, formData: FormData): Promise<ContainerFormState> {
+  const values = fieldsOf(formData, DETAILS_FIELDS);
+  const valid = z.uuid().safeParse(values.containerId).success;
+  const page = valid ? `/inventory/containers/${values.containerId}` : "/inventory";
+  const owner = await requireInventoryWriter(formData, page);
+  if (!valid) notFound();
+  const refused = (field: string | null, error: string): ContainerFormState => ({ error, field, values, at: Date.now() });
+
+  const parsed = detailsSchema.safeParse(values);
+  if (!parsed.success) {
+    const field = (parsed.error.issues[0]?.path[0] as string | undefined) ?? null;
+    if (field === "version") return refused(null, OUT_OF_DATE);
+    return refused(field, field === "location" ? "A place is at most 100 characters." : "Notes are at most 2000 characters.");
+  }
+  try {
+    await updateContainerDetails(owner, parsed.data);
+  } catch (err) {
+    if (err instanceof InventoryError) {
+      if (err.code === "not_found") notFound();
+      return refused(err.field ?? null, err.message);
+    }
+    throw err;
+  }
+  revalidatePath("/inventory");
+  redirect(`${page}?done=details`);
 }
