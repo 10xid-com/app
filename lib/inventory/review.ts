@@ -9,6 +9,7 @@ import { z } from "zod";
  * — with a basis the database will accept and that says only what is known:
  *
  *   labelled_unopened   a sealed package, at exactly what its label says
+ *                       (chosen, or `auto` when the label states one)
  *   measured            weighed on a scale, with the empty container's weight
  *                       weighed too (login's 0048: scale, exact, mass, net)
  *   estimated           an estimate, or a weighing whose tare was estimated
@@ -55,7 +56,12 @@ export type ProductForm = (typeof PRODUCT_FORMS)[number];
 export const EXPIRY_KINDS = ["best_before", "expiry", "use_by", "unknown"] as const;
 export type ExpiryKind = (typeof EXPIRY_KINDS)[number];
 
-export const AMOUNT_CHOICES = ["label", "weighed", "estimate", "unknown"] as const;
+/**
+ * How the amount is known. `auto` is the quick screen's sealed package: its
+ * label amount when the label states a valid one, otherwise unknown — never a
+ * guess, never zero.
+ */
+export const AMOUNT_CHOICES = ["label", "weighed", "estimate", "unknown", "auto"] as const;
 export type AmountChoice = (typeof AMOUNT_CHOICES)[number];
 
 /** "1,5" from a French keyboard is 1.5; at most 9 digits before the point and 3 after. */
@@ -229,6 +235,13 @@ export function planOpening(input: ReviewInput): PlanResult {
   const nominal = input.labelQuantity !== undefined && input.labelUnit ? { quantity: input.labelQuantity, unit: input.labelUnit } : null;
 
   switch (input.amount) {
+    case "auto": {
+      // The quick screen: a sealed package is what its label says when the
+      // label says something valid; otherwise its amount is not known yet.
+      if (input.status !== "sealed") return no("amount", "How much is in it? Weigh it, estimate it, or choose “I don’t know yet”.");
+      if (nominal) return { ok: true, plan: { dimension, nominal, measurement: null, opening: { basis: "labelled_unopened", ...nominal } } };
+      return { ok: true, plan: { dimension, nominal, measurement: null, opening: { basis: "unknown", quantity: null, unit: null } } };
+    }
     case "label": {
       if (!nominal) return no("labelQuantity", "Say what the label says it holds, or choose another way to record the amount.");
       if (input.status !== "sealed") {
@@ -358,9 +371,51 @@ export function suggestionsFrom(fields: { field: string; value: unknown; rawText
       }
       case "expiry": {
         const e = v as { date?: unknown; kind?: unknown } | null;
-        const date = typeof e?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(e.date) ? e.date : null;
+        // A day that exists: 2026-02-30 would vanish from a date field without a word.
+        const date = typeof e?.date === "string" && isCalendarDate(e.date) ? e.date : null;
         const kind = typeof e?.kind === "string" && (EXPIRY_KINDS as readonly string[]).includes(e.kind) ? (e.kind as ExpiryKind) : "unknown";
         if (date || f.rawText) out.expiry = { date, kind, printed: f.rawText?.slice(0, 100) ?? null };
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * What the reader found that cannot go into the form as it is — an amount
+ * that is not a number, a unit stock is not kept in, a barcode that is not
+ * one, a day that does not exist — with what it read, so the screen can show
+ * it beside the field to correct or leave empty instead of dropping it
+ * without a word.
+ */
+export function unusableReadings(
+  fields: { field: string; value: unknown; rawText: string | null }[],
+): { field: ReviewField; read: string }[] {
+  const out: { field: ReviewField; read: string }[] = [];
+  const shown = (raw: string | null, fallback: string) => (raw?.trim() || fallback).slice(0, 120);
+  for (const f of fields) {
+    const v = f.value;
+    if (v === null || v === undefined || v === "") continue;
+    switch (f.field) {
+      case "net_quantity": {
+        const q = v as { amount?: unknown; unit?: unknown };
+        const amount = typeof q?.amount === "number" ? String(q.amount) : typeof q?.amount === "string" ? q.amount : undefined;
+        const unitCode = typeof q?.unit === "string" ? normalizeUnit(q.unit) : undefined;
+        if (!(amount && DECIMAL.test(amount) && Number(amount) > 0 && unitCode)) {
+          out.push({ field: "labelQuantity", read: shown(f.rawText, `${String(q?.amount ?? "")} ${String(q?.unit ?? "")}`.trim()) });
+        }
+        break;
+      }
+      case "gtin":
+        if (!(typeof v === "string" && /^[0-9]{8,14}$/.test(v))) out.push({ field: "gtin", read: shown(f.rawText, String(v)) });
+        break;
+      case "form":
+        if (!(typeof v === "string" && (PRODUCT_FORMS as readonly string[]).includes(v))) out.push({ field: "form", read: shown(f.rawText, String(v)) });
+        break;
+      case "expiry": {
+        const e = v as { date?: unknown };
+        if (typeof e?.date === "string" && e.date && !isCalendarDate(e.date)) out.push({ field: "expiryDate", read: shown(null, e.date) });
         break;
       }
     }

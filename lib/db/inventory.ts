@@ -1045,6 +1045,52 @@ export function unitLabel(code: string | null): string {
   return code in UNITS ? UNITS[code as keyof typeof UNITS].label : code;
 }
 
+/**
+ * The item to photograph next, after `savedCaptureId` was saved with "Save
+ * and add another". A repeated tap or a retried request must not leave a
+ * trail of empty items: under the saved capture's lock, this person's item
+ * started after that save and still without a photo is the next one; only
+ * when there is none is a new one started.
+ */
+export async function nextCaptureAfter(owner: InventoryOwner, savedCaptureId: string): Promise<string> {
+  return run(owner, async (tx) => {
+    const saved = await one<{ confirmed_at: string | null }>(
+      tx,
+      sql`select confirmed_at from inventory_captures where id = ${savedCaptureId} and status = 'confirmed' for update`,
+    );
+    if (!saved?.confirmed_at) throw new InventoryError("That item is not saved.", "not_found");
+    const waiting = await one<{ id: string }>(
+      tx,
+      sql`select c.id from inventory_captures c
+           where c.status = 'open' and c.created_by = ${owner.userId} and c.created_at >= ${saved.confirmed_at}::timestamptz
+             and not exists (select 1 from inventory_document_links l
+                              where l.organization_id = c.organization_id and l.capture_id = c.id)
+           order by c.created_at, c.id
+           limit 1`,
+    );
+    if (waiting) return waiting.id;
+    const made = await one<{ id: string }>(
+      tx,
+      sql`insert into inventory_captures (organization_id, created_by) values (${owner.organizationId}, ${owner.userId}) returning id`,
+    );
+    return made!.id;
+  });
+}
+
+/** The name a saved container goes by, for "Saved: …". Null when it is not this business's. */
+export async function containerName(owner: InventoryOwner, containerId: string): Promise<string | null> {
+  const row = await run(owner, (tx) =>
+    one<{ name: string }>(
+      tx,
+      sql`select p.name from inventory_containers c
+            join inventory_lots lo on lo.organization_id = c.organization_id and lo.id = c.lot_id
+            join inventory_products p on p.organization_id = lo.organization_id and p.id = lo.product_id
+           where c.id = ${containerId}`,
+    ),
+  );
+  return row?.name ?? null;
+}
+
 /* ------------------------------------------------------------------ */
 /* One container                                                       */
 /* ------------------------------------------------------------------ */

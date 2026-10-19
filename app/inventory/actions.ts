@@ -9,6 +9,7 @@ import {
   abandonCapture,
   confirmCapture,
   createCapture,
+  nextCaptureAfter,
   recordContainerAmount,
   removeCapturePhoto,
   updateContainerDetails,
@@ -75,7 +76,8 @@ const FIELD_ERRORS: Partial<Record<ReviewField, string>> = {
 /**
  * Save the reviewed item: product, lot, container, any weighing, and its one
  * opening event (lib/db/inventory.ts confirmCapture). Pressing it twice, or
- * from two tabs, saves once.
+ * from two tabs, saves once. "Save and add another" (then=next) goes on to
+ * the next item's camera — the same next item however often it is pressed.
  */
 export async function saveCaptureAction(_prev: ReviewState, formData: FormData): Promise<ReviewState> {
   const values = formValues(formData);
@@ -103,6 +105,10 @@ export async function saveCaptureAction(_prev: ReviewState, formData: FormData):
     throw err;
   }
   revalidatePath("/inventory");
+  if (formData.get("then") === "next") {
+    const next = await nextCaptureAfter(owner, parsed.data.captureId);
+    redirect(`/inventory/capture/${next}?saved=${containerId}`);
+  }
   redirect(`/inventory?saved=${containerId}`);
 }
 
