@@ -316,6 +316,9 @@ function PurchaseCard({ c, purchase, mayWrite, csrf }: { c: ContainerView; purch
   const paperwork = cur?.document && !purchase.paperwork.some((p) => p.id === cur.document!.id) ? [cur.document, ...purchase.paperwork] : purchase.paperwork;
   const currencies = [...new Set<string>([...CURRENCIES, purchase.currency, ...(cur?.currency ? [cur.currency] : [])])];
   const last = purchase.lastBought;
+  // A new key each time the page is drawn: after any save the forms start again from what is saved
+  // (normalized, as recorded), never from what was typed into them or a refusal before it.
+  const drawn = randomUUID();
   const lastLabel = !last ? "Last bought" : last.dated === "all" ? "Last bought" : last.dated === "some" ? "Latest dated purchase" : "Most recently recorded";
   return (
     <Card title="Purchase">
@@ -366,10 +369,11 @@ function PurchaseCard({ c, purchase, mayWrite, csrf }: { c: ContainerView; purch
           <summary className="cursor-pointer text-base font-semibold text-ink">{cur ? "Correct or add purchase details" : "Add purchase details"}</summary>
           <div className="mt-3">
             <PurchaseForm
+              key={drawn}
               containerId={c.id}
               csrf={csrf}
               version={purchase.version}
-              requestKey={randomUUID()}
+              requestKey={drawn}
               current={{
                 vendor: cur?.vendor?.name ?? null,
                 acquiredOn: cur?.acquiredOn ?? null,
@@ -419,6 +423,7 @@ function PurchaseCard({ c, purchase, mayWrite, csrf }: { c: ContainerView; purch
             <summary className="cursor-pointer text-base font-semibold text-ink">Change where to buy it next time</summary>
             <div className="mt-3">
               <PreferredForm
+                key={drawn}
                 containerId={c.id}
                 csrf={csrf}
                 version={purchase.preferred.version}
