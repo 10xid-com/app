@@ -7,18 +7,22 @@ import { requirePage } from "@/lib/auth/authorize";
 import { allows } from "@/lib/auth/permissions";
 import { resolveIdentity } from "@/lib/auth/session";
 import { getContainer, unitLabel, type ContainerMovement, type ContainerView } from "@/lib/db/inventory";
+import { getContainerPurchase, type ContainerPurchase, type PurchaseRecord } from "@/lib/db/purchases";
 import { inventoryEnabledFor } from "@/lib/inventory/config";
 import { unitsFor } from "@/lib/inventory/container";
+import { CURRENCIES } from "@/lib/inventory/purchase";
 import { BASIS_LABELS, UNITS, describeBalance } from "@/lib/inventory/review";
 import { PortalShell } from "../../../portal-shell";
 import { AmountForm, DetailsForm, DoneNote, LocalTime, OpenForm } from "./container-forms";
+import { PreferredForm, PurchaseForm } from "./purchase-forms";
 
 export const metadata: Metadata = { title: "Container" };
 
 /**
  * One container: what it is, its photos, what is in it now and how that is
- * known, and every event that says so — and, for whoever may add to the
- * inventory, saying what is in it now, opening it, and where it is.
+ * known, how it was bought, and every event that says so — and, for whoever
+ * may add to the inventory, saying what is in it now, opening it, where it is,
+ * and how it was bought and where its product is bought next time.
  *
  * What is in it is never overwritten: a new amount is a new event, and the
  * label, the opening and every earlier event stay as they were recorded.
@@ -41,6 +45,8 @@ export default async function ContainerPage({
   if (!inventoryEnabledFor(businessId)) notFound();
   const c = await getContainer({ organizationId: businessId, userId: ctx.userId }, id);
   if (!c) notFound();
+  const purchase = await getContainerPurchase({ organizationId: businessId, userId: ctx.userId }, id);
+  if (!purchase) notFound();
   const mayWrite = allows(role, "inventory.write", via);
   const identity = await resolveIdentity();
   const csrf = identity.state === "active" ? identity.csrfToken : "";
@@ -159,6 +165,8 @@ export default async function ContainerPage({
         )}
       </Card>
 
+      <PurchaseCard c={c} purchase={purchase} mayWrite={mayWrite} csrf={csrf} />
+
       <Card title="What it is">
         <dl className="grid gap-2 text-sm">
           <Row label="Name">
@@ -198,8 +206,17 @@ export default async function ContainerPage({
 
       <Card title="History">
         <ol className="grid gap-3">
-          {history(c).map((item) =>
-            item.type === "movement" ? (
+          {history(c, purchase).map((item) =>
+            item.type === "purchase" ? (
+              <li key={`p-${item.r.id}`} className="text-sm text-ink">
+                <p className="font-medium">{item.r.supersedes ? "Purchase details corrected" : "Purchase details recorded"}</p>
+                <p className="text-ink-soft">{describePurchase(item.r)}</p>
+                <p className="text-xs text-ink-faint">
+                  <LocalTime iso={item.at.toISOString()} />
+                  {item.r.byYou ? " · you" : ""}
+                </p>
+              </li>
+            ) : item.type === "movement" ? (
               <li key={`m-${item.m.id}`} className={`text-sm ${item.m.voided ? "text-ink-faint line-through" : "text-ink"}`}>
                 <p className="font-medium">{describe(item.m).title}</p>
                 <p className={item.m.voided ? "" : "text-ink-soft"}>{describe(item.m).detail}</p>
@@ -227,7 +244,13 @@ export default async function ContainerPage({
 
 const STATUS: Record<string, string> = { sealed: "Sealed", open: "Open", empty: "Empty", disposed: "Gone" };
 
-const DONE: Record<string, string> = { amount: "Amount saved.", opened: "Marked opened.", details: "Saved." };
+const DONE: Record<string, string> = {
+  amount: "Amount saved.",
+  opened: "Marked opened.",
+  details: "Saved.",
+  purchase: "Purchase details saved.",
+  preferred: "Saved where to buy it next time.",
+};
 
 const EXPIRY: Record<string, string> = { best_before: "Best before", expiry: "Expires", use_by: "Use by", unknown: "Date" };
 
@@ -270,14 +293,154 @@ const CHANGE: Record<string, string> = {
 
 type HistoryItem =
   | { type: "movement"; at: Date; m: ContainerMovement }
-  | { type: "change"; at: Date; e: ContainerView["changes"][number] };
+  | { type: "change"; at: Date; e: ContainerView["changes"][number] }
+  | { type: "purchase"; at: Date; r: PurchaseRecord };
 
-/** The ledger's events and the other changes, newest first. */
-function history(c: ContainerView): HistoryItem[] {
+/** The ledger's events, the other changes and each version of the purchase details, newest first. */
+function history(c: ContainerView, purchase: ContainerPurchase): HistoryItem[] {
   return [
     ...c.movements.map((m): HistoryItem => ({ type: "movement", at: m.occurredAt, m })),
     ...c.changes.map((e): HistoryItem => ({ type: "change", at: e.at, e })),
+    ...purchase.history.map((r): HistoryItem => ({ type: "purchase", at: r.at, r })),
   ].sort((a, b) => b.at.getTime() - a.at.getTime());
+}
+
+/**
+ * How this container was bought — each fact as recorded, or "Not recorded" —
+ * and, apart from it, the product's last purchase and where it is bought next
+ * time. Nothing here says anything about what is in the container.
+ */
+function PurchaseCard({ c, purchase, mayWrite, csrf }: { c: ContainerView; purchase: ContainerPurchase; mayWrite: boolean; csrf: string }) {
+  const cur = purchase.current;
+  const others = purchase.paperwork.filter((p) => p.id !== cur?.document?.id);
+  const paperwork = cur?.document && !purchase.paperwork.some((p) => p.id === cur.document!.id) ? [cur.document, ...purchase.paperwork] : purchase.paperwork;
+  const currencies = [...new Set<string>([...CURRENCIES, purchase.currency, ...(cur?.currency ? [cur.currency] : [])])];
+  const last = purchase.lastBought;
+  const lastLabel = !last ? "Last bought" : last.dated === "all" ? "Last bought" : last.dated === "some" ? "Latest dated purchase" : "Most recently recorded";
+  return (
+    <Card title="Purchase">
+      <dl className="grid gap-2 text-sm">
+        <Row label="Bought from">
+          {cur?.vendor ? (
+            <>
+              {cur.vendor.name}
+              {cur.vendor.idCode ? <span className="ml-2 rounded bg-sunk px-1.5 py-0.5 font-mono text-xs">iD {cur.vendor.idCode}</span> : null}
+            </>
+          ) : (
+            <NotRecorded />
+          )}
+        </Row>
+        <Row label="Bought on">{cur?.acquiredOn ? formatDay(cur.acquiredOn) : <NotRecorded />}</Row>
+        <Row label="Price paid">{cur?.price != null ? `${cur.currency} ${cur.price}` : <NotRecorded />}</Row>
+        <Row label="Invoice or receipt">
+          {cur?.document ? (
+            <a href={`/api/inventory/documents/${cur.document.id}`} target="_blank" rel="noopener" className="font-medium text-brand underline">
+              {cur.document.name ?? "Open"}
+            </a>
+          ) : (
+            <NotRecorded />
+          )}
+          {others.length ? (
+            <span className="mt-1 block text-ink-soft">
+              Also attached:{" "}
+              {others.map((p, n) => (
+                <span key={p.id}>
+                  {n ? ", " : ""}
+                  <a href={`/api/inventory/documents/${p.id}`} target="_blank" rel="noopener" className="underline">
+                    {p.name ?? "invoice or receipt"}
+                  </a>
+                </span>
+              ))}
+            </span>
+          ) : null}
+        </Row>
+      </dl>
+
+      {mayWrite ? (
+        <details className="rounded-xl border border-line p-3">
+          <summary className="cursor-pointer text-base font-semibold text-ink">{cur ? "Correct or add purchase details" : "Add purchase details"}</summary>
+          <div className="mt-3">
+            <PurchaseForm
+              containerId={c.id}
+              csrf={csrf}
+              version={purchase.version}
+              requestKey={randomUUID()}
+              current={{
+                vendor: cur?.vendor?.name ?? null,
+                acquiredOn: cur?.acquiredOn ?? null,
+                price: cur?.price ?? null,
+                currency: cur?.currency ?? null,
+                documentId: cur?.document?.id ?? null,
+              }}
+              paperwork={paperwork.map((p) => ({ id: p.id, name: p.name, contentType: p.contentType, byteSize: p.byteSize }))}
+              reusable={purchase.reusable.map((p) => ({ id: p.id, name: p.name, contentType: p.contentType, byteSize: p.byteSize, usedFor: p.usedFor }))}
+              vendors={purchase.vendors}
+              currencies={currencies}
+              currency={purchase.currency}
+            />
+          </div>
+        </details>
+      ) : null}
+
+      <div className="mt-2 grid gap-2 border-t border-line pt-3">
+        <p className="text-sm font-semibold text-ink">{purchase.product.name}, any container</p>
+        <dl className="grid gap-2 text-sm">
+          <Row label={lastLabel}>
+            {last ? (
+              <>
+                {[
+                  last.acquiredOn ? formatDay(last.acquiredOn) : null,
+                  last.vendorName ? `from ${last.vendorName}` : "seller not recorded",
+                  last.price != null ? `${last.currency} ${last.price}` : "price not recorded",
+                ]
+                  .filter(Boolean)
+                  .join(", ")}
+                {last.dated === "none" ? <span className="text-ink-soft"> (no purchase dates recorded)</span> : null}
+                {last.containerId === c.id ? <span className="text-ink-soft"> — this container</span> : null}
+              </>
+            ) : (
+              <NotRecorded />
+            )}
+          </Row>
+          <Row label="Next time, buy from">
+            {purchase.preferred.vendor ? purchase.preferred.vendor.name : <span className="text-ink-soft">No preferred seller</span>}
+            {purchase.preferred.alternatives.length ? (
+              <span className="block text-ink-soft">Also from: {purchase.preferred.alternatives.join(", ")}</span>
+            ) : null}
+          </Row>
+        </dl>
+        {mayWrite ? (
+          <details className="rounded-xl border border-line p-3">
+            <summary className="cursor-pointer text-base font-semibold text-ink">Change where to buy it next time</summary>
+            <div className="mt-3">
+              <PreferredForm
+                containerId={c.id}
+                csrf={csrf}
+                version={purchase.preferred.version}
+                current={purchase.preferred.vendor?.name ?? null}
+                vendors={purchase.vendors}
+              />
+            </div>
+          </details>
+        ) : null}
+      </div>
+    </Card>
+  );
+}
+
+function NotRecorded() {
+  return <span className="text-ink-soft">Not recorded</span>;
+}
+
+/** One version of the purchase details, in words. */
+function describePurchase(r: PurchaseRecord): string {
+  const parts = [
+    r.vendor ? `From ${r.vendor.name}` : null,
+    r.acquiredOn ? formatDay(r.acquiredOn) : null,
+    r.price != null ? `${r.currency} ${r.price}` : null,
+    r.document ? (r.document.name ?? "Invoice or receipt") : null,
+  ].filter(Boolean);
+  return parts.length ? parts.join(" · ") : "Nothing known: the earlier details were cleared";
 }
 
 /** One ledger event in words: what it says is in the container (or changed), and how that is known. */

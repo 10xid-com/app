@@ -467,7 +467,63 @@ describe("the preferred seller", () => {
   });
 });
 
+describe("the preferred seller's revision", () => {
+  test("a page that showed none cannot set one after it was set and cleared again; asking for what is already so is accepted", async () => {
+    const jar = await catalogue({ productName: `Revision ${RUN}` });
+    const product = await productOf(jar);
+    const never = (await view(jar))!.preferred.version;
+    expect(never).toBe("-");
+    expect((await preferred(jar, never, `${CO} Shop A`)).ok).toBe(true);
+    const set = (await view(jar))!.preferred.version;
+    expect((await preferred(jar, set, "")).ok).toBe(true);
+    const cleared = (await view(jar))!.preferred;
+    expect(cleared.vendor).toBeNull();
+    expect([cleared.version === "-", cleared.version === set]).toEqual([false, false]);
+
+    // The first page, which showed "none" before any of this, asks for Shop B: refused; the later clear stands.
+    expect(await preferred(jar, never, `${CO} Shop B`)).toMatchObject({ ok: false, error: expect.stringMatching(/changed after this page was opened/) });
+    // Its own "set Shop A", sent again after the clear: refused too.
+    expect(await preferred(jar, never, `${CO} Shop A`)).toMatchObject({ ok: false, error: expect.stringMatching(/changed after this page was opened/) });
+    expect((await view(jar))!.preferred.vendor).toBeNull();
+    // Asking for none while there is none — a retried clear, or an old page — changes nothing and is accepted.
+    expect((await preferred(jar, set, "")).ok).toBe(true);
+    expect((await preferred(jar, never, "")).ok).toBe(true);
+    expect((await view(jar))!.preferred.version).toBe(cleared.version);
+    expect(await rows(`select rank, active from inventory_sourcing_preferences where product_id = $1`, [product])).toEqual([{ rank: 1, active: false }]);
+
+    // Set again from the page that saw it cleared: a new revision, and the cleared one cannot be used twice.
+    expect((await preferred(jar, cleared.version, `${CO} Shop B`)).ok).toBe(true);
+    expect(await preferred(jar, cleared.version, `${CO} Shop C`)).toMatchObject({ ok: false });
+    expect((await view(jar))!.preferred.vendor?.name).toBe(`${CO} Shop B`);
+  });
+});
+
 describe("the product's last purchase", () => {
+  test("a newer purchase known only by its date, or one known only by its invoice, counts; a record cleared of everything does not", async () => {
+    const jar1 = await catalogue({ productName: `Facts ${RUN}` });
+    const product = await productOf(jar1);
+    const [jar2, jar3] = [await catalogue({ product }), await catalogue({ product })];
+    const last = async () => (await view(jar1))!.lastBought;
+
+    expect((await purchase(jar1, "-", { vendor: `${CO} Older`, price: "8", acquiredOn: "2026-08-01" })).ok).toBe(true);
+    expect((await purchase(jar2, "-", { acquiredOn: "2026-10-01" })).ok).toBe(true);
+    // The later purchase wins on its date; what is not known about it is shown as not known.
+    expect(await last()).toEqual({ containerId: jar2, acquiredOn: "2026-10-01", vendorName: null, price: null, currency: null, dated: "all" });
+
+    // An undated purchase known only by its invoice is a purchase too: the order is then only partly known.
+    const doc = (await paperwork(jar3, pdf(`only-invoice-${RUN}`), "Only invoice.pdf", "application/pdf")).body.id as string;
+    expect((await purchase(jar3, "-", { documentId: doc })).ok).toBe(true);
+    expect(await last()).toMatchObject({ containerId: jar2, dated: "some" });
+
+    // The newer one cleared of everything no longer counts: the older one is the latest dated purchase again.
+    expect((await purchase(jar2, (await view(jar2))!.version, {})).ok).toBe(true);
+    expect(await last()).toEqual({ containerId: jar1, acquiredOn: "2026-08-01", vendorName: `${CO} Older`, price: "8.00", currency: "CAD", dated: "some" });
+
+    // With the older one cleared too, only the undated, invoice-only purchase is left: most recently recorded.
+    expect((await purchase(jar1, (await view(jar1))!.version, {})).ok).toBe(true);
+    expect(await last()).toEqual({ containerId: jar3, acquiredOn: null, vendorName: null, price: null, currency: null, dated: "none" });
+  });
+
   test("comes from each jar's current record, by purchase date; without dates it is only the most recently recorded", async () => {
     const name = `Last bought ${RUN}`;
     const jar1 = await catalogue({ productName: name });

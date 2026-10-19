@@ -164,7 +164,20 @@ function toRecord(r: RecordRow, owner: InventoryOwner): PurchaseRecord {
   };
 }
 
-const PREFERENCE_VERSION = sql`'p1.' || sp.id::text || '.' || (extract(epoch from sp.updated_at) * 1000000)::bigint::text`;
+/**
+ * The preferred seller's revision: its LATEST rank-1 row for the product,
+ * active or retired, and when that row last changed. Rows are retired, never
+ * removed, so clearing the preferred seller moves the revision on too — only a
+ * product whose preferred seller was never set has "-". A page that showed
+ * "none" before someone set it and cleared it again cannot then set it as if
+ * nothing had happened.
+ */
+const PREFERENCE_REVISION = (productId: string) => sql`coalesce((
+    select 'p1.' || x.id::text || '.' || (extract(epoch from x.updated_at) * 1000000)::bigint::text
+      from inventory_sourcing_preferences x
+     where x.product_id = ${productId} and x.rank = 1
+     order by x.updated_at desc, x.created_at desc, x.id desc
+     limit 1), '-')`;
 
 /** One container's purchase, its product's last purchase and preferred seller. Null when the container is not this business's. */
 export async function getContainerPurchase(owner: InventoryOwner, containerId: string): Promise<ContainerPurchase | null> {
@@ -233,7 +246,8 @@ export async function getContainerPurchase(owner: InventoryOwner, containerId: s
              where lo.product_id = ${c.product_id}
                and not exists (select 1 from inventory_container_acquisitions b
                                 where b.organization_id = a.organization_id and b.supersedes_id = a.id)
-               and (a.vendor_id is not null or a.price is not null)
+               -- Any fact counts (a date alone, an invoice alone); only a record cleared of everything does not.
+               and num_nonnulls(a.vendor_id, a.order_line_id, a.document_id, a.acquired_on, a.price, nullif(btrim(a.note), '')) > 0
           )
           select h.container_id, dir.name as vendor_name, h.acquired_on::text, h.price::text, h.currency::text,
                  (select count(*) from heads where acquired_on is not null)::int as dated,
@@ -244,12 +258,13 @@ export async function getContainerPurchase(owner: InventoryOwner, containerId: s
            limit 1`,
     );
 
-    const preferences = await all<{ rank: number; vendor_id: string; name: string | null; id_code: string | null; version: string }>(
+    // The revision and the preferences it describes, in one statement (one snapshot).
+    const preferences = await all<{ revision: string; rank: number | null; vendor_id: string | null; name: string | null; id_code: string | null }>(
       tx,
-      sql`select sp.rank, sp.vendor_id, dir.name, dir.id_code, ${PREFERENCE_VERSION} as version
-            from inventory_sourcing_preferences sp
+      sql`select r.revision, sp.rank, sp.vendor_id, dir.name, dir.id_code
+            from (select ${PREFERENCE_REVISION(c.product_id)} as revision) r
+            left join inventory_sourcing_preferences sp on sp.product_id = ${c.product_id} and sp.active
             left join inventory_business_directory dir on dir.organization_id = sp.organization_id and dir.business_id = sp.vendor_id
-           where sp.product_id = ${c.product_id} and sp.active
            order by sp.rank, sp.created_at`,
     );
     const first = preferences.find((p) => p.rank === 1);
@@ -289,9 +304,9 @@ export async function getContainerPurchase(owner: InventoryOwner, containerId: s
           }
         : null,
       preferred: {
-        version: first?.version ?? "-",
-        vendor: first ? { businessId: first.vendor_id, name: first.name ?? "", idCode: first.id_code } : null,
-        alternatives: preferences.filter((p) => p.rank > 1 && p.vendor_id !== first?.vendor_id && p.name).map((p) => p.name!),
+        version: preferences[0]?.revision ?? "-",
+        vendor: first?.vendor_id ? { businessId: first.vendor_id, name: first.name ?? "", idCode: first.id_code } : null,
+        alternatives: preferences.filter((p) => p.rank !== null && p.rank > 1 && p.vendor_id !== first?.vendor_id && p.name).map((p) => p.name!),
       },
       vendors: vendors.map((v) => v.name),
       currency: current?.currency ?? lastCurrency?.currency ?? "CAD",
@@ -510,16 +525,19 @@ export async function savePreferredVendor(owner: InventoryOwner, input: Preferre
       if (!c) throw new InventoryError("That item is not in this inventory.", "not_found");
       await tx.execute(sql`select id from inventory_products where id = ${c.product_id} for update`);
 
-      const cur = await one<{ id: string; vendor_id: string; name: string | null; version: string }>(
+      // After the product's lock, in one statement: the revision and the current preferred seller.
+      const now = await one<{ revision: string; id: string | null; name: string | null }>(
         tx,
-        sql`select sp.id, sp.vendor_id, dir.name, ${PREFERENCE_VERSION} as version
-              from inventory_sourcing_preferences sp
-              left join inventory_business_directory dir on dir.organization_id = sp.organization_id and dir.business_id = sp.vendor_id
-             where sp.product_id = ${c.product_id} and sp.active and sp.rank = 1`,
+        sql`select r.revision, sp.id, dir.name
+              from (select ${PREFERENCE_REVISION(c.product_id)} as revision) r
+              left join inventory_sourcing_preferences sp on sp.product_id = ${c.product_id} and sp.active and sp.rank = 1
+              left join inventory_business_directory dir on dir.organization_id = sp.organization_id and dir.business_id = sp.vendor_id`,
       );
+      const cur = now?.id ? { id: now.id, name: now.name } : null;
+      // Asking for what is already so changes nothing, whatever page it came from.
       const same = cur ? input.vendor !== null && (cur.name ?? "").toLowerCase() === input.vendor.toLowerCase() : input.vendor === null;
       if (same) return { changed: false };
-      if ((cur?.version ?? "-") !== input.version) throw new InventoryError(CHANGED_SINCE, "conflict");
+      if ((now?.revision ?? "-") !== input.version) throw new InventoryError(CHANGED_SINCE, "conflict");
 
       if (cur) await tx.execute(sql`update inventory_sourcing_preferences set active = false, updated_at = clock_timestamp() where id = ${cur.id}`);
       if (input.vendor !== null) {
