@@ -210,7 +210,7 @@ export default async function ContainerPage({
             item.type === "purchase" ? (
               <li key={`p-${item.r.id}`} className="text-sm text-ink">
                 <p className="font-medium">{item.r.supersedes ? "Purchase details corrected" : "Purchase details recorded"}</p>
-                <p className="text-ink-soft">{describePurchase(item.r)}</p>
+                <p className="text-ink-soft">{describePurchase(item.r, purchase.history.find((r) => r.id === item.r.supersedes) ?? null)}</p>
                 <p className="text-xs text-ink-faint">
                   <LocalTime iso={item.at.toISOString()} />
                   {item.r.byYou ? " · you" : ""}
@@ -437,15 +437,33 @@ function NotRecorded() {
   return <span className="text-ink-soft">Not recorded</span>;
 }
 
-/** One version of the purchase details, in words. */
-function describePurchase(r: PurchaseRecord): string {
-  const parts = [
-    r.vendor ? `From ${r.vendor.name}` : null,
-    r.acquiredOn ? formatDay(r.acquiredOn) : null,
-    r.price != null ? `${r.currency} ${r.price}` : null,
-    r.document ? (r.document.name ?? "Invoice or receipt") : null,
-  ].filter(Boolean);
-  return parts.length ? parts.join(" · ") : "Nothing known: the earlier details were cleared";
+/**
+ * One version of the purchase details, in words: what it said when it was
+ * first recorded, and for a correction what it changed — a fact added,
+ * changed, or cleared back to not known — from the version it replaced.
+ */
+function describePurchase(r: PurchaseRecord, before: PurchaseRecord | null): string {
+  const facts: [string, (x: PurchaseRecord) => string | null][] = [
+    ["Seller", (x) => x.vendor?.name ?? null],
+    ["Bought on", (x) => (x.acquiredOn ? formatDay(x.acquiredOn) : null)],
+    ["Price", (x) => (x.price != null ? `${x.currency} ${x.price}` : null)],
+    ["Invoice or receipt", (x) => (x.document ? (x.document.name ?? "a file") : null)],
+  ];
+  if (!before) {
+    const said = facts.map(([label, of]) => (of(r) ? `${label}: ${of(r)}` : null)).filter(Boolean);
+    return said.length ? said.join(" · ") : "Nothing known";
+  }
+  const changed = facts
+    .map(([label, of]) => {
+      const was = of(before);
+      const now = of(r);
+      if (was === now) return null;
+      if (was === null) return `${label}: ${now}`;
+      if (now === null) return `${label} cleared (was ${was})`;
+      return `${label}: ${was} → ${now}`;
+    })
+    .filter(Boolean);
+  return changed.length ? changed.join(" · ") : "Nothing that is shown here changed";
 }
 
 /** One ledger event in words: what it says is in the container (or changed), and how that is known. */
