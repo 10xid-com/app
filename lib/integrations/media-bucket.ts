@@ -95,7 +95,12 @@ async function send(b: Bucket, url: string, init: RequestInit, what: string): Pr
 
 export async function putObject(key: string, body: Uint8Array<ArrayBuffer>, contentType: string): Promise<void> {
   const b = need();
-  await send(b, objectUrl(b, key), { method: "PUT", body, headers: { "content-type": contentType } }, "the upload");
+  // aws4fetch passes a signed Request to fetch, whose body is then a stream.
+  // S3 requires its length explicitly; a view may be smaller than its buffer.
+  await send(b, objectUrl(b, key), {
+    method: "PUT", body,
+    headers: { "content-type": contentType, "content-length": String(body.byteLength) },
+  }, "the upload");
 }
 
 /**
