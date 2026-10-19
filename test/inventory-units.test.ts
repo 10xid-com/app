@@ -248,3 +248,16 @@ describe("inventory photos are never deleted from the store", () => {
     warn.mockRestore();
   });
 });
+
+describe("what the portal's answer to an upload means for a photo on the phone", () => {
+  test("it is dropped only when it can never be accepted; otherwise kept, and retried only when that can help", async () => {
+    const { uploadOutcome } = await import("@/app/inventory/capture/[id]/photo-queue");
+    expect(uploadOutcome(200, { documentId: "d1" })).toEqual({ ok: true, documentId: "d1", note: null });
+    for (const status of [401, 403, 404]) expect(uploadOutcome(status, {}), String(status)).toMatchObject({ ok: false, keep: true, retry: false });
+    expect(uploadOutcome(409, { code: "saved" })).toMatchObject({ ok: false, keep: true, retry: false, message: expect.stringContaining("saved") });
+    expect(uploadOutcome(409, { code: "closed" })).toMatchObject({ ok: false, keep: true, retry: false, message: expect.stringContaining("discarded") });
+    for (const status of [408, 422, 429, 500, 502, 503]) expect(uploadOutcome(status, {}), String(status)).toMatchObject({ ok: false, keep: true, retry: true });
+    for (const status of [400, 413, 415]) expect(uploadOutcome(status, {}), String(status)).toMatchObject({ ok: false, keep: false });
+  });
+});
+

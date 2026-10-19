@@ -40,7 +40,7 @@ export type InventoryOwner = { organizationId: string; userId: string };
 export class InventoryError extends Error {
   constructor(
     message: string,
-    readonly code: "not_found" | "closed" | "invalid",
+    readonly code: "not_found" | "closed" | "saved" | "invalid" | "unsent",
     readonly field?: string,
   ) {
     super(message);
@@ -337,6 +337,8 @@ export type PhotoRegistration = {
   state: "pending" | "stored" | "failed";
   /** False when this file was already a document of this business. */
   created: boolean;
+  /** Set when the photo was added to an item already saved: the container it is now evidence for. */
+  addedToSaved: string | null;
 };
 
 /**
@@ -344,7 +346,13 @@ export type PhotoRegistration = {
  *
  * The capture must still be open: a capture being confirmed holds its row, so
  * a photo arriving at the same moment waits and is then refused rather than
- * linked to an item already saved.
+ * linked to an item already saved — with code "saved", so the phone keeps it.
+ *
+ * Unless `afterSave`: a photo that was still on a phone (offline, never sent)
+ * when the item was saved from somewhere else can be added afterwards, as
+ * evidence only. It is linked to the capture and to the container, lot and
+ * product the save made; nothing in the stock changes, and the owner's
+ * decision to add it is written to the audit log once per container.
  */
 export async function registerCapturePhoto(
   owner: InventoryOwner,
@@ -358,18 +366,17 @@ export async function registerCapturePhoto(
     /** Used only when the file is new here. */
     storageKey: string;
   },
+  options: { afterSave?: boolean } = {},
 ): Promise<PhotoRegistration> {
   return run(owner, async (tx) => {
-    const capture = await one<{ status: string }>(
+    const capture = await one<{ status: string; container_id: string | null }>(
       tx,
-      sql`select status from inventory_captures where id = ${captureId} for share`,
+      sql`select status, container_id from inventory_captures where id = ${captureId} for share`,
     );
     if (!capture) throw new InventoryError("That item is not here.", "not_found");
-    if (capture.status !== "open") {
-      throw new InventoryError(
-        capture.status === "confirmed" ? "This item is already saved. Start a new one for another container." : "This item was discarded.",
-        "closed",
-      );
+    if (capture.status === "abandoned") throw new InventoryError("This item was discarded.", "closed");
+    if (capture.status === "confirmed" && !options.afterSave) {
+      throw new InventoryError("This item was saved before this photo arrived. It can be added to the saved item.", "saved");
     }
 
     type Doc = { id: string; storage_key: string; content_type: string; state: PhotoRegistration["state"] };
@@ -398,16 +405,57 @@ export async function registerCapturePhoto(
           on conflict do nothing`,
     );
 
+    let addedToSaved: string | null = null;
+    if (capture.status === "confirmed" && capture.container_id) {
+      const saved = await one<{ lot_id: string; product_id: string }>(
+        tx,
+        sql`select c.lot_id, l.product_id from inventory_containers c
+              join inventory_lots l on l.organization_id = c.organization_id and l.id = c.lot_id
+             where c.id = ${capture.container_id}`,
+      );
+      if (!saved) throw new InventoryError("That item is not here.", "not_found");
+      const linked = await one<{ id: string }>(
+        tx,
+        sql`insert into inventory_document_links (organization_id, document_id, container_id, role)
+            values (${owner.organizationId}, ${doc.id}, ${capture.container_id}, 'label')
+            on conflict do nothing returning id`,
+      );
+      for (const [column, id] of [
+        ["lot_id", saved.lot_id],
+        ["product_id", saved.product_id],
+      ] as const) {
+        await tx.execute(
+          sql`insert into inventory_document_links (organization_id, document_id, ${sql.raw(column)}, role)
+              values (${owner.organizationId}, ${doc.id}, ${id}, 'label')
+              on conflict do nothing`,
+        );
+      }
+      if (linked) {
+        await tx.execute(
+          sql`insert into audit_events (organization_id, actor_user_id, action, target)
+              values (${owner.organizationId}, ${owner.userId}, 'inventory.evidence.added_after_save',
+                      ${`inventory_containers:${capture.container_id}`})`,
+        );
+      }
+      addedToSaved = capture.container_id;
+    }
+
     return {
       documentId: doc.id,
       storageKey: doc.storage_key,
       contentType: doc.content_type,
       state: doc.state,
       created: !!inserted,
+      addedToSaved,
     };
   });
 }
 
+/**
+ * Record how an upload of the file ended. Stored is final: two uploads of the
+ * same bytes can overlap (a retry, a second tab), and one that fails AFTER
+ * another has stored the file must not mark it failed — the file is there.
+ */
 export async function markDocument(
   owner: InventoryOwner,
   documentId: string,
@@ -416,9 +464,26 @@ export async function markDocument(
 ): Promise<void> {
   await run(owner, (tx) =>
     tx.execute(
-      sql`update inventory_documents set state = ${state}, error = ${error}, updated_at = now() where id = ${documentId}`,
+      sql`update inventory_documents set state = ${state}, error = ${error}, updated_at = now()
+           where id = ${documentId} and (${state} = 'stored' or state <> 'stored')`,
     ),
   );
+}
+
+/**
+ * Take a photo out of an item that is still open — the way on when a photo
+ * never finished arriving (its phone is gone, or it keeps failing). The file
+ * itself is kept, and so is anything else it is evidence for.
+ */
+export async function removeCapturePhoto(owner: InventoryOwner, captureId: string, documentId: string): Promise<void> {
+  await run(owner, async (tx) => {
+    const capture = await one<{ status: string }>(tx, sql`select status from inventory_captures where id = ${captureId} for update`);
+    if (!capture) throw new InventoryError("That item is not here.", "not_found");
+    if (capture.status !== "open") throw new InventoryError("This item is no longer open.", "closed");
+    await tx.execute(
+      sql`delete from inventory_document_links where capture_id = ${captureId} and document_id = ${documentId}`,
+    );
+  });
 }
 
 /** The containers a document is already evidence for. */
@@ -563,6 +628,24 @@ export async function confirmCapture(owner: InventoryOwner, input: ReviewInput, 
       if (!capture) throw new InventoryError("That item is not here.", "not_found");
       if (capture.status === "confirmed") return { containerId: capture.container_id!, created: false };
       if (capture.status !== "open") throw new InventoryError("This item was discarded.", "closed");
+
+      // Every photo of the item must have arrived: saved first, a photo still
+      // on its way could never be added afterwards. Checked here, under the
+      // capture's lock, whatever the screen did — another tab, another phone.
+      const unsent = await one<{ n: number }>(
+        tx,
+        sql`select count(*)::int as n
+              from inventory_document_links l
+              join inventory_documents d on d.organization_id = l.organization_id and d.id = l.document_id
+             where l.capture_id = ${input.captureId} and d.state <> 'stored'`,
+      );
+      if (unsent && unsent.n > 0) {
+        throw new InventoryError(
+          `${unsent.n === 1 ? "A photo of this item has" : `${unsent.n} photos of this item have`} not finished arriving. ` +
+            "Send again from the phone that took it, or remove it from this item, then save.",
+          "unsent",
+        );
+      }
 
       const productId = input.product === "new" ? await newProduct(tx, owner, input, plan) : await existingProduct(tx, input.product);
       const lotId = await lotFor(tx, owner, productId, input);

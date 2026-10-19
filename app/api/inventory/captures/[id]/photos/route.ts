@@ -19,7 +19,10 @@ import { PhotoError, addCapturePhoto } from "@/lib/inventory/photos";
  * media's cleanup, and never handed out by a presigned address.
  *
  * Sending the same bytes again — a retry after a dropped connection, or the
- * same label photo for a second jar — answers with the same document. The
+ * same label photo for a second jar — answers with the same document. A photo
+ * for an item already saved is refused (409, code "saved") unless the person
+ * chose to add it to the saved item (afterSave=1): then it becomes evidence
+ * for the container that save made, with nothing in the stock changed. The
  * answer says which saved containers that file is already evidence for, so the
  * screen can say a second jar is a second container.
  *
@@ -54,6 +57,8 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
   if (file.size > MAX_PHOTO_BYTES) return NextResponse.json({ error: "That photo is over 9MB." }, { status: 413 });
 
   const claimed = form.get("sha256");
+  // The person chose, on a saved item's page, to add photos left on the phone (registerCapturePhoto).
+  const afterSave = form.get("afterSave") === "1";
   const takenAt = Number(form.get("capturedAt"));
   const capturedAt = Number.isFinite(takenAt) && takenAt > 0 ? new Date(takenAt) : null;
 
@@ -63,12 +68,14 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
       claimedSha256: typeof claimed === "string" && claimed ? claimed : null,
       originalName: file.name ? file.name.slice(0, 200) : null,
       capturedAt: capturedAt && !Number.isNaN(capturedAt.getTime()) ? capturedAt : null,
+      afterSave,
     });
     return NextResponse.json(photo);
   } catch (err) {
     if (err instanceof PhotoError) return NextResponse.json({ error: err.message }, { status: err.status });
     if (err instanceof InventoryError) {
-      return NextResponse.json({ error: err.message }, { status: err.code === "not_found" ? 404 : 409 });
+      // `code` tells the phone a saved item ("saved") from a discarded one ("closed"): it keeps the photo either way.
+      return NextResponse.json({ error: err.message, code: err.code }, { status: err.code === "not_found" ? 404 : 409 });
     }
     if (err instanceof BucketError) return NextResponse.json({ error: err.message }, { status: 502 });
     throw err;

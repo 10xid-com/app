@@ -36,6 +36,8 @@ export type AddedPhoto = {
   reused: boolean;
   /** Containers already saved with this same file as evidence. */
   evidenceFor: { containerId: string; productName: string; createdAt: string }[];
+  /** Set when it was added to an item already saved: the container it is now evidence for. */
+  addedToSaved: string | null;
 };
 
 export async function addCapturePhoto(
@@ -47,6 +49,8 @@ export async function addCapturePhoto(
     claimedSha256: string | null;
     originalName: string | null;
     capturedAt: Date | null;
+    /** The person chose to add it to the item though the item is already saved (see registerCapturePhoto). */
+    afterSave?: boolean;
   },
 ): Promise<AddedPhoto> {
   if (input.bytes.length === 0) throw new PhotoError("Choose a photo.", 400);
@@ -59,14 +63,19 @@ export async function addCapturePhoto(
     throw new PhotoError("The photo changed on its way here. It will be sent again.", 422);
   }
 
-  const reg = await registerCapturePhoto(owner, captureId, {
-    sha256: digest,
-    contentType: type.contentType,
-    byteSize: input.bytes.length,
-    originalName: input.originalName,
-    capturedAt: input.capturedAt,
-    storageKey: `inventory/${owner.organizationId}/${randomBytes(24).toString("base64url")}.${type.extension}`,
-  });
+  const reg = await registerCapturePhoto(
+    owner,
+    captureId,
+    {
+      sha256: digest,
+      contentType: type.contentType,
+      byteSize: input.bytes.length,
+      originalName: input.originalName,
+      capturedAt: input.capturedAt,
+      storageKey: `inventory/${owner.organizationId}/${randomBytes(24).toString("base64url")}.${type.extension}`,
+    },
+    { afterSave: input.afterSave === true },
+  );
 
   if (reg.state !== "stored") {
     try {
@@ -84,5 +93,6 @@ export async function addCapturePhoto(
     contentType: reg.contentType,
     reused: !reg.created,
     evidenceFor: evidence.map((e) => ({ ...e, createdAt: e.createdAt.toISOString() })),
+    addedToSaved: reg.addedToSaved,
   };
 }

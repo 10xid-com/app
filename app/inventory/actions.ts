@@ -4,7 +4,7 @@ import { notFound, redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireAction } from "@/lib/auth/authorize";
-import { InventoryError, abandonCapture, confirmCapture, createCapture } from "@/lib/db/inventory";
+import { InventoryError, abandonCapture, confirmCapture, createCapture, removeCapturePhoto } from "@/lib/db/inventory";
 import { inventoryEnabledFor } from "@/lib/inventory/config";
 import { REVIEW_FIELDS, formValues, planOpening, reviewSchema, type ReviewField } from "@/lib/inventory/review";
 
@@ -95,4 +95,26 @@ export async function discardCaptureAction(formData: FormData) {
   if (typeof raw === "string" && z.uuid().safeParse(raw).success) await abandonCapture(owner, raw);
   revalidatePath("/inventory");
   redirect("/inventory");
+}
+
+/**
+ * Take a photo out of an item that is still open: the way on when a photo
+ * never finished arriving, since the item cannot be saved until every photo
+ * of it has. The file and anything else it is evidence for are kept.
+ */
+export async function removePhotoAction(formData: FormData) {
+  const captureId = formData.get("captureId");
+  const documentId = formData.get("documentId");
+  const valid = typeof captureId === "string" && z.uuid().safeParse(captureId).success;
+  const owner = await requireInventoryWriter(formData, valid ? `/inventory/capture/${captureId}` : "/inventory");
+  if (!valid || typeof documentId !== "string" || !z.uuid().safeParse(documentId).success) notFound();
+  try {
+    await removeCapturePhoto(owner, captureId, documentId);
+  } catch (err) {
+    if (err instanceof InventoryError && err.code === "not_found") notFound();
+    if (!(err instanceof InventoryError)) throw err;
+    // A saved or discarded item keeps its photos; its page says what it is now.
+  }
+  revalidatePath(`/inventory/capture/${captureId}`);
+  redirect(`/inventory/capture/${captureId}`);
 }

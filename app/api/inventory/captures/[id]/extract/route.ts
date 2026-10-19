@@ -4,7 +4,7 @@ import { authorizeRequest } from "@/lib/auth/authorize";
 import { InventoryError } from "@/lib/db/inventory";
 import { BucketError } from "@/lib/integrations/media-bucket";
 import { inventoryEnabledFor } from "@/lib/inventory/config";
-import { readCaptureLabels } from "@/lib/inventory/extract";
+import { MAX_IMAGES, readCaptureLabels } from "@/lib/inventory/extract";
 
 /**
  * "Read the labels": the capture's photos to the label reader
@@ -40,13 +40,13 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
         return NextResponse.json({ error: `Automatic reading is off. ${outcome.reason}` }, { status: 409 });
       case "no_photos":
         return NextResponse.json(
-          { error: outcome.skipped ? "These photos are HEIC, which the reader cannot open. Fill in what you can." : "Add a photo first." },
+          { error: outcome.notRead.unreadable ? "These photos are HEIC, which the reader cannot open. Fill in what you can." : "Add a photo first." },
           { status: 400 },
         );
       case "done":
-        return NextResponse.json({ status: "done", fields: outcome.fields, skipped: outcome.skipped });
+        return NextResponse.json({ status: "done", fields: outcome.fields, read: outcome.read, notRead: outcome.notRead, limit: MAX_IMAGES });
       case "failed":
-        return NextResponse.json({ status: "failed", error: outcome.error, skipped: outcome.skipped });
+        return NextResponse.json({ status: "failed", error: outcome.error, read: outcome.read, notRead: outcome.notRead, limit: MAX_IMAGES });
     }
   } catch (err) {
     if (err instanceof InventoryError) {

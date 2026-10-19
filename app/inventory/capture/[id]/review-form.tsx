@@ -125,7 +125,9 @@ function FormBody({
   const [product, setProduct] = useState(values.product ?? "new");
   const [status, setStatus] = useState(values.status ?? "");
   const [amount, setAmount] = useState(values.amount ?? "");
-  const unsent = useSyncExternalStore(subscribeOutstanding, () => outstandingFor(captureId), () => 0);
+  // Null until the photo queue on this phone has been looked in.
+  const unsent = useSyncExternalStore(subscribeOutstanding, () => outstandingFor(captureId), () => null);
+  const waitingForPhotos = unsent === null || unsent > 0;
   const [single, setSingle] = useState(values.single === "on");
   const [hasLabel, setHasLabel] = useState(Boolean(values.labelQuantity));
   const isNew = product === "new";
@@ -349,14 +351,18 @@ function FormBody({
         </Field>
       </Fieldset>
 
-      {unsent > 0 ? (
+      {unsent === null ? (
+        <p role="status" className="text-sm text-ink-soft">
+          Checking this phone for photos still to send…
+        </p>
+      ) : unsent > 0 ? (
         <p role="status" className="text-sm text-ink-soft">
           {unsent === 1 ? "1 photo is" : `${unsent} photos are`} still on the way. Save is ready once {unsent === 1 ? "it has" : "they have"} arrived.
         </p>
       ) : null}
       <button
         type="submit"
-        disabled={pending || unsent > 0}
+        disabled={pending || waitingForPhotos}
         aria-busy={pending}
         className="min-h-14 w-full rounded-xl bg-brand-surface px-5 py-3 text-base font-semibold text-brand-on-surface hover:bg-brand-surface-hover disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
       >

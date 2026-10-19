@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type Ch
 import { useRouter } from "next/navigation";
 import { CSRF_HEADER } from "@/lib/auth/csrf-names";
 import { Icon } from "../../../_components/icons";
-import { forget, keep, setOutstanding, waitingFor, type QueuedPhoto } from "./photo-queue";
+import { forget, keep, queuePersists, sendPhoto, setOutstanding, waitingFor, type QueuedPhoto } from "./photo-queue";
 
 /**
  * The phone end of a capture: take or choose photos, send them, read them.
@@ -17,12 +17,17 @@ import { forget, keep, setOutstanding, waitingFor, type QueuedPhoto } from "./ph
  *   * Each photo is redrawn here as a JPEG, at most 2048px on its long side,
  *     upright (the camera's orientation applied, then dropped) and without
  *     its metadata — the location a phone writes into every photo never
- *     leaves the phone. A HEIC this browser cannot open is sent as it is, if
- *     it is small enough; the reader skips it, a person can still read it.
+ *     leaves the phone. A photo this browser cannot redraw (a HEIC it cannot
+ *     open) is not sent at all.
  *   * Every photo is kept on the phone (./photo-queue.ts) until the portal
  *     says it is stored. No signal, a locked phone, a reload: it is sent when
  *     the page is open and the phone is online again, oldest first, one at a
- *     time, waiting longer after each failure.
+ *     time, waiting longer after each failure. Where this browser will not
+ *     keep photos on the phone, the page says to stay open until they are sent.
+ *   * A photo the portal has but never finished storing can be taken out of
+ *     the item (on the page, below this), so an item is never stuck: the
+ *     portal saves an item only once every photo of it has arrived.
+ *   * The reader reads at most `readLimit` photos; the screen says so.
  *   * The portal checks the hash computed here, and the same bytes sent twice
  *     are one photo — a retry can never make a second copy.
  */
@@ -47,6 +52,7 @@ export function CaptureWorkbench({
   photos,
   reader,
   reading,
+  readLimit,
 }: {
   captureId: string;
   csrf: string;
@@ -55,11 +61,18 @@ export function CaptureWorkbench({
   reader: string | null;
   /** The last reading's outcome, as the page knows it. */
   reading: { status: string; error: string | null } | null;
+  /** The most photos the label reader is sent. */
+  readLimit: number;
 }) {
   const router = useRouter();
   const [items, setItems] = useState<Local[]>([]);
   const [busyReading, setBusyReading] = useState(false);
   const [readError, setReadError] = useState<string | null>(null);
+  const [readNote, setReadNote] = useState<string | null>(null);
+  // The phone's queue has been looked in (until then Save is not offered).
+  const [restored, setRestored] = useState(false);
+  // This browser holds photos only while the page is open.
+  const [ephemeral, setEphemeral] = useState(false);
   const online = useSyncExternalStore(subscribeOnline, () => navigator.onLine, () => true);
   const attempts = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -126,8 +139,13 @@ export function CaptureWorkbench({
   useEffect(() => {
     let live = true;
     const previewSet = previews.current;
+    void queuePersists().then((persists) => {
+      if (live && !persists) setEphemeral(true);
+    });
     void waitingFor(captureId).then((queue) => {
-      if (!live || queue.length === 0) return;
+      if (!live) return;
+      setRestored(true);
+      if (queue.length === 0) return;
       setItems((all) => [
         ...all,
         ...queue
@@ -172,7 +190,7 @@ export function CaptureWorkbench({
           capturedAt: file.lastModified || null,
           addedAt: Date.now(),
         };
-        await keep(photo);
+        if (!(await keep(photo))) setEphemeral(true);
         update(key, { preview, status: "waiting" });
       } catch (err) {
         update(key, { status: "failed", message: err instanceof Error ? err.message : "That photo could not be prepared." });
@@ -187,9 +205,16 @@ export function CaptureWorkbench({
     setReadError(null);
     try {
       const res = await fetch(`/api/inventory/captures/${captureId}/extract`, { method: "POST", headers: { [CSRF_HEADER]: csrf } });
-      const body = (await res.json().catch(() => ({}))) as { status?: string; error?: string };
+      const body = (await res.json().catch(() => ({}))) as {
+        status?: string;
+        error?: string;
+        read?: number;
+        limit?: number;
+        notRead?: { overLimit?: number; unreadable?: number };
+      };
       if (!res.ok) setReadError(body.error ?? "The labels could not be read.");
       else if (body.status === "failed") setReadError(body.error ?? "The labels could not be read.");
+      setReadNote(res.ok ? readSummary(body.read ?? 0, body.notRead?.overLimit ?? 0, body.notRead?.unreadable ?? 0, body.limit ?? readLimit) : null);
       router.refresh();
     } catch {
       setReadError("No connection. Try again when you are back online.");
@@ -203,11 +228,13 @@ export function CaptureWorkbench({
   const unsent = items.filter((i) => i.status === "preparing" || i.status === "waiting" || i.status === "sending").length;
   const pending = unsent > 0;
   const stored = photos.filter((p) => p.state === "stored");
+  const readable = stored.filter((p) => p.contentType !== "image/heic" && p.contentType !== "image/heif").length;
 
-  // Save waits for these (review-form.tsx): saved first, they would never be sent.
+  // Save waits for these (review-form.tsx): saved first, they would never be
+  // sent. Unknown (null) until the phone's queue has been looked in.
   useEffect(() => {
-    setOutstanding(captureId, unsent);
-  }, [captureId, unsent]);
+    setOutstanding(captureId, restored ? unsent : null);
+  }, [captureId, unsent, restored]);
   useEffect(() => () => setOutstanding(captureId, 0), [captureId]);
 
   return (
@@ -232,7 +259,16 @@ export function CaptureWorkbench({
 
       {!online ? (
         <p role="status" className="mt-3 rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-sm text-ink">
-          No connection. Photos are kept on this phone and sent when it is back online.
+          {ephemeral
+            ? "No connection. Keep this page open: photos are sent when the phone is back online."
+            : "No connection. Photos are kept on this phone and sent when it is back online."}
+        </p>
+      ) : null}
+
+      {ephemeral && pending ? (
+        <p role="alert" className="mt-3 rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-sm text-ink">
+          <strong>Keep this page open</strong> until every photo says Sent. This browser is not keeping photos on the phone (a private window, or
+          storage is full), so closing or reloading the page loses the ones not yet sent.
         </p>
       ) : null}
 
@@ -244,7 +280,7 @@ export function CaptureWorkbench({
                 <Thumb src={`/api/inventory/documents/${p.id}`} heic={p.contentType === "image/heic" || p.contentType === "image/heif"} />
               ) : (
                 <span className="grid h-full place-items-center p-2 text-center text-xs text-ink-soft">
-                  {p.state === "failed" ? "Not stored — add it again" : "Being stored…"}
+                  {p.state === "failed" ? "Not arrived" : "Arriving…"}
                 </span>
               )}
               {p.label ? (
@@ -305,6 +341,12 @@ export function CaptureWorkbench({
                   ? "Waiting for every photo to be sent."
                   : "Nothing is saved until you check it below and press Save."}
             </p>
+            {readable > readLimit ? (
+              <p className="mt-1 text-xs text-ink-soft">
+                The reader reads the first {readLimit} photos; {readable - readLimit} more {readable - readLimit === 1 ? "is" : "are"} kept but not read.
+              </p>
+            ) : null}
+            {readNote ? <p className="mt-1 text-xs text-ink-soft">{readNote}</p> : null}
           </>
         )}
         {readError ?? (reading?.status === "failed" ? reading.error : null) ? (
@@ -315,6 +357,15 @@ export function CaptureWorkbench({
       </div>
     </section>
   );
+}
+
+/** What a reading read and left out, in words. */
+function readSummary(read: number, overLimit: number, unreadable: number, limit: number): string | null {
+  if (!read) return null;
+  const parts = [`Read ${read} photo${read === 1 ? "" : "s"}.`];
+  if (overLimit) parts.push(`${overLimit} more ${overLimit === 1 ? "was" : "were"} not read: the reader takes ${limit} at most.`);
+  if (unreadable) parts.push(`${unreadable} HEIC photo${unreadable === 1 ? " was" : "s were"} not read.`);
+  return parts.join(" ");
 }
 
 function subscribeOnline(changed: () => void) {
@@ -426,51 +477,4 @@ async function sha256(blob: Blob): Promise<string> {
 /* Sending                                                             */
 /* ------------------------------------------------------------------ */
 
-type Sent =
-  | { ok: true; documentId: string; note: string | null }
-  | {
-      ok: false;
-      /** Keep it on the phone for a later try (else it is dropped, with the reason). */
-      keep: boolean;
-      /** Try again on its own after a pause (else when the page or the connection comes back). */
-      retry: boolean;
-      message: string;
-    };
-
-async function send(photo: QueuedPhoto, csrf: string): Promise<Sent> {
-  const form = new FormData();
-  form.append("photo", photo.blob, photo.fileName);
-  form.append("sha256", photo.sha256);
-  if (photo.capturedAt) form.append("capturedAt", String(photo.capturedAt));
-  let res: Response;
-  try {
-    res = await fetch(`/api/inventory/captures/${photo.captureId}/photos`, {
-      method: "POST",
-      headers: { [CSRF_HEADER]: csrf },
-      body: form,
-    });
-  } catch {
-    return { ok: false, keep: true, retry: true, message: "Not sent yet: no connection. It is kept on this phone." };
-  }
-  const body = (await res.json().catch(() => ({}))) as {
-    documentId?: string;
-    error?: string;
-    evidenceFor?: { productName: string }[];
-  };
-  if (res.ok && body.documentId) {
-    const already = body.evidenceFor?.[0]?.productName;
-    return { ok: true, documentId: body.documentId, note: already ? `This photo is already saved with ${already}.` : null };
-  }
-  if (res.status === 401) {
-    return { ok: false, keep: true, retry: false, message: "You were signed out. Sign in again and reopen this item: the photo is kept and will be sent." };
-  }
-  // A sign-in in another tab, or a switch of business, leaves this page out of
-  // date (its CSRF token, its business): not a reason to lose the photo.
-  if (res.status === 403 || res.status === 404) {
-    return { ok: false, keep: true, retry: false, message: "This page is out of date. Reload it: the photo is kept and will be sent." };
-  }
-  if (res.status >= 500 || res.status === 408 || res.status === 429 || res.status === 422) {
-    return { ok: false, keep: true, retry: true, message: body.error ?? "Not sent yet. It will be tried again." };
-  }
-  return { ok: false, keep: false, retry: false, message: body.error ?? `That photo was refused (${res.status}).` };
-}
+const send = (photo: QueuedPhoto, csrf: string) => sendPhoto(photo, CSRF_HEADER, csrf);

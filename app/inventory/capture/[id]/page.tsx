@@ -7,11 +7,12 @@ import { allows } from "@/lib/auth/permissions";
 import { resolveIdentity } from "@/lib/auth/session";
 import { getCapture, productChoices, unitLabel } from "@/lib/db/inventory";
 import { inventoryEnabledFor, visionUnavailability } from "@/lib/inventory/config";
+import { MAX_IMAGES } from "@/lib/inventory/label-reader";
 import { suggestionsFrom, type ReviewField } from "@/lib/inventory/review";
 import { PortalShell } from "../../../portal-shell";
 import { CsrfField } from "../../../_components/csrf-field";
-import { discardCaptureAction } from "../../actions";
-import { ForgetQueuedPhotos } from "./forget-queued";
+import { discardCaptureAction, removePhotoAction } from "../../actions";
+import { LeftoverPhotos } from "./leftover-photos";
 import { ReviewForm, type ProductOption } from "./review-form";
 import { CaptureWorkbench } from "./workbench";
 
@@ -49,10 +50,13 @@ export default async function CapturePage({ params }: { params: Promise<{ id: st
     </PortalShell>
   );
 
+  const identity = await resolveIdentity();
+  const csrf = identity.state === "active" ? identity.csrfToken : "";
+
   if (capture.status === "confirmed") {
     return shell(
       <section className="mt-4 rounded-2xl border border-good/30 bg-good/5 p-6">
-        <ForgetQueuedPhotos captureId={capture.id} />
+        {mayWrite ? <LeftoverPhotos captureId={capture.id} csrf={csrf} saved /> : null}
         <h1 className="text-xl font-semibold text-ink">Saved</h1>
         <p className="mt-1 text-sm text-ink">
           {capture.saved ? `${capture.saved.productName} is in the inventory.` : "This item is in the inventory."} It was saved once; saving
@@ -67,15 +71,13 @@ export default async function CapturePage({ params }: { params: Promise<{ id: st
   if (capture.status === "abandoned") {
     return shell(
       <section className="mt-4 rounded-2xl border border-line bg-surface p-6 shadow-card">
-        <ForgetQueuedPhotos captureId={capture.id} />
+        {mayWrite ? <LeftoverPhotos captureId={capture.id} csrf={csrf} saved={false} /> : null}
         <h1 className="text-xl font-semibold text-ink">Discarded</h1>
         <p className="mt-1 text-sm text-ink-soft">This item was not saved. Its photos are kept as they were.</p>
       </section>,
     );
   }
 
-  const identity = await resolveIdentity();
-  const csrf = identity.state === "active" ? identity.csrfToken : "";
   const reader = visionUnavailability();
   const fields = capture.extraction?.status === "needs_review" ? capture.extraction.fields : [];
   const suggested = suggestionsFrom(fields);
@@ -126,6 +128,7 @@ export default async function CapturePage({ params }: { params: Promise<{ id: st
   };
 
   const reused = capture.photos.flatMap((p) => p.evidenceFor);
+  const notArrived = capture.photos.filter((p) => p.state !== "stored");
   const evidenceWarning = reused.length ? (
     <div role="note" className="rounded-xl border border-warn/40 bg-warn/10 p-4 text-sm text-ink">
       <p className="font-semibold">A photo here is already saved with another container.</p>
@@ -160,10 +163,35 @@ export default async function CapturePage({ params }: { params: Promise<{ id: st
           }))}
           reader={reader}
           reading={capture.extraction ? { status: capture.extraction.status, error: capture.extraction.error } : null}
+          readLimit={MAX_IMAGES}
         />
       ) : (
         <p className="mt-6 text-sm text-ink-soft">Your role can see this inventory but not add to it.</p>
       )}
+
+      {mayWrite && notArrived.length ? (
+        <div className="mt-3 rounded-xl border border-warn/30 bg-warn/10 p-4 text-sm text-ink">
+          <p>
+            {notArrived.length === 1 ? "A photo has" : `${notArrived.length} photos have`} not finished arriving, so this item cannot be saved yet.
+            The phone that took {notArrived.length === 1 ? "it" : "them"} sends {notArrived.length === 1 ? "it" : "them"} again when this item is
+            open there; or take {notArrived.length === 1 ? "it" : "them"} out of this item.
+          </p>
+          <ul className="mt-2 grid gap-2">
+            {notArrived.map((p, n) => (
+              <li key={p.id}>
+                <form action={removePhotoAction}>
+                  <CsrfField />
+                  <input type="hidden" name="captureId" value={capture.id} />
+                  <input type="hidden" name="documentId" value={p.id} />
+                  <button type="submit" className="min-h-11 rounded-lg border border-line bg-surface px-3 py-2 text-sm font-medium text-ink hover:bg-sunk">
+                    Take {notArrived.length === 1 ? "this photo" : `photo ${n + 1}`} out of this item
+                  </button>
+                </form>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       {mayWrite ? (
         <section aria-labelledby="review-heading" className="mt-6">
