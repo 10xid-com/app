@@ -1059,22 +1059,39 @@ export const ALREADY_SENT = "This form was already sent. Reload the page to see 
  * A container's version, as the forms carry it: the row's last change to the
  * microsecond (exact: epoch is numeric, never a float or a JavaScript Date),
  * and its ledger — how many events, and the latest by when it was written —
- * reversals included, since they change what is in it too.
+ * reversals included, since they change what is in it too. For a container
+ * row aliased `c`.
+ *
+ * Read it in the SAME statement as whatever the page shows next to it: under
+ * read committed each statement sees its own snapshot, and a version read a
+ * statement later than the fields could already include someone else's change
+ * to them — a page holding old notes and a new version would then save over
+ * the newer notes.
+ */
+const VERSION = sql`'v1.' || (extract(epoch from c.updated_at) * 1000000)::bigint::text
+  || '.' || (select count(*) from inventory_movements m
+              where m.organization_id = c.organization_id and m.container_id = c.id)::text
+  || '.' || coalesce((select m.id::text from inventory_movements m
+                       where m.organization_id = c.organization_id and m.container_id = c.id
+                       order by m.created_at desc, m.id desc
+                       limit 1), '-')`;
+
+/**
+ * The version now, for a write that holds the container's row lock: its own
+ * statement, after the lock, so it sees every change committed before the
+ * lock was granted (the locking statement itself may have started earlier).
  */
 async function versionOf(tx: Transaction, containerId: string): Promise<string | undefined> {
-  const row = await one<{ version: string }>(
-    tx,
-    sql`select 'v1.' || (extract(epoch from c.updated_at) * 1000000)::bigint::text
-               || '.' || (select count(*) from inventory_movements m
-                           where m.organization_id = c.organization_id and m.container_id = c.id)::text
-               || '.' || coalesce((select m.id::text from inventory_movements m
-                                    where m.organization_id = c.organization_id and m.container_id = c.id
-                                    order by m.created_at desc, m.id desc
-                                    limit 1), '-') as version
-          from inventory_containers c
-         where c.id = ${containerId}`,
-  );
+  const row = await one<{ version: string }>(tx, sql`select ${VERSION} as version from inventory_containers c where c.id = ${containerId}`);
   return row?.version;
+}
+
+/** Who changed a container and how, beside the ledger: append-only (0025). */
+async function audit(tx: Transaction, owner: InventoryOwner, containerId: string, action: string): Promise<void> {
+  await tx.execute(
+    sql`insert into audit_events (organization_id, actor_user_id, action, target)
+        values (${owner.organizationId}, ${owner.userId}, ${action}, ${`inventory_containers:${containerId}`})`,
+  );
 }
 
 /**
@@ -1139,6 +1156,8 @@ export type ContainerView = {
   };
   photos: { id: string; contentType: string }[];
   movements: ContainerMovement[];
+  /** Changes beside the ledger (opened, place, notes, a photo added after saving), from the audit record. */
+  changes: { id: string; action: string; at: Date; byYou: boolean }[];
 };
 
 /** One container of this business, with everything the container page shows. Null when it is not this business's. */
@@ -1178,9 +1197,10 @@ export async function getContainer(owner: InventoryOwner, containerId: string): 
       brand: string | null;
       maker_name: string | null;
       maker_code: string | null;
+      version: string;
     }>(
       tx,
-      sql`select c.id, c.status, c.dimension, b.base_unit, b.balance::text, b.balance_basis, b.balance_as_of,
+      sql`select c.id, c.status, c.dimension, b.base_unit, b.balance::text, b.balance_basis, b.balance_as_of, ${VERSION} as version,
                  c.nominal_quantity::text, c.nominal_unit, c.tare_g::text, c.tare_basis, c.opened_on::text,
                  loc.name as location, c.notes, c.created_at,
                  lo.lot_code, lo.expiry_printed, lo.expiry_kind, lo.expiry_date::text, lo.acquired_on::text,
@@ -1199,7 +1219,6 @@ export async function getContainer(owner: InventoryOwner, containerId: string): 
     );
     if (!c) return null;
 
-    const version = (await versionOf(tx, containerId))!;
     const material =
       c.composition === "single"
         ? await one<{ name: string }>(
@@ -1248,9 +1267,17 @@ export async function getContainer(owner: InventoryOwner, containerId: string): 
            order by m.occurred_at desc, m.created_at desc, m.id desc`,
     );
 
+    // Who opened it, moved it, changed its notes, added a photo after it was saved.
+    const changes = await all<{ id: string; action: string; created_at: string; actor_user_id: string | null }>(
+      tx,
+      sql`select id::text, action, created_at, actor_user_id from audit_events
+           where target = ${`inventory_containers:${containerId}`} and action like 'inventory.%'
+           order by created_at desc, id desc`,
+    );
+
     return {
       id: c.id,
-      version,
+      version: c.version,
       status: c.status,
       dimension: c.dimension,
       baseUnit: c.base_unit,
@@ -1299,6 +1326,7 @@ export async function getContainer(owner: InventoryOwner, containerId: string): 
         reverses: m.reverses_id,
         voided: m.voided,
       })),
+      changes: changes.map((e) => ({ id: e.id, action: e.action, at: when(e.created_at), byYou: e.actor_user_id === owner.userId })),
     };
   });
 }
@@ -1428,6 +1456,7 @@ export async function recordContainerAmount(owner: InventoryOwner, req: AmountRe
           sql`update inventory_containers set status = 'open', opened_on = ${req.openedOn}::date, ${TOUCHED}
                where id = ${req.containerId}`,
         );
+        await audit(tx, owner, req.containerId, "inventory.container.opened");
       } else {
         await tx.execute(sql`update inventory_containers set ${TOUCHED} where id = ${req.containerId}`);
       }
@@ -1492,6 +1521,8 @@ export async function updateContainerDetails(owner: InventoryOwner, req: Details
         sql`update inventory_containers set location_id = ${locationId}, notes = ${req.notes}, ${TOUCHED}
              where id = ${req.containerId}`,
       );
+      if (!sameLocation) await audit(tx, owner, req.containerId, "inventory.container.place_changed");
+      if ((c.notes ?? null) !== req.notes) await audit(tx, owner, req.containerId, "inventory.container.notes_changed");
       return { changed: true };
     });
   } catch (err) {
