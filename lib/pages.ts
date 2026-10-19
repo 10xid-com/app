@@ -635,11 +635,23 @@ export const PAGES: PageRecord[] = [
     group: "Machinery",
   },
   {
+    id: "api.inventory.paperwork",
+    path: "/api/inventory/containers/[id]/paperwork",
+    name: "Invoice or receipt upload",
+    purpose:
+      "An invoice or receipt for one container: a PDF, or a photo redrawn on the phone, judged from its bytes and checked against the phone's hash, kept under inventory/<business>/ in the private store and attached to that container. Never shown to the label reader; changes nothing in the stock.",
+    audience: "member",
+    kind: "machinery",
+    file: "app/api/inventory/containers/[id]/paperwork/route.ts",
+    methods: ["POST"],
+    group: "Machinery",
+  },
+  {
     id: "api.inventory.document",
     path: "/api/inventory/documents/[id]",
-    name: "Inventory photo",
+    name: "Inventory file",
     purpose:
-      "One inventory photo, to someone who may read that business's inventory, looked up as that business first. Never a presigned address, never cached by anyone else.",
+      "One inventory file — a label photo, or an invoice or receipt — to someone who may read that business's inventory, looked up as that business first. Never a presigned address, never cached by anyone else.",
     audience: "member",
     kind: "machinery",
     file: "app/api/inventory/documents/[id]/route.ts",

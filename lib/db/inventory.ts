@@ -516,19 +516,19 @@ export async function documentEvidence(
   return rows.map((r) => ({ containerId: r.container_id, productName: r.product_name, createdAt: when(r.created_at) }));
 }
 
-/** A stored file of this business, for the image route. Null when it is not this business's or not stored. */
+/** A stored file of this business, for the documents route. Null when it is not this business's or not stored. */
 export async function documentForDownload(
   owner: InventoryOwner,
   documentId: string,
-): Promise<{ storageKey: string; contentType: string; byteSize: number } | null> {
+): Promise<{ storageKey: string; contentType: string; byteSize: number; originalName: string | null } | null> {
   const row = await run(owner, (tx) =>
-    one<{ storage_key: string; content_type: string; byte_size: string; state: string }>(
+    one<{ storage_key: string; content_type: string; byte_size: string; state: string; original_name: string | null }>(
       tx,
-      sql`select storage_key, content_type, byte_size::text, state from inventory_documents where id = ${documentId}`,
+      sql`select storage_key, content_type, byte_size::text, state, original_name from inventory_documents where id = ${documentId}`,
     ),
   );
   if (!row || row.state !== "stored") return null;
-  return { storageKey: row.storage_key, contentType: row.content_type, byteSize: Number(row.byte_size) };
+  return { storageKey: row.storage_key, contentType: row.content_type, byteSize: Number(row.byte_size), originalName: row.original_name };
 }
 
 /* ------------------------------------------------------------------ */
@@ -1302,6 +1302,7 @@ export async function getContainer(owner: InventoryOwner, containerId: string): 
             from inventory_document_links l
             join inventory_documents d on d.organization_id = l.organization_id and d.id = l.document_id
            where l.container_id = ${containerId} and d.state = 'stored'
+             and l.role is distinct from 'purchase' and d.content_type like 'image/%'
            order by d.created_at, d.id`,
     );
     const movements = await all<{
