@@ -1,0 +1,235 @@
+{
+  "meta": {
+    "ran": "2026-10-19T14:40:09.344Z",
+    "app": {
+      "commit": "3072da318cebbcf61d4a9f4212b30d828068dc1d",
+      "note": ""
+    },
+    "store": "stand-in, S3-strict: a body without Content-Length is refused (411 MissingContentLength), as S3 does",
+    "database": "PostgreSQL 18.4 with 50 login migrations applied (latest journal time 1790003300000), built by rebuild-db.sh from login 631c28f + seed; app connects as portal_app (RLS)",
+    "browser": "Chromium 141.0.7390.37 (Playwright 1.63.0), devices[\"iPhone 13\"]: {\"viewport\":{\"width\":390,\"height\":664},\"deviceScaleFactor\":3,\"isMobile\":true,\"hasTouch\":true,\"userAgent\":\"Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.6 Mobile/15E148 Safari/604.1\"}",
+    "notSafari": "Desktop Chromium emulating an iPhone viewport and user agent. Not WebKit, not iOS: Safari's file picker, its PDF viewer and HEIC decoding are not exercised.",
+    "standIns": "Media store and Ollama server are local stand-ins (fake-services.mjs). Every company, invoice and photo is synthetic."
+  },
+  "summary": {
+    "passed": 20,
+    "total": 20
+  },
+  "results": [
+    {
+      "id": "P1",
+      "area": "Purchase details on the container page",
+      "name": "a container with nothing recorded says “Not recorded” for seller, date, price and invoice; the form is folded away",
+      "ok": true,
+      "detail": "{\"Bought from\":\"Not recorded\",\"Bought on\":\"Not recorded\",\"Price paid\":\"Not recorded\",\"Invoice or receipt\":\"Not recorded\",\"Last bought\":\"Not recorded\",\"Next time, buy from\":\"No preferred seller\"}",
+      "screenshot": "screens/p1-nothing-recorded.png"
+    },
+    {
+      "id": "P2",
+      "area": "Purchase details on the container page",
+      "name": "a PDF sent from the form is listed (PDF, its size) and chosen at once, before saving",
+      "ok": true,
+      "detail": "5a8827e9-05b9-47fe-9d19-ea3e82b6101f",
+      "screenshot": "screens/p2-pdf-attached-and-chosen.png"
+    },
+    {
+      "id": "P3",
+      "area": "Purchase details on the container page",
+      "name": "saved: “Purchase details saved.”; the card shows the new seller with its own 10XiD iD, the date, CAD 18.50 and the invoice",
+      "ok": true,
+      "detail": "{\"Bought from\":\"Synthetic Shop A 7ee937 iD 10X-TKYS9\",\"Bought on\":\"Oct 1, 2026\",\"Price paid\":\"CAD 18.50\",\"Invoice or receipt\":\"synthetic-invoice-7ee937.pdf\",\"Last bought\":\"Oct 1, 2026, from Synthetic Shop A 7ee937, CAD 18.50 — this container\",\"Next time, buy from\":\"No preferred seller\"}",
+      "screenshot": "screens/p3-saved-purchase.png"
+    },
+    {
+      "id": "D1",
+      "area": "Invoice or receipt: upload, reuse, download, privacy",
+      "name": "the invoice opens as the same PDF, privately: application/pdf, nosniff, private no-store, inline under its name",
+      "ok": true,
+      "detail": "200 application/pdf | inline; filename=\"synthetic-invoice-7ee937.pdf\"; filename*=UTF-8''synthetic-invoice-7ee937.pdf | 448 bytes",
+      "screenshot": null
+    },
+    {
+      "id": "D2",
+      "area": "Invoice or receipt: upload, reuse, download, privacy",
+      "name": "kept in the private store under inventory/<business>/ as an invoice, linked to this container as purchase paperwork and to no capture",
+      "ok": true,
+      "detail": "{\"kind\":\"invoice\",\"content_type\":\"application/pdf\",\"storage_key\":\"inventory/fde60ca1-6c44-443a-a63a-6cbd95cba3e2/OK14sOvAWO09xluCDxaGQyrGq5zmb1NU.pdf\",\"capture_id\":null,\"links\":[{\"container_id\":\"34dfe61f-86bd-4e99-99ce-b8953fa31f07\",\"capture_id\":null,\"role\":\"purchase\"}]}",
+      "screenshot": null
+    },
+    {
+      "id": "D3",
+      "area": "Invoice or receipt: upload, reuse, download, privacy",
+      "name": "without a session the invoice is not served",
+      "ok": true,
+      "detail": "status 401",
+      "screenshot": null
+    },
+    {
+      "id": "D4",
+      "area": "Invoice or receipt: upload, reuse, download, privacy",
+      "name": "one invoice for two jars: offered under “Use one already sent”, cited by both records, still one document, attached to both",
+      "ok": true,
+      "detail": "{\"r2\":[{\"id\":\"76272685-47dc-4c4e-802a-9b1052e1d498\",\"supersedes_id\":null,\"vendor_id\":\"7d1a07bd-821c-4656-a2c3-d9207588f2aa\",\"acquired_on\":null,\"price\":\"21.00\",\"currency\":\"USD\",\"document_id\":\"5a8827e9-05b9-47fe-9d19-ea3e82b6101f\"}],\"both\":[\"34dfe61f-86bd-4e99-99ce-b8953fa31f07\",\"52811206-1445-4103-be02-3ad2cebe50f0\"]}",
+      "screenshot": "screens/d4-second-jar-saved.png"
+    },
+    {
+      "id": "D5",
+      "area": "Invoice or receipt: upload, reuse, download, privacy",
+      "name": "a receipt photo is redrawn on the phone (upright, no EXIF, so no location) and kept as paperwork — never in the label photo strip, nor is the PDF",
+      "ok": true,
+      "detail": "{\"jpeg\":true,\"height\":800,\"width\":400,\"exif\":false,\"strip\":0,\"stripPdf\":0}",
+      "screenshot": "screens/d5-receipt-photo-attached.png"
+    },
+    {
+      "id": "P4",
+      "area": "Purchase details on the container page",
+      "name": "clearing the seller saves it as not known — a new record superseding the first, which is kept — and History lists both versions, the correction as “Seller cleared (was …)”",
+      "ok": true,
+      "detail": "{\"cleared\":{\"Bought from\":\"Not recorded\",\"Bought on\":\"Oct 1, 2026\",\"Price paid\":\"CAD 18.50\",\"Invoice or receipt\":\"synthetic-invoice-7ee937.pdf\",\"Last bought\":\"Oct 1, 2026, seller not recorded, CAD 18.50 — this container\",\"Next time, buy from\":\"No preferred seller\"},\"historyText\":[\"Purchase details corrected\",\"Purchase details recorded\",\"Catalogued\"],\"historyDetails\":[\"Seller cleared (was Synthetic Shop A 7ee937)\",\"Seller: Synthetic Shop A 7ee937 · Bought on: Oct 1, 2026 · Price: CAD 18.50 · Invoice or receipt: synthetic-invoice-7ee937.pdf\",\"Amount not known\"]}",
+      "screenshot": "screens/p4-cleared-and-history.png"
+    },
+    {
+      "id": "P5",
+      "area": "Purchase details on the container page",
+      "name": "a page opened before another phone's save is refused (“…changed after this page was opened…”), keeps what was typed, and saves nothing over it",
+      "ok": true,
+      "detail": "[\"18.50\",\"18.50\",\"19.00\"]",
+      "screenshot": "screens/p5-stale-page-refused.png"
+    },
+    {
+      "id": "P6",
+      "area": "Purchase details on the container page",
+      "name": "a price that is not a number, or a date after today, is refused beside its field; nothing is saved",
+      "ok": true,
+      "detail": "",
+      "screenshot": null
+    },
+    {
+      "id": "V1",
+      "area": "Preferred seller and the product's last purchase",
+      "name": "“Next time, buy from” is set on its own, and a later purchase save leaves it as it is",
+      "ok": true,
+      "detail": "{\"before\":\"Synthetic Shop A 7ee937\",\"after\":\"Synthetic Shop A 7ee937\"}",
+      "screenshot": "screens/v1-preferred-seller.png"
+    },
+    {
+      "id": "V2",
+      "area": "Preferred seller and the product's last purchase",
+      "name": "the product's last purchase is this one, by its date, and says the seller is not recorded (it was cleared)",
+      "ok": true,
+      "detail": "[\"Last bought\",\"Oct 1, 2026, seller not recorded, CAD 22.00 — this container\"]",
+      "screenshot": null
+    },
+    {
+      "id": "E1",
+      "area": "Edits one after another, without reloading",
+      "name": "refused (typing kept), then corrected (“23”, the seller in capitals) and saved without reloading: the form opened again shows the record as saved — 23.00, the seller's own name — with no leftover error and the current version",
+      "ok": true,
+      "detail": "{\"vendor\":\"Synthetic Shop B 7ee937\",\"price\":\"23.00\",\"currency\":\"USD\",\"acquiredOn\":\"\",\"documentId\":\"5a8827e9-05b9-47fe-9d19-ea3e82b6101f\",\"chosen\":1,\"errors\":[],\"version\":\"1a9bc969-5c94-4dc0-918c-15c3c1b52ed2\"}",
+      "screenshot": "screens/e1-after-corrected-save.png"
+    },
+    {
+      "id": "E2",
+      "area": "Edits one after another, without reloading",
+      "name": "a second correction from the same form saves too, on top of the first",
+      "ok": true,
+      "detail": "{\"id\":\"58941a4f-34be-48bc-9ada-29a3d8de491b\",\"supersedes_id\":\"1a9bc969-5c94-4dc0-918c-15c3c1b52ed2\",\"vendor_id\":\"7d1a07bd-821c-4656-a2c3-d9207588f2aa\",\"acquired_on\":null,\"price\":\"24.00\",\"currency\":\"USD\",\"document_id\":\"5a8827e9-05b9-47fe-9d19-ea3e82b6101f\"}",
+      "screenshot": null
+    },
+    {
+      "id": "E3",
+      "area": "Edits one after another, without reloading",
+      "name": "clearing the invoice saves “not recorded”; the form opened again has None chosen and nothing sent as the invoice",
+      "ok": true,
+      "detail": "{\"vendor\":\"Synthetic Shop B 7ee937\",\"price\":\"24.00\",\"currency\":\"USD\",\"acquiredOn\":\"\",\"documentId\":\"\",\"chosen\":2,\"errors\":[],\"version\":\"0e4bb848-b4f9-4968-b35a-6778cf03d414\"}",
+      "screenshot": "screens/e3-invoice-cleared.png"
+    },
+    {
+      "id": "E4",
+      "area": "Edits one after another, without reloading",
+      "name": "choosing the invoice again saves it; the form opened again has it chosen, at the current version",
+      "ok": true,
+      "detail": "{\"vendor\":\"Synthetic Shop B 7ee937\",\"price\":\"24.00\",\"currency\":\"USD\",\"acquiredOn\":\"\",\"documentId\":\"5a8827e9-05b9-47fe-9d19-ea3e82b6101f\",\"chosen\":1,\"errors\":[],\"version\":\"8b2646d8-0c6a-4a54-81ca-76d2b6cbdfe9\"}",
+      "screenshot": "screens/e4-invoice-chosen-again.png"
+    },
+    {
+      "id": "N1",
+      "area": "Nothing else changes: stock, label reader, photo strip",
+      "name": "the stock of both jars is exactly as before: the same events, the same balance",
+      "ok": true,
+      "detail": "[{\"movements\":1,\"balance\":{\"balance\":null,\"balance_basis\":\"unknown\"}},{\"movements\":1,\"balance\":{\"balance\":null,\"balance_basis\":\"unknown\"}}]",
+      "screenshot": null
+    },
+    {
+      "id": "N2",
+      "area": "Nothing else changes: stock, label reader, photo strip",
+      "name": "nothing was sent to the label reader while paperwork was added",
+      "ok": true,
+      "detail": "readings 0 → 0",
+      "screenshot": null
+    },
+    {
+      "id": "C1",
+      "area": "Browser console",
+      "name": "no errors in any phone's browser console",
+      "ok": true,
+      "detail": "",
+      "screenshot": null
+    }
+  ],
+  "findings": [],
+  "screenshots": [
+    {
+      "file": "screens/p1-nothing-recorded.png",
+      "caption": "The Purchase card before anything is recorded"
+    },
+    {
+      "file": "screens/p2-pdf-attached-and-chosen.png",
+      "caption": "The invoice PDF sent from the form and chosen"
+    },
+    {
+      "file": "screens/p3-saved-purchase.png",
+      "caption": "Saved: seller with its iD, date, price with currency, invoice"
+    },
+    {
+      "file": "screens/d4-reuse-picker.png",
+      "caption": "Second jar: the invoice already sent is offered"
+    },
+    {
+      "file": "screens/d4-second-jar-saved.png",
+      "caption": "The second jar: its own seller and price, the same invoice"
+    },
+    {
+      "file": "screens/d5-receipt-photo-attached.png",
+      "caption": "A receipt photo attached: listed with the paperwork, not with the label photos"
+    },
+    {
+      "file": "screens/p4-cleared-and-history.png",
+      "caption": "The seller cleared: not recorded now; both versions in History"
+    },
+    {
+      "file": "screens/p5-stale-page-refused.png",
+      "caption": "A stale page: refused, typing kept"
+    },
+    {
+      "file": "screens/p6-price-refused.png",
+      "caption": "A price that is not a number: refused beside the field"
+    },
+    {
+      "file": "screens/v1-preferred-seller.png",
+      "caption": "Where to buy it next time, apart from this purchase"
+    },
+    {
+      "file": "screens/e1-after-corrected-save.png",
+      "caption": "Refused, corrected, saved: the form opened again shows what is saved"
+    },
+    {
+      "file": "screens/e3-invoice-cleared.png",
+      "caption": "The invoice cleared: the form opened again has None chosen"
+    },
+    {
+      "file": "screens/e4-invoice-chosen-again.png",
+      "caption": "The invoice chosen again"
+    }
+  ]
+}
