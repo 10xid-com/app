@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { MAX_PHOTO_BYTES, sniffPhoto, modelCanRead } from "@/lib/inventory/files";
-import { describeBalance, normalizeUnit, planOpening, reviewSchema, suggestionsFrom, REVIEW_FIELDS, type ReviewInput } from "@/lib/inventory/review";
-import { fieldsFromReading } from "@/lib/inventory/extract";
+import { describeBalance, isCalendarDate, normalizeUnit, planOpening, reviewSchema, suggestionsFrom, REVIEW_FIELDS, type ReviewInput } from "@/lib/inventory/review";
+import { fieldsFromReading, withoutNul } from "@/lib/inventory/extract";
 
 /**
  * The parts of inventory capture that need no database: what a photo is,
@@ -48,6 +48,24 @@ function form(values: Partial<Record<(typeof REVIEW_FIELDS)[number], string>>): 
     ...values,
   });
 }
+
+describe("the review form", () => {
+  test("whether it is sealed, and how the amount is known, must be said: no default stands in", () => {
+    const base = { ...Object.fromEntries(REVIEW_FIELDS.map((f) => [f, ""])), captureId: "00000000-0000-4000-8000-000000000001", product: "new", productName: "Cacao powder" };
+    const noStatus = reviewSchema.safeParse({ ...base, amount: "unknown" });
+    expect(noStatus.success).toBe(false);
+    expect(noStatus.error?.issues[0]?.path).toEqual(["status"]);
+    const noAmount = reviewSchema.safeParse({ ...base, status: "sealed" });
+    expect(noAmount.success).toBe(false);
+    expect(noAmount.error?.issues[0]?.path).toEqual(["amount"]);
+  });
+
+  test("a date must be one that exists", () => {
+    for (const ok of ["2024-02-29", "2026-12-31", "2027-03-01"]) expect(isCalendarDate(ok), ok).toBe(true);
+    for (const bad of ["2026-02-30", "2026-04-31", "2026-13-01", "2026-00-10", "2026-2-3", "01/02/27"]) expect(isCalendarDate(bad), bad).toBe(false);
+    expect(() => form({ expiryDate: "2026-02-30" })).toThrow();
+  });
+});
 
 describe("the opening event says only what is known", () => {
   test("a sealed package at its label is labelled_unopened, at exactly the label's figure", () => {
@@ -146,13 +164,28 @@ describe("what the label reader may say", () => {
         product_name: { value: "x".repeat(500), printed: null, confidence: 0.9, photo: 1 },
         gtin: { value: "not a barcode", printed: null, confidence: 0.9, photo: 1 },
         form: { value: "smoothie", printed: null, confidence: 0.9, photo: 1 },
-        expiry: { date: "01/02/27", kind: "best_before", printed: "01/02/27", confidence: 0.4, photo: 2 },
+        expiry: { date: "2027-02-30", kind: "best_before", printed: null, confidence: 0.4, photo: 2 },
         lot_code: { value: "A1", printed: "A1", confidence: 7, photo: 1 },
         net_quantity: { amount: -5, unit: "g", printed: null, confidence: 0.9, photo: 1 },
       },
       ids,
     );
     expect(rows).toEqual([]);
+  });
+
+  test("a date that is not unambiguous keeps its printed text, with no date; the person types the date", () => {
+    const rows = fieldsFromReading(
+      { expiry: { date: "01/02/27", kind: "best_before", printed: "01/02/27", confidence: 0.4, photo: 2 } },
+      ids,
+    );
+    expect(rows).toEqual([
+      { field: "expiry", rawText: "01/02/27", value: { date: null, kind: "best_before" }, confidence: 0.4, documentId: "doc-2", locator: { photo: 2 } },
+    ]);
+    expect(suggestionsFrom(rows).expiry).toEqual({ date: null, kind: "best_before", printed: "01/02/27" });
+  });
+
+  test("an answer with NUL characters is stored without them", () => {
+    expect(withoutNul({ "brand\u0000": "Ca\u0000cao", list: ["a\u0000"], n: 1, none: null })).toEqual({ brand: "Cacao", list: ["a"], n: 1, none: null });
   });
 
   test("an answer that is not an object is a failed reading", () => {

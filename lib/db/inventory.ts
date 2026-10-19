@@ -61,10 +61,16 @@ async function one<T extends Row>(tx: Transaction, query: SQL): Promise<T | unde
 const run = <T>(owner: InventoryOwner, fn: (tx: Transaction) => Promise<T>) =>
   inOwnerTransaction(owner.organizationId, owner.userId, fn);
 
-/** A refusal written by one of 0048's triggers or checks, as a sentence. Drizzle wraps the driver's error. */
+/**
+ * A refusal written by one of 0048's triggers or checks, as a sentence. Drizzle wraps the driver's error.
+ * A value the database cannot hold at all (class 22: a date that does not exist, a number out of range)
+ * is a refusal too, never a 500 — whose log would carry every parameter, the form's text included.
+ */
 function refusal(err: unknown): InventoryError | null {
   const cause = err instanceof DatabaseError ? err : (err as { cause?: unknown } | null)?.cause;
-  if (!(cause instanceof DatabaseError) || cause.code !== "23514") return null;
+  if (!(cause instanceof DatabaseError)) return null;
+  if (cause.code?.startsWith("22")) return new InventoryError("One of the values is not one the inventory can hold. Check the dates and numbers.", "invalid");
+  if (cause.code !== "23514") return null;
   return new InventoryError(cause.message.startsWith("new row") ? "The database refused that combination." : cause.message, "invalid");
 }
 

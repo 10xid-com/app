@@ -11,8 +11,9 @@ import { PhotoError, addCapturePhoto } from "@/lib/inventory/photos";
  * One photo into an open capture (app/inventory/capture/[id]).
  *
  * The capture screen sends a JPEG it made in the browser (upright, at most
- * 2048px, without the camera's location data), or the original HEIC when the
- * browser could not convert it. What arrived is judged from its bytes, its
+ * 2048px, without the camera's location data); a photo the browser cannot
+ * redraw is not sent at all, so nothing arrives with its metadata from the
+ * screen. What arrived is judged from its bytes, its
  * hash is checked against the one the browser computed, and it is kept in the
  * private media store under `inventory/<business>/` — never with social
  * media's cleanup, and never handed out by a presigned address.
@@ -45,7 +46,8 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
   try {
     form = await request.formData();
   } catch {
-    return NextResponse.json({ error: "The photo did not arrive. It will be sent again." }, { status: 400 });
+    // A body cut short on the way: the screen keeps the photo and tries again.
+    return NextResponse.json({ error: "The photo did not arrive. It will be sent again." }, { status: 422 });
   }
   const file = form.get("photo");
   if (!(file instanceof File) || file.size === 0) return NextResponse.json({ error: "Choose a photo." }, { status: 400 });

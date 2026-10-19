@@ -79,11 +79,18 @@ const decimal = z
   .transform(parseDecimal)
   .refine((v) => v === undefined || DECIMAL.test(v), "a number, like 500 or 12.5");
 
+/** YYYY-MM-DD naming a day that exists: Date.parse alone accepts 2026-02-30 and rolls it over. */
+export function isCalendarDate(v: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+  const t = Date.parse(`${v}T00:00:00Z`);
+  return !Number.isNaN(t) && new Date(t).toISOString().slice(0, 10) === v;
+}
+
 const isoDate = z
   .string()
   .trim()
   .transform((v) => (v === "" ? undefined : v))
-  .refine((v) => v === undefined || (/^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(`${v}T00:00:00Z`))), "a date");
+  .refine((v) => v === undefined || isCalendarDate(v), "a date");
 
 const unit = z
   .string()

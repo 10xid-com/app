@@ -88,3 +88,33 @@ export async function waitingFor(captureId: string): Promise<QueuedPhoto[]> {
   for (const p of [...stored, ...memory.values()]) if (p.captureId === captureId) byKey.set(p.key, p);
   return [...byKey.values()].sort((a, b) => a.addedAt - b.addedAt);
 }
+
+/** Drop what is kept for a capture that can take no more photos (saved or discarded). */
+export async function forgetCapture(captureId: string): Promise<void> {
+  for (const p of await waitingFor(captureId)) await forget(p.key);
+}
+
+/*
+ * How many of a capture's photos are not with the portal yet — being
+ * prepared, waiting or sending — so Save can wait for them: an item saved
+ * before its photos arrive would be saved without that evidence.
+ */
+const outstanding = new Map<string, number>();
+const listeners = new Set<() => void>();
+
+export function setOutstanding(captureId: string, count: number): void {
+  if ((outstanding.get(captureId) ?? 0) === count) return;
+  outstanding.set(captureId, count);
+  for (const listener of listeners) listener();
+}
+
+export function outstandingFor(captureId: string): number {
+  return outstanding.get(captureId) ?? 0;
+}
+
+export function subscribeOutstanding(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}

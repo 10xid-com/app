@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type Ch
 import { useRouter } from "next/navigation";
 import { CSRF_HEADER } from "@/lib/auth/csrf-names";
 import { Icon } from "../../../_components/icons";
-import { forget, keep, waitingFor, type QueuedPhoto } from "./photo-queue";
+import { forget, keep, setOutstanding, waitingFor, type QueuedPhoto } from "./photo-queue";
 
 /**
  * The phone end of a capture: take or choose photos, send them, read them.
@@ -200,8 +200,15 @@ export function CaptureWorkbench({
 
   const onServer = new Set(photos.map((p) => p.id));
   const local = items.filter((i) => !(i.status === "sent" && i.documentId && onServer.has(i.documentId)));
-  const pending = items.some((i) => i.status === "preparing" || i.status === "waiting" || i.status === "sending");
+  const unsent = items.filter((i) => i.status === "preparing" || i.status === "waiting" || i.status === "sending").length;
+  const pending = unsent > 0;
   const stored = photos.filter((p) => p.state === "stored");
+
+  // Save waits for these (review-form.tsx): saved first, they would never be sent.
+  useEffect(() => {
+    setOutstanding(captureId, unsent);
+  }, [captureId, unsent]);
+  useEffect(() => () => setOutstanding(captureId, 0), [captureId]);
 
   return (
     <section aria-labelledby="photos-heading" className="mt-6 rounded-2xl border border-line bg-surface p-4 shadow-card sm:p-6">
@@ -378,8 +385,14 @@ async function prepare(file: File): Promise<{ blob: Blob; name: string }> {
   const stem = (file.name || "photo").replace(/\.[^.]+$/, "").slice(0, 80) || "photo";
   if (!decoded || !decoded.width || !decoded.height) {
     decoded?.done();
-    if (isHeic(file) && file.size <= MAX_BYTES) return { blob: file, name: `${stem}.heic` };
-    throw new Error(isHeic(file) ? "That HEIC photo is too large to send as it is. Take it again with the camera button." : "This browser could not open that photo.");
+    // Sent as it is, a photo would keep everything the camera wrote into it —
+    // where it was taken included — so a photo this browser cannot redraw is
+    // not sent at all.
+    throw new Error(
+      isHeic(file)
+        ? "This browser cannot open HEIC photos. Use the camera button, or choose a JPEG (on iPhone: Settings › Camera › Formats › Most Compatible)."
+        : "This browser could not open that photo.",
+    );
   }
   const scale = Math.min(1, MAX_EDGE / Math.max(decoded.width, decoded.height));
   const width = Math.max(1, Math.round(decoded.width * scale));
@@ -450,6 +463,11 @@ async function send(photo: QueuedPhoto, csrf: string): Promise<Sent> {
   }
   if (res.status === 401) {
     return { ok: false, keep: true, retry: false, message: "You were signed out. Sign in again and reopen this item: the photo is kept and will be sent." };
+  }
+  // A sign-in in another tab, or a switch of business, leaves this page out of
+  // date (its CSRF token, its business): not a reason to lose the photo.
+  if (res.status === 403 || res.status === 404) {
+    return { ok: false, keep: true, retry: false, message: "This page is out of date. Reload it: the photo is kept and will be sent." };
   }
   if (res.status >= 500 || res.status === 408 || res.status === 429 || res.status === 422) {
     return { ok: false, keep: true, retry: true, message: body.error ?? "Not sent yet. It will be tried again." };

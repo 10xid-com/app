@@ -1,9 +1,10 @@
 "use client";
 
-import { useActionState, useState, type ReactNode } from "react";
+import { useActionState, useState, useSyncExternalStore, type ReactNode } from "react";
 import { CsrfInput, CsrfProvider } from "../../../chat/csrf";
 import { saveCaptureAction, type ReviewState } from "../../actions";
 import type { ReviewField } from "@/lib/inventory/review";
+import { outstandingFor, subscribeOutstanding } from "./photo-queue";
 
 /**
  * Check what was read, fix it, save it.
@@ -14,7 +15,12 @@ import type { ReviewField } from "@/lib/inventory/review";
  * unknown. How much is in the container is said one of four honest ways —
  * as the sealed label says, weighed, about, or not known — and the database
  * holds each to what it is (a scale's net with a weighed empty weight is the
- * only "weighed" amount).
+ * only "weighed" amount). Whether it is sealed, and how the amount is known,
+ * start unanswered: they are the person's statement about this container, so
+ * no default can make them.
+ *
+ * Save waits while this item's photos are still on their way (the photo
+ * queue): saved first, they would never be sent.
  *
  * A client form so that a refusal keeps everything typed: on a phone this is
  * a long form, and the reason appears beside the field it is about.
@@ -117,8 +123,9 @@ function FormBody({
   evidenceWarning: ReactNode;
 }) {
   const [product, setProduct] = useState(values.product ?? "new");
-  const [status, setStatus] = useState(values.status ?? "sealed");
-  const [amount, setAmount] = useState(values.amount ?? "unknown");
+  const [status, setStatus] = useState(values.status ?? "");
+  const [amount, setAmount] = useState(values.amount ?? "");
+  const unsent = useSyncExternalStore(subscribeOutstanding, () => outstandingFor(captureId), () => 0);
   const [single, setSingle] = useState(values.single === "on");
   const [hasLabel, setHasLabel] = useState(Boolean(values.labelQuantity));
   const isNew = product === "new";
@@ -260,6 +267,7 @@ function FormBody({
       </Fieldset>
 
       <Fieldset legend="This container">
+        {errorFor("status") ? <p className="text-sm text-bad">{errorFor("status")}</p> : null}
         <div role="radiogroup" aria-label="Sealed or opened" className="grid grid-cols-2 gap-2">
           {(["sealed", "open"] as const).map((s) => (
             <label key={s} className={choice(status === s)}>
@@ -270,7 +278,7 @@ function FormBody({
                 checked={status === s}
                 onChange={() => {
                   setStatus(s);
-                  if (s === "open" && amount === "label") setAmount("unknown");
+                  if (s === "open" && amount === "label") setAmount("");
                 }}
                 className="sr-only"
               />
@@ -341,9 +349,14 @@ function FormBody({
         </Field>
       </Fieldset>
 
+      {unsent > 0 ? (
+        <p role="status" className="text-sm text-ink-soft">
+          {unsent === 1 ? "1 photo is" : `${unsent} photos are`} still on the way. Save is ready once {unsent === 1 ? "it has" : "they have"} arrived.
+        </p>
+      ) : null}
       <button
         type="submit"
-        disabled={pending}
+        disabled={pending || unsent > 0}
         aria-busy={pending}
         className="min-h-14 w-full rounded-xl bg-brand-surface px-5 py-3 text-base font-semibold text-brand-on-surface hover:bg-brand-surface-hover disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
       >

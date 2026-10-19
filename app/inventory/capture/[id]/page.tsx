@@ -11,6 +11,7 @@ import { suggestionsFrom, type ReviewField } from "@/lib/inventory/review";
 import { PortalShell } from "../../../portal-shell";
 import { CsrfField } from "../../../_components/csrf-field";
 import { discardCaptureAction } from "../../actions";
+import { ForgetQueuedPhotos } from "./forget-queued";
 import { ReviewForm, type ProductOption } from "./review-form";
 import { CaptureWorkbench } from "./workbench";
 
@@ -51,6 +52,7 @@ export default async function CapturePage({ params }: { params: Promise<{ id: st
   if (capture.status === "confirmed") {
     return shell(
       <section className="mt-4 rounded-2xl border border-good/30 bg-good/5 p-6">
+        <ForgetQueuedPhotos captureId={capture.id} />
         <h1 className="text-xl font-semibold text-ink">Saved</h1>
         <p className="mt-1 text-sm text-ink">
           {capture.saved ? `${capture.saved.productName} is in the inventory.` : "This item is in the inventory."} It was saved once; saving
@@ -65,6 +67,7 @@ export default async function CapturePage({ params }: { params: Promise<{ id: st
   if (capture.status === "abandoned") {
     return shell(
       <section className="mt-4 rounded-2xl border border-line bg-surface p-6 shadow-card">
+        <ForgetQueuedPhotos captureId={capture.id} />
         <h1 className="text-xl font-semibold text-ink">Discarded</h1>
         <p className="mt-1 text-sm text-ink-soft">This item was not saved. Its photos are kept as they were.</p>
       </section>,
@@ -118,8 +121,8 @@ export default async function CapturePage({ params }: { params: Promise<{ id: st
     expiryPrinted: suggested.expiry?.printed ?? "",
     expiryDate: suggested.expiry?.date ?? "",
     expiryKind: suggested.expiry?.kind ?? "unknown",
-    status: "sealed",
-    amount: suggested.netQuantity ? "label" : "unknown",
+    // Sealed or opened, and how the amount is known, are left for the person
+    // to say: a default would let a half-used jar be saved at its label weight.
   };
 
   const reused = capture.photos.flatMap((p) => p.evidenceFor);

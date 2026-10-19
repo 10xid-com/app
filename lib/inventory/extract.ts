@@ -12,7 +12,7 @@ import {
 } from "@/lib/db/inventory";
 import { visionModel, visionUnavailability } from "./config";
 import { modelCanRead } from "./files";
-import { EXPIRY_KINDS, PRODUCT_FORMS, normalizeUnit, type ExtractedFieldName } from "./review";
+import { EXPIRY_KINDS, PRODUCT_FORMS, isCalendarDate, normalizeUnit, type ExtractedFieldName } from "./review";
 
 /**
  * Reading a capture's label photos with a vision model.
@@ -118,6 +118,20 @@ const FIELD_SCHEMAS = {
 } as const;
 
 /**
+ * The answer without NUL characters, in keys and strings alike. PostgreSQL
+ * stores neither in text nor in jsonb, and one in a model's answer would fail
+ * both the result and the record of the failure.
+ */
+export function withoutNul(value: unknown): unknown {
+  if (typeof value === "string") return value.replaceAll("\u0000", "");
+  if (Array.isArray(value)) return value.map(withoutNul);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k.replaceAll("\u0000", ""), withoutNul(v)]));
+  }
+  return value;
+}
+
+/**
  * The model's answer → field rows. A field that does not fit its shape, or
  * says nothing, is left out; the rest stand on their own.
  */
@@ -147,7 +161,7 @@ export function fieldsFromReading(answer: unknown, documentIds: string[]): Extra
 
 function valueOf(
   name: ExtractedFieldName,
-  f: { value?: string | null; amount?: number | null; unit?: string | null; date?: string | null; kind?: string | null },
+  f: { value?: string | null; amount?: number | null; unit?: string | null; date?: string | null; kind?: string | null; printed?: string | null },
 ): unknown {
   switch (name) {
     case "product_name":
@@ -166,9 +180,11 @@ function valueOf(
       return { amount: f.amount, unit: normalizeUnit(f.unit) ?? f.unit };
     }
     case "expiry": {
-      const date = f.date && /^\d{4}-\d{2}-\d{2}$/.test(f.date) && !Number.isNaN(Date.parse(`${f.date}T00:00:00Z`)) ? f.date : null;
+      const date = f.date && isCalendarDate(f.date) ? f.date : null;
       const kind = f.kind && (EXPIRY_KINDS as readonly string[]).includes(f.kind) ? f.kind : "unknown";
-      return date ? { date, kind } : undefined;
+      // A date printed in a form that is not unambiguous is still worth its
+      // text: the person reads it and types the date.
+      return date ? { date, kind } : f.printed?.trim() ? { date: null, kind } : undefined;
     }
   }
 }
@@ -283,7 +299,7 @@ export async function readCaptureLabels(
   let answer: unknown;
   try {
     const encoded = await Promise.all(readable.map(async (i) => Buffer.from(await getObject(i.storageKey)).toString("base64")));
-    answer = await askModel(model, encoded, doFetch);
+    answer = withoutNul(await askModel(model, encoded, doFetch));
     const fields = fieldsFromReading(answer, readable.map((i) => i.documentId));
     await finishExtraction(owner, extractionId, answer, fields);
     log("done", fields.length);
