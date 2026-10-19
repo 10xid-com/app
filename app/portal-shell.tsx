@@ -9,7 +9,8 @@ import { PortalFrame, menuItemClass, type NavGroup } from "./portal-nav";
 import { ChatDock, type ChatDockData } from "./chat/dock";
 import { CHANNELS, ID_CHANNEL, SOON, type NavLink } from "./_components/sections";
 import { openableBusinesses } from "@/lib/auth/policy";
-import { ROLE_LABELS, isRoleTemplate } from "@/lib/auth/permissions";
+import { ROLE_LABELS, allows, isRoleTemplate } from "@/lib/auth/permissions";
+import { inventoryEnabledFor } from "@/lib/inventory/config";
 import { organizationById } from "@/lib/db/identity";
 import { listConversations, listMessages, listRuns, withheldEngineModes } from "@/lib/db/workspace";
 import { blogDraftFrom } from "@/lib/workspace/blog-draft";
@@ -97,6 +98,13 @@ export async function PortalShell({
     ctx && onScreen ? await connectedChannels({ organizationId: onScreen.organizationId, userId: ctx.userId }) : new Set();
   const channelLinks = (["website", "instagram", "facebook"] as const).filter((c) => connected.has(c)).map((c) => CHANNELS[c]);
 
+  // Inventory: only on a business it is switched on for (INVENTORY_BUSINESSES),
+  // and only for a role that may read it.
+  const inventoryLink: NavLink[] =
+    onScreen && inventoryEnabledFor(onScreen.organizationId) && allows(onScreen.role, "inventory.read", onScreen.via)
+      ? [{ href: "/inventory", label: "Inventory", icon: "inventory" }]
+      : [];
+
   const main: NavGroup[] = [
     {
       links: [
@@ -105,6 +113,7 @@ export async function PortalShell({
         // Quotes and estimates are work still being priced; Jobs is the work.
         { href: "/quotes", label: "Quotes", icon: "quotes" } satisfies NavLink,
         { href: "/jobs", label: "Jobs", icon: "jobs" } satisfies NavLink,
+        ...inventoryLink,
         SOON.products,
         SOON.customers,
         SOON.growth,

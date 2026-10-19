@@ -153,6 +153,8 @@ const CLIENT_FORMS: Record<string, string> = {
     "A job's notes box shows the note the moment it is sent and the server's answer replaces it; a server form would make the sender watch the round trip.",
   "app/channels/website/form-key.tsx":
     "Makes a website form key and shows it once. The key comes back in the action's answer so it never travels in the address (browser history, request logs).",
+  "app/inventory/capture/[id]/review-form.tsx":
+    "Saving a catalogued item is a long form on a phone. Refused, it must give back everything typed and say beside the field what is wrong; a server form's redirect would throw the typing away.",
 };
 
 describe("every form posting to a server action carries the CSRF token", () => {

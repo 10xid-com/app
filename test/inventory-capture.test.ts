@@ -1,0 +1,708 @@
+import { createHash, randomBytes } from "node:crypto";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
+import { Client } from "pg";
+
+/**
+ * Cataloguing a container from phone photos, end to end, against the real
+ * database as the application role (login's 0048), through the same route
+ * handlers and server actions the screens use. The media store, the label
+ * reader and the session stand in; nothing here reaches a provider.
+ *
+ *   a photo                 stored once; a retry, or the same bytes again,
+ *                           is the same document; a store failure is finished
+ *                           by the retry
+ *   saving                  one lot, one container, one opening; saving again
+ *                           makes nothing
+ *   unknown                 no amount, no date, no price: still saved, as
+ *                           unknown, never 0
+ *   a second jar            the same label photo is one document, linked to
+ *                           both captures and both containers
+ *   a weighing              "measured" only from a scale's net with a weighed
+ *                           empty container
+ *   another business        sees none of it
+ *   switched off            every route a 404
+ *   the label reader        off unless allowed, nothing sent; a good answer
+ *                           kept for review; a bad one a failed reading, and
+ *                           saving by hand still works; HEIC never sent
+ */
+
+const h = vi.hoisted(() => {
+  class Redirect extends Error {
+    constructor(readonly url: string) {
+      super(`redirect ${url}`);
+    }
+  }
+  class NotFound extends Error {}
+  return {
+    Redirect,
+    NotFound,
+    store: new Map<string, Uint8Array>(),
+    who: { businessId: "", userId: "", email: "" },
+    failNextPut: { value: false },
+  };
+});
+
+vi.mock("@/lib/integrations/media-bucket", () => {
+  class BucketError extends Error {}
+  return {
+    BucketError,
+    mediaBucketConfigured: () => true,
+    putObject: async (key: string, body: Uint8Array) => {
+      if (h.failNextPut.value) {
+        h.failNextPut.value = false;
+        throw new BucketError("The media store did not answer (the upload).");
+      }
+      h.store.set(key, body);
+    },
+    getObject: async (key: string) => {
+      const b = h.store.get(key);
+      if (!b) throw new BucketError("The media store refused a download (404 NoSuchKey).");
+      return b;
+    },
+    deleteObject: async () => {
+      throw new Error("Nothing in inventory deletes from the store.");
+    },
+    isEvidenceKey: (key: string) => key.startsWith("inventory/"),
+  };
+});
+
+vi.mock("@/lib/auth/authorize", () => {
+  const granted = () => ({
+    allowed: true as const,
+    ctx: { userId: h.who.userId, email: h.who.email, scope: { organizationId: h.who.businessId, isStaff: false } },
+    businessId: h.who.businessId,
+    role: "owner",
+    via: null,
+  });
+  return { authorizeRequest: async () => granted(), requireAction: async () => granted() };
+});
+
+vi.mock("next/navigation", () => ({
+  redirect: (url: string) => {
+    throw new h.Redirect(url);
+  },
+  notFound: () => {
+    throw new h.NotFound();
+  },
+}));
+
+vi.mock("next/cache", () => ({ revalidatePath: () => undefined }));
+
+const db = new Client({ connectionString: process.env.DATABASE_URL });
+const A = { organizationId: "", userId: "", email: "jane@rotary.test" };
+const B = { organizationId: "", userId: "", email: "sam@northstar.test" };
+const RUN = randomBytes(4).toString("hex");
+
+const INVENTORY_TABLES = [
+  "inventory_purchase_intents", "inventory_notes", "inventory_movements", "inventory_batches", "inventory_reservations",
+  "inventory_batch_plans", "inventory_formulation_lines", "inventory_formulation_versions", "inventory_offer_prices",
+  "inventory_product_claims", "inventory_product_nutrients", "inventory_measurements", "inventory_match_candidates",
+  "inventory_extracted_fields", "inventory_extractions", "inventory_document_links", "inventory_documents",
+  "inventory_captures", "inventory_containers", "inventory_lots", "inventory_locations", "inventory_receipt_lines",
+  "inventory_receipts", "inventory_order_lines", "inventory_orders", "inventory_sourcing_preferences", "inventory_offers",
+  "inventory_product_components", "inventory_products", "inventory_formulations", "inventory_brands",
+  "inventory_businesses", "inventory_material_aliases", "inventory_materials", "inventory_nutrients",
+];
+
+async function clean() {
+  await db.query(`truncate table ${INVENTORY_TABLES.join(", ")} cascade`);
+  await db.query(
+    `delete from identities where organization_id in (select id from organizations where type = 'listed' and name like $1)`,
+    [`Test maker ${RUN}%`],
+  );
+  await db.query(`delete from organizations where type = 'listed' and name like $1`, [`Test maker ${RUN}%`]);
+}
+
+beforeAll(async () => {
+  await db.connect();
+  const { rows } = await db.query(`
+    select (select id from organizations where slug = 'rotary') as rotary,
+           (select id from users where email = 'jane@rotary.test') as jane,
+           (select id from organizations where slug = 'northstar') as northstar,
+           (select id from users where email = 'sam@northstar.test') as sam`);
+  A.organizationId = rows[0].rotary;
+  A.userId = rows[0].jane;
+  B.organizationId = rows[0].northstar;
+  B.userId = rows[0].sam;
+  await clean();
+});
+
+beforeEach(() => {
+  vi.stubEnv("INVENTORY_BUSINESSES", `${A.organizationId}, ${B.organizationId}`);
+  as(A);
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
+
+afterAll(async () => {
+  await clean();
+  await db.end();
+  const { closePool } = await import("@/lib/db/connection");
+  await closePool();
+});
+
+function as(who: typeof A) {
+  h.who.businessId = who.organizationId;
+  h.who.userId = who.userId;
+  h.who.email = who.email;
+}
+
+const owner = (who: typeof A) => ({ organizationId: who.organizationId, userId: who.userId });
+const jpeg = (seed: string) => new Uint8Array(Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.from(`synthetic label ${seed}`)]));
+const heic = (seed: string) =>
+  new Uint8Array(Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from("ftypheic"), Buffer.from(`synthetic heic ${seed}`)]));
+const hex = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
+
+async function newCapture(who = A) {
+  const { createCapture } = await import("@/lib/db/inventory");
+  return createCapture(owner(who));
+}
+
+async function upload(captureId: string, bytes: Uint8Array, opts: { sha256?: string } = {}) {
+  const { POST } = await import("@/app/api/inventory/captures/[id]/photos/route");
+  const form = new FormData();
+  form.append("photo", new File([Buffer.from(bytes)], "IMG_0001.jpg", { type: "image/jpeg" }));
+  form.append("sha256", opts.sha256 ?? hex(bytes));
+  const res = await POST(new Request("https://app.example.com/x", { method: "POST", body: form }), {
+    params: Promise.resolve({ id: captureId }),
+  });
+  return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+}
+
+const START = { error: null, field: null, values: null, at: 0 };
+
+/** Press Save on the review form with these values. */
+async function save(captureId: string, values: Record<string, string>) {
+  const { saveCaptureAction } = await import("@/app/inventory/actions");
+  const form = new FormData();
+  form.append("captureId", captureId);
+  for (const [k, v] of Object.entries({ product: "new", status: "sealed", amount: "unknown", ...values })) form.append(k, v);
+  try {
+    const state = await saveCaptureAction(START, form);
+    return { state, redirect: null as string | null };
+  } catch (err) {
+    if (err instanceof h.Redirect) return { state: null, redirect: err.url };
+    throw err;
+  }
+}
+
+const savedContainer = (redirect: string | null) => {
+  const m = /^\/inventory\?saved=([0-9a-f-]{36})$/.exec(redirect ?? "");
+  if (!m) throw new Error(`not a save: ${redirect}`);
+  return m[1];
+};
+
+const n = async (sql: string, params: unknown[] = []) => Number((await db.query(sql, params)).rows[0].n);
+
+/* ------------------------------------------------------------------ */
+
+describe("a photo", () => {
+  test("is stored once under the business, linked to its capture; the same bytes again are the same document", async () => {
+    const capture = await newCapture();
+    const photo = jpeg(`once-${RUN}`);
+    const first = await upload(capture, photo);
+    expect(first.status).toBe(200);
+    expect(first.body.reused).toBe(false);
+
+    const { rows } = await db.query(`select storage_key, state, content_type from inventory_documents where id = $1`, [first.body.documentId]);
+    expect(rows[0].state).toBe("stored");
+    expect(rows[0].content_type).toBe("image/jpeg");
+    expect(rows[0].storage_key).toMatch(new RegExp(`^inventory/${A.organizationId}/[A-Za-z0-9_-]{32}\\.jpg$`));
+    expect(h.store.get(rows[0].storage_key)).toEqual(photo);
+
+    const again = await upload(capture, photo);
+    expect(again.status).toBe(200);
+    expect(again.body.documentId).toBe(first.body.documentId);
+    expect(again.body.reused).toBe(true);
+    expect(await n(`select count(*) as n from inventory_documents where organization_id = $1`, [A.organizationId])).toBe(1);
+    expect(await n(`select count(*) as n from inventory_document_links where capture_id = $1`, [capture])).toBe(1);
+  });
+
+  test("is refused when it is not an image, or not what the phone sent", async () => {
+    const capture = await newCapture();
+    const pdf = new Uint8Array(Buffer.from("%PDF-1.7 synthetic"));
+    expect((await upload(capture, pdf)).status).toBe(415);
+    expect((await upload(capture, jpeg(`hash-${RUN}`), { sha256: "0".repeat(64) })).status).toBe(422);
+  });
+
+  test("whose store fails is left failed, and the retry finishes it", async () => {
+    const capture = await newCapture();
+    const photo = jpeg(`flaky-${RUN}`);
+    h.failNextPut.value = true;
+    const failed = await upload(capture, photo);
+    expect(failed.status).toBe(502);
+    expect((await db.query(`select state from inventory_documents where sha256 = $1`, [createHash("sha256").update(photo).digest()])).rows[0].state).toBe("failed");
+    const retried = await upload(capture, photo);
+    expect(retried.status).toBe(200);
+    expect((await db.query(`select state from inventory_documents where id = $1`, [retried.body.documentId])).rows[0].state).toBe("stored");
+  });
+});
+
+describe("saving", () => {
+  test("creates exactly one lot, container and opening; saving again creates nothing", async () => {
+    const capture = await newCapture();
+    const photo = await upload(capture, jpeg(`save-${RUN}`));
+    const values = {
+      productName: "Test cacao powder",
+      brand: `Test brand ${RUN}`,
+      manufacturer: `Test maker ${RUN} A`,
+      form: "powder",
+      single: "on",
+      labelQuantity: "500",
+      labelUnit: "g",
+      lotCode: "L2417A",
+      expiryPrinted: "BB 2027 MR 01",
+      expiryDate: "2027-03-01",
+      expiryKind: "best_before",
+      amount: "label",
+      location: "Pantry shelf 2",
+    };
+    const first = await save(capture, values);
+    const containerId = savedContainer(first.redirect);
+
+    const q = await db.query(
+      `select m.kind, m.basis, m.quantity::text, m.unit, m.idempotency_key, c.status, c.nominal_quantity::text, c.nominal_unit,
+              k.status as capture_status, k.outcome, p.name as product, p.composition, b.name as brand, l.lot_code, l.expiry_date::text,
+              o.type::text as maker_type, i.id_code
+         from inventory_movements m
+         join inventory_containers c on c.id = m.container_id
+         join inventory_captures k on k.container_id = c.id
+         join inventory_lots l on l.id = c.lot_id
+         join inventory_products p on p.id = l.product_id
+         left join inventory_brands b on b.id = p.brand_id
+         left join inventory_businesses mb on mb.id = p.manufacturer_id
+         left join organizations o on o.id = mb.company_id
+         left join identities i on i.organization_id = o.id and i.revoked_at is null
+        where m.container_id = $1`,
+      [containerId],
+    );
+    expect(q.rows).toHaveLength(1);
+    expect(q.rows[0]).toMatchObject({
+      kind: "opening",
+      basis: "labelled_unopened",
+      quantity: "500.0000",
+      unit: "g",
+      idempotency_key: `capture:${capture}:opening`,
+      status: "sealed",
+      nominal_quantity: "500.0000",
+      nominal_unit: "g",
+      capture_status: "confirmed",
+      outcome: "new_container",
+      product: "Test cacao powder",
+      composition: "single",
+      brand: `Test brand ${RUN}`,
+      lot_code: "L2417A",
+      expiry_date: "2027-03-01",
+      maker_type: "listed",
+    });
+    expect(q.rows[0].id_code).toMatch(/^10X-[0-9A-HJKMNP-TV-Z]{5}$/);
+    // The photo is evidence for what was saved.
+    expect(
+      await n(
+        `select count(*) as n from inventory_document_links where document_id = $1 and (container_id = $2 or lot_id is not null or product_id is not null)`,
+        [photo.body.documentId, containerId],
+      ),
+    ).toBe(3);
+    // A listed company with an iD is not a member of anything.
+    expect(await n(`select count(*) as n from memberships m join organizations o on o.id = m.organization_id where o.type = 'listed'`)).toBe(0);
+
+    const counts = async () => {
+      const out: number[] = [];
+      for (const t of ["inventory_containers", "inventory_lots", "inventory_movements", "inventory_products"]) {
+        out.push(await n(`select count(*) as n from ${t} where organization_id = $1`, [A.organizationId]));
+      }
+      return out;
+    };
+    const before = await counts();
+    const second = await save(capture, values);
+    expect(savedContainer(second.redirect)).toBe(containerId);
+    expect(await counts()).toEqual(before);
+  });
+
+  test("with no amount, no date and no price still saves, and the amount is unknown, never 0", async () => {
+    const capture = await newCapture();
+    await upload(capture, jpeg(`unknown-${RUN}`));
+    const saved = await save(capture, { productName: "Test unlabelled jar", status: "open", amount: "unknown" });
+    const containerId = savedContainer(saved.redirect);
+    const { rows } = await db.query(`select balance, balance_basis from inventory_container_balances where container_id = $1`, [containerId]);
+    expect(rows[0]).toEqual({ balance: null, balance_basis: "unknown" });
+
+    const { listInventory } = await import("@/lib/db/inventory");
+    const row = (await listInventory(owner(A))).find((r) => r.containerId === containerId)!;
+    expect(row.balance).toBeNull();
+    expect(row.expiryDate).toBeNull();
+  });
+
+  test("refuses an opened package at its label weight, and gives back what was typed", async () => {
+    const capture = await newCapture();
+    const refused = await save(capture, { productName: "Test opened bag", labelQuantity: "1", labelUnit: "kg", status: "open", amount: "label" });
+    expect(refused.redirect).toBeNull();
+    expect(refused.state?.field).toBe("amount");
+    expect(refused.state?.values?.productName).toBe("Test opened bag");
+    expect(await n(`select count(*) as n from inventory_captures where id = $1 and status = 'open'`, [capture])).toBe(1);
+  });
+});
+
+describe("the same label photo for a second jar", () => {
+  test("is one document, linked to both captures, and saving makes two containers with one opening each", async () => {
+    const photo = jpeg(`two-jars-${RUN}`);
+    const first = await newCapture();
+    const upA = await upload(first, photo);
+    const containerA = savedContainer((await save(first, { productName: "Test spirulina", labelQuantity: "250", labelUnit: "g", amount: "label" })).redirect);
+
+    const second = await newCapture();
+    const upB = await upload(second, photo);
+    expect(upB.status).toBe(200);
+    expect(upB.body.documentId).toBe(upA.body.documentId);
+    expect(upB.body.reused).toBe(true);
+    expect((upB.body.evidenceFor as { containerId: string }[]).map((e) => e.containerId)).toEqual([containerA]);
+
+    const { getCapture } = await import("@/lib/db/inventory");
+    const view = await getCapture(owner(A), second);
+    expect(view!.photos.map((p) => p.id)).toEqual([upA.body.documentId]);
+    expect(view!.photos[0].evidenceFor.map((e) => e.containerId)).toEqual([containerA]);
+
+    const containerB = savedContainer((await save(second, { productName: "Test spirulina", labelQuantity: "250", labelUnit: "g", amount: "label" })).redirect);
+    expect(containerB).not.toBe(containerA);
+
+    for (const c of [containerA, containerB]) {
+      expect(await n(`select count(*) as n from inventory_movements where container_id = $1 and kind = 'opening'`, [c])).toBe(1);
+    }
+    const links = await db.query(
+      `select capture_id, container_id from inventory_document_links
+        where document_id = $1 and (capture_id is not null or container_id is not null)`,
+      [upA.body.documentId],
+    );
+    expect(links.rows.filter((r) => r.capture_id).map((r) => r.capture_id).sort()).toEqual([first, second].sort());
+    expect(links.rows.filter((r) => r.container_id).map((r) => r.container_id).sort()).toEqual([containerA, containerB].sort());
+    // Each capture made its own container, and only that one.
+    const made = await db.query(`select id, container_id from inventory_captures where id in ($1, $2)`, [first, second]);
+    expect(Object.fromEntries(made.rows.map((r) => [r.id, r.container_id]))).toEqual({ [first]: containerA, [second]: containerB });
+  });
+});
+
+describe("a weighing", () => {
+  async function weighed(tareBasis: string) {
+    const capture = await newCapture();
+    const id = savedContainer(
+      (await save(capture, { productName: `Test beet powder ${tareBasis}`, status: "open", amount: "weighed", grossG: "330", tareG: "30", tareBasis })).redirect,
+    );
+    const { rows } = await db.query(
+      `select m.basis, m.quantity::text, m.unit, w.confidence, w.tare_basis, w.net_g::text, w.method, b.balance::text, b.balance_basis
+         from inventory_movements m
+         join inventory_measurements w on w.id = m.measurement_id
+         join inventory_container_balances b on b.container_id = m.container_id
+        where m.container_id = $1`,
+      [id],
+    );
+    return rows[0];
+  }
+
+  test("with an estimated empty weight is an estimate, never measured", async () => {
+    expect(await weighed("estimated")).toMatchObject({
+      basis: "estimated",
+      quantity: "300.0000",
+      unit: "g",
+      confidence: "estimated",
+      tare_basis: "estimated",
+      net_g: "300.000",
+      balance_basis: "estimated",
+    });
+  });
+
+  test("with a weighed empty container is measured, at the net", async () => {
+    expect(await weighed("measured")).toMatchObject({
+      basis: "measured",
+      quantity: "300.0000",
+      confidence: "exact",
+      tare_basis: "measured",
+      method: "scale",
+      balance: "300.0000",
+      balance_basis: "measured",
+    });
+  });
+
+  test("is never a measured amount for a container counted in millilitres", async () => {
+    const capture = await newCapture();
+    const refused = await save(capture, { productName: "Test oil", labelQuantity: "500", labelUnit: "ml", status: "open", amount: "weighed", grossG: "600", tareG: "80", tareBasis: "measured" });
+    expect(refused.state?.field).toBe("amount");
+
+    // And the database holds the same line if a caller tried anyway.
+    const { confirmCapture, InventoryError } = await import("@/lib/db/inventory");
+    const { reviewSchema, REVIEW_FIELDS } = await import("@/lib/inventory/review");
+    const input = reviewSchema.parse({
+      ...Object.fromEntries(REVIEW_FIELDS.map((f) => [f, ""])),
+      captureId: capture,
+      product: "new",
+      productName: "Test oil",
+      status: "open",
+      amount: "weighed",
+    });
+    await expect(
+      confirmCapture(owner(A), input, {
+        dimension: "volume",
+        nominal: { quantity: "500", unit: "ml" },
+        measurement: { grossG: "600", tareG: "80", tareBasis: "measured", confidence: "exact" },
+        opening: { basis: "measured", quantity: "net", unit: "g" },
+      }),
+    ).rejects.toBeInstanceOf(InventoryError);
+    expect(await n(`select count(*) as n from inventory_captures where id = $1 and status = 'open'`, [capture])).toBe(1);
+  });
+});
+
+describe("another business", () => {
+  test("cannot see, read, add to or save another business's item", async () => {
+    const capture = await newCapture(A);
+    const up = await upload(capture, jpeg(`private-${RUN}`));
+    expect(up.status).toBe(200);
+
+    as(B);
+    const { getCapture, documentForDownload, listInventory } = await import("@/lib/db/inventory");
+    expect(await getCapture(owner(B), capture)).toBeNull();
+    expect(await documentForDownload(owner(B), up.body.documentId as string)).toBeNull();
+    expect(await listInventory(owner(B))).toEqual([]);
+
+    const { GET } = await import("@/app/api/inventory/documents/[id]/route");
+    const image = await GET(new Request("https://app.example.com/x"), { params: Promise.resolve({ id: up.body.documentId as string }) });
+    expect(image.status).toBe(404);
+
+    expect((await upload(capture, jpeg(`intruder-${RUN}`))).status).toBe(404);
+    await expect(save(capture, { productName: "Not yours" })).rejects.toBeInstanceOf(h.NotFound);
+
+    as(A);
+    const own = await GET(new Request("https://app.example.com/x"), { params: Promise.resolve({ id: up.body.documentId as string }) });
+    expect(own.status).toBe(200);
+    expect(own.headers.get("cache-control")).toBe("private, no-store");
+    expect(own.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(own.headers.get("content-type")).toBe("image/jpeg");
+  });
+});
+
+describe("a business Inventory is not switched on for", () => {
+  test("gets a 404 from every route and action", async () => {
+    const capture = await newCapture(A);
+    const up = await upload(capture, jpeg(`gate-${RUN}`));
+    vi.stubEnv("INVENTORY_BUSINESSES", B.organizationId);
+
+    expect((await upload(capture, jpeg(`gate-2-${RUN}`))).status).toBe(404);
+    const { GET } = await import("@/app/api/inventory/documents/[id]/route");
+    expect((await GET(new Request("https://app.example.com/x"), { params: Promise.resolve({ id: up.body.documentId as string }) })).status).toBe(404);
+    const { POST } = await import("@/app/api/inventory/captures/[id]/extract/route");
+    expect((await POST(new Request("https://app.example.com/x", { method: "POST" }), { params: Promise.resolve({ id: capture }) })).status).toBe(404);
+    await expect(save(capture, { productName: "Gated" })).rejects.toBeInstanceOf(h.NotFound);
+    const { startCaptureAction } = await import("@/app/inventory/actions");
+    await expect(startCaptureAction(new FormData())).rejects.toBeInstanceOf(h.NotFound);
+
+    vi.stubEnv("INVENTORY_BUSINESSES", "");
+    expect((await upload(capture, jpeg(`gate-3-${RUN}`))).status).toBe(404);
+  });
+});
+
+describe("the label reader", () => {
+  const ANSWER = {
+    product_name: { value: "Test raw cacao powder", printed: "RAW CACAO POWDER", confidence: 0.93, photo: 1 },
+    brand: { value: `Test brand ${RUN}`, printed: null, confidence: 0.9, photo: 1 },
+    manufacturer: { value: null, printed: null, confidence: 0.1, photo: null },
+    net_quantity: { amount: 454, unit: "g", printed: "NET WT 1 LB (454 g)", confidence: 0.88, photo: 1 },
+    lot_code: { value: "L99", printed: "LOT L99", confidence: 0.6, photo: 2 },
+    expiry: { date: "2027-05-31", kind: "best_before", printed: "BB 31/05/2027", confidence: 0.7, photo: 2 },
+    gtin: { value: null, printed: null, confidence: 0.1, photo: null },
+    form: { value: "powder", printed: null, confidence: 0.8, photo: 1 },
+  };
+
+  const allowed = {
+    INVENTORY_VISION_MODEL: "test-vision:1b",
+    OLLAMA_API_KEY: "test-ollama-key",
+    OLLAMA_CLOUD_CLIENT_DATA: "true",
+    OLLAMA_BASE_URL: "",
+    OLLAMA_SELF_HOSTED: "",
+  };
+
+  function reader(env: Record<string, string>) {
+    for (const [k, v] of Object.entries(env)) vi.stubEnv(k, v);
+  }
+
+  type Call = { path: string; auth: string | null; body: Record<string, unknown> };
+
+  /** A stand-in Ollama server: /api/show says what the model takes, /api/chat answers. */
+  function ollama(opts: { capabilities?: string[] | "unreachable"; content?: string }) {
+    const calls: Call[] = [];
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      const path = new URL(url).pathname;
+      calls.push({ path, auth: new Headers(init.headers).get("authorization"), body: JSON.parse(String(init.body)) });
+      if (path === "/api/show") {
+        if (opts.capabilities === "unreachable") throw new TypeError("fetch failed");
+        return new Response(JSON.stringify({ capabilities: opts.capabilities ?? ["completion", "vision"] }));
+      }
+      return new Response(JSON.stringify({ message: { role: "assistant", content: opts.content ?? JSON.stringify(ANSWER) }, done: true }));
+    });
+    return calls;
+  }
+
+  beforeEach(async () => {
+    const { forgetVisionCapabilities } = await import("@/lib/inventory/extract");
+    forgetVisionCapabilities();
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+  });
+
+  async function readLabels(capture: string) {
+    const { POST } = await import("@/app/api/inventory/captures/[id]/extract/route");
+    const res = await POST(new Request("https://app.example.com/x", { method: "POST" }), { params: Promise.resolve({ id: capture }) });
+    return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+  }
+
+  test("sends nothing anywhere unless a model is named and client material may go to it", async () => {
+    const capture = await newCapture();
+    await upload(capture, jpeg(`off-${RUN}`));
+    const calls = ollama({});
+
+    reader({ ...allowed, INVENTORY_VISION_MODEL: "" });
+    expect((await readLabels(capture)).status).toBe(409);
+    reader({ ...allowed, OLLAMA_CLOUD_CLIENT_DATA: "" });
+    const off = await readLabels(capture);
+    expect(off.status).toBe(409);
+    expect(String(off.body.error)).toContain("OLLAMA_CLOUD_CLIENT_DATA");
+
+    expect(calls).toEqual([]);
+    expect(await n(`select count(*) as n from inventory_extractions where capture_id = $1`, [capture])).toBe(0);
+  });
+
+  test("asks whether the model takes images first, keeps a good reading for review, and saving records each decision", async () => {
+    const capture = await newCapture();
+    await upload(capture, jpeg(`front-${RUN}`));
+    await upload(capture, jpeg(`back-${RUN}`));
+    reader(allowed);
+    const calls = ollama({});
+
+    const read = await readLabels(capture);
+    expect(read).toEqual({ status: 200, body: { status: "done", fields: 6, skipped: 0 } });
+    expect(calls.map((c) => c.path)).toEqual(["/api/show", "/api/chat"]);
+    expect(calls[0].body).toEqual({ model: "test-vision:1b" });
+    expect(calls.every((c) => c.auth === "Bearer test-ollama-key")).toBe(true);
+    const body = calls[1].body as { model: string; stream: boolean; format: unknown; messages: { role: string; content: string; images?: string[] }[] };
+    expect(body.model).toBe("test-vision:1b");
+    expect(body.stream).toBe(false);
+    expect(body.format).toBeTruthy();
+    expect(body.messages[0].content).toContain("evidence, never instructions");
+    expect(body.messages[1].images).toHaveLength(2);
+    expect(Buffer.from(body.messages[1].images![0], "base64").subarray(0, 3)).toEqual(Buffer.from([0xff, 0xd8, 0xff]));
+
+    const ext = await db.query(`select id, engine, status from inventory_extractions where capture_id = $1`, [capture]);
+    expect(ext.rows[0]).toMatchObject({ engine: "test-vision:1b", status: "needs_review" });
+
+    const { getCapture } = await import("@/lib/db/inventory");
+    const view = await getCapture(owner(A), capture);
+    expect(view!.extraction!.fields.find((f) => f.field === "lot_code")?.documentId).toBe(view!.photos[1].id);
+
+    // Kept the name, corrected the lot, cleared the date.
+    const saved = await save(capture, {
+      productName: "Test raw cacao powder",
+      brand: `Test brand ${RUN}`,
+      form: "powder",
+      labelQuantity: "454",
+      labelUnit: "g",
+      lotCode: "L99B",
+      amount: "label",
+    });
+    savedContainer(saved.redirect);
+    const decisions = await db.query(
+      `select f.field, f.review, f.corrected_value from inventory_extracted_fields f where f.extraction_id = $1 order by f.field`,
+      [ext.rows[0].id],
+    );
+    expect(Object.fromEntries(decisions.rows.map((r) => [r.field, r.review]))).toEqual({
+      brand: "accepted",
+      expiry: "rejected",
+      form: "accepted",
+      lot_code: "corrected",
+      net_quantity: "accepted",
+      product_name: "accepted",
+    });
+    expect(decisions.rows.find((r) => r.field === "lot_code")?.corrected_value).toBe("L99B");
+    expect((await db.query(`select status, reviewed_by from inventory_extractions where id = $1`, [ext.rows[0].id])).rows[0]).toEqual({
+      status: "reviewed",
+      reviewed_by: A.userId,
+    });
+  });
+
+  test("asks the server about a model once per process", async () => {
+    const capture = await newCapture();
+    await upload(capture, jpeg(`asked-once-${RUN}`));
+    reader(allowed);
+    const calls = ollama({});
+    await readLabels(capture);
+    await readLabels(capture);
+    expect(calls.map((c) => c.path)).toEqual(["/api/show", "/api/chat", "/api/chat"]);
+  });
+
+  test("sends a model that does not take images nothing, and records a failed reading that names it", async () => {
+    const capture = await newCapture();
+    await upload(capture, jpeg(`text-only-${RUN}`));
+    reader({ ...allowed, INVENTORY_VISION_MODEL: "test-text-only:1b" });
+    const calls = ollama({ capabilities: ["completion", "tools"] });
+
+    const read = await readLabels(capture);
+    expect(read).toEqual({ status: 200, body: { status: "failed", error: "test-text-only:1b does not accept images.", skipped: 0 } });
+    expect(calls.map((c) => c.path)).toEqual(["/api/show"]);
+    expect((await db.query(`select engine, status, error from inventory_extractions where capture_id = $1`, [capture])).rows[0]).toEqual({
+      engine: "test-text-only:1b",
+      status: "failed",
+      error: "test-text-only:1b does not accept images.",
+    });
+
+    savedContainer((await save(capture, { productName: "Test typed after a text-only model", amount: "unknown" })).redirect);
+  });
+
+  test("sends nothing when the server will not say what the model takes", async () => {
+    const capture = await newCapture();
+    await upload(capture, jpeg(`unreachable-${RUN}`));
+    reader(allowed);
+    const calls = ollama({ capabilities: "unreachable" });
+    const read = await readLabels(capture);
+    expect(read.body).toMatchObject({ status: "failed", error: "Could not ask whether test-vision:1b accepts images." });
+    expect(calls.map((c) => c.path)).toEqual(["/api/show"]);
+  });
+
+  test("records a reading it cannot use as failed, and saving by hand still works", async () => {
+    const capture = await newCapture();
+    await upload(capture, jpeg(`garbled-${RUN}`));
+    reader(allowed);
+    ollama({ content: "Sure! Here is the label: RAW CACAO" });
+    const read = await readLabels(capture);
+    expect(read.status).toBe(200);
+    expect(read.body.status).toBe("failed");
+    expect((await db.query(`select status from inventory_extractions where capture_id = $1`, [capture])).rows[0].status).toBe("failed");
+
+    savedContainer((await save(capture, { productName: "Test typed by hand", amount: "unknown" })).redirect);
+  });
+
+  test("logs only the model, counts and timings — never a photo or a word of a label", async () => {
+    const capture = await newCapture();
+    await upload(capture, jpeg(`quiet-${RUN}`));
+    reader(allowed);
+    ollama({});
+    const lines: string[] = [];
+    const record = (...args: unknown[]) => void lines.push(args.map(String).join(" "));
+    for (const level of ["info", "log", "warn", "error"] as const) vi.spyOn(console, level).mockImplementation(record);
+    await readLabels(capture);
+    const said = lines.join("\n");
+    expect(said).toContain("model=test-vision:1b");
+    expect(said).not.toMatch(/cacao|L99|RAW|synthetic label/i);
+  });
+
+  test("never sends a HEIC, and says so", async () => {
+    const capture = await newCapture();
+    const up = await upload(capture, heic(`heic-${RUN}`));
+    expect(up.status).toBe(200);
+    expect(up.body.contentType).toBe("image/heic");
+    reader(allowed);
+    const calls = ollama({});
+    const read = await readLabels(capture);
+    expect(read.status).toBe(400);
+    expect(String(read.body.error)).toContain("HEIC");
+    expect(calls).toEqual([]);
+  });
+});

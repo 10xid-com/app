@@ -80,6 +80,13 @@ export const BUSINESS_ACTIONS = [
   "grants.approve",
   "billing.manage",
   "ownership.transfer",
+  // Inventory (login's 0048): what the business holds, from phone photos.
+  // Owners only for now — no role template below lists them — and only for
+  // the businesses INVENTORY_BUSINESSES switches it on for (lib/inventory/
+  // config.ts). Agency grants never carry `owner`, so agency access never
+  // reaches it.
+  "inventory.read",
+  "inventory.write",
 ] as const;
 
 export type BusinessAction = (typeof BUSINESS_ACTIONS)[number];

@@ -219,6 +219,9 @@ const EXPECTED: Record<BusinessAction, readonly RoleTemplate[]> = {
   "grants.approve": [O],
   "billing.manage": [O],
   "ownership.transfer": [O],
+  // Inventory (login's 0048), owners only until roles are decided for it.
+  "inventory.read": [O],
+  "inventory.write": [O],
 };
 
 describe("the permission matrix", () => {

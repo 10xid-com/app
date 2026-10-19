@@ -103,6 +103,7 @@ Each is **inert without configuration** rather than half-working. See `.env.exam
 | Google Drive | A service account with the `drive.file` scope, and one folder shared with it. The scope reaches only files the portal itself created. |
 | Optional alternate workspace engines (Claude, OpenAI) | `ANTHROPIC_API_KEY` for the Claude modes; `OPENAI_API_KEY` plus `OPENAI_MODEL_MULTIMODAL` / `OPENAI_MODEL_REVIEW` for the OpenAI modes. They remain in the repository but are not the stated Chat Boss provider intent. See "The workspace" below. |
 | Ollama (prototype) | `ENABLE_PROTOTYPE_ENGINE=true` and `OLLAMA_API_KEY` for Ollama Cloud. One picker entry per model in `OLLAMA_MODELS`, plus Auto. Text only, no tools, house workspace only — unless `OLLAMA_CLOUD_CLIENT_DATA=true`, which gives it the job and repository tools and client workspaces. |
+| Inventory | `INVENTORY_BUSINESSES` (organization ids) switches /inventory on per business; owners catalogue containers from phone photos into the media bucket (`inventory/<business>/`). `INVENTORY_VISION_MODEL` lets an Ollama model read the labels — on Ollama Cloud only with `OLLAMA_CLOUD_CLIENT_DATA=true`. Without it the review form is filled in by hand. |
 | Ollama (self-hosted) | `OLLAMA_SELF_HOSTED=true`, `OLLAMA_BASE_URL` naming your own server, and `OLLAMA_MODELS`. Context and tools like Claude; replaces the prototype. |
 
 ## The workspace

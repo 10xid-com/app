@@ -8,9 +8,23 @@ import { abortMultipart, deleteObject } from "./media-bucket";
  * bucket rather than offered for posting again.
  */
 
+/**
+ * Only social uploads' own keys (`social/<business>/…`, login's 0035) are ever
+ * deleted from here. The table's check already holds every key to that
+ * prefix; this says it again where the delete happens, so nothing else in the
+ * shared bucket — inventory photos above all — can be swept up by a cleanup.
+ */
+export function socialKeysOnly<T extends { storageKey: string }>(files: T[]): T[] {
+  return files.filter((f) => {
+    const ours = f.storageKey.startsWith("social/");
+    if (!ours) console.warn("[social-media] refused to delete a key outside social/");
+    return ours;
+  });
+}
+
 async function removeFromStore(files: { storageKey: string; uploadId: string | null }[]): Promise<void> {
   await Promise.all(
-    files.map(async (f) => {
+    socialKeysOnly(files).map(async (f) => {
       // An upload still open has parts but no object; a finished one, the reverse. Either way, both.
       if (f.uploadId) await abortMultipart(f.storageKey, f.uploadId);
       await deleteObject(f.storageKey).catch(() => undefined);
