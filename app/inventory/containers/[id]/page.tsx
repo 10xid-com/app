@@ -11,7 +11,7 @@ import { inventoryEnabledFor } from "@/lib/inventory/config";
 import { unitsFor } from "@/lib/inventory/container";
 import { BASIS_LABELS, UNITS, describeBalance } from "@/lib/inventory/review";
 import { PortalShell } from "../../../portal-shell";
-import { AmountForm, DetailsForm, LocalTime, OpenForm } from "./container-forms";
+import { AmountForm, DetailsForm, DoneNote, LocalTime, OpenForm } from "./container-forms";
 
 export const metadata: Metadata = { title: "Container" };
 
@@ -62,17 +62,17 @@ export default async function ContainerPage({
         {c.lot.hold !== "none" ? <span className="text-xs font-semibold text-warn">On hold</span> : null}
       </p>
 
-      {done && DONE[done] ? (
-        <p role="status" className="mt-4 rounded-lg border border-good/30 bg-good/5 px-3 py-2 text-sm text-good">
-          {DONE[done]}
-        </p>
-      ) : null}
+      {done && DONE[done] ? <DoneNote message={DONE[done]} /> : null}
 
       {c.photos.length ? (
         <ul className="mt-4 grid grid-cols-3 gap-2 sm:grid-cols-5">
-          {c.photos.map((p) => (
+          {c.photos.map((p, n) => (
             <li key={p.id} className="aspect-square overflow-hidden rounded-lg bg-sunk">
-              <a href={`/api/inventory/documents/${p.id}`} className="block h-full w-full">
+              <a
+                href={`/api/inventory/documents/${p.id}`}
+                aria-label={`View label photo ${n + 1} of ${c.photos.length}`}
+                className="block h-full w-full"
+              >
                 {/* eslint-disable-next-line @next/next/no-img-element -- a private photo served per request */}
                 <img src={`/api/inventory/documents/${p.id}`} alt="" loading="lazy" className="h-full w-full object-cover" />
               </a>

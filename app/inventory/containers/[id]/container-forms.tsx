@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useActionState, useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { CsrfInput, CsrfProvider } from "../../../chat/csrf";
 import { recordAmountAction, saveContainerDetailsAction, type ContainerFormState } from "../../actions";
 
@@ -258,6 +258,25 @@ export function DetailsForm({
         </button>
       </form>
     </CsrfProvider>
+  );
+}
+
+/**
+ * "Saved." after a change, once: the note comes from the address (?done=),
+ * which is taken out of it straight away, so reloading the page — pulling to
+ * refresh on a phone — does not say it again.
+ */
+export function DoneNote({ message }: { message: string }) {
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("done")) return;
+    url.searchParams.delete("done");
+    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+  }, []);
+  return (
+    <p role="status" className="mt-4 rounded-lg border border-good/30 bg-good/5 px-3 py-2 text-sm text-good">
+      {message}
+    </p>
   );
 }
 
