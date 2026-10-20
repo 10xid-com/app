@@ -1,0 +1,369 @@
+{
+  "meta": {
+    "app": "c88283f78cf53c3c0878ff1d0cf82dae565a55b7",
+    "build": "gJ5vR35VH3A4_ldgheP2b",
+    "database": "PostgreSQL 18.4 with 50 login migrations applied, built by rebuild-db.sh from login 631c28f + seed; app connects as portal_app (RLS)",
+    "browser": "Chromium 141.0.7390.37",
+    "when": "2026-10-20T02:41:49.852Z"
+  },
+  "passed": 43,
+  "total": 43,
+  "results": [
+    {
+      "id": "H1",
+      "name": "390 px, inventory list: Add new product immediately right of Inventory, one line, nothing cut off or off the screen",
+      "ok": true,
+      "detail": "title 92–161, Add new product 169–296.5 (8px after the title), Preview iD 344–378, icon only, mark shown, overflow 0/0"
+    },
+    {
+      "id": "H2",
+      "name": "390 px: Preview iD keeps its icon, and its name for screen readers",
+      "ok": true,
+      "detail": "title 92–161, Add new product 169–296.5 (8px after the title), Preview iD 344–378, icon only, mark shown, overflow 0/0"
+    },
+    {
+      "id": "H3",
+      "name": "The page asks for no full-bleed layout: Safari keeps it inside the safe area",
+      "ok": true,
+      "detail": "viewport meta \"width=device-width, initial-scale=1\""
+    },
+    {
+      "id": "S1",
+      "name": "From the list, Add new product opens the start page; 4 taps and a plain GET make no item",
+      "ok": true,
+      "detail": "items 0 before, 0 after; GET /inventory/capture 200"
+    },
+    {
+      "id": "H4",
+      "name": "390 px, start page: Add new product immediately right of Inventory, one line, nothing cut off or off the screen",
+      "ok": true,
+      "detail": "title 92–161, Add new product 169–296.5 (8px after the title), Preview iD 344–378, icon only, mark shown, overflow 0/0"
+    },
+    {
+      "id": "S2",
+      "name": "Start (the existing button) makes one item and opens its camera",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "id": "H5",
+      "name": "390 px, item being catalogued: Add new product immediately right of Inventory, one line, nothing cut off or off the screen",
+      "ok": true,
+      "detail": "title 92–161, Add new product 169–296.5 (8px after the title), Preview iD 344–378, icon only, mark shown, overflow 0/0"
+    },
+    {
+      "id": "H6",
+      "name": "On an unsaved item, Add new product is the jump to the note on the same page",
+      "ok": true,
+      "detail": "href #finish-this-item"
+    },
+    {
+      "id": "P1",
+      "name": "390 px, long item page at the top: bar at the top, main below it",
+      "ok": true,
+      "detail": "bar top 0px, main from 56px scrolled 0/1834px, frame scrolled 0px, page scrolled 0px"
+    },
+    {
+      "id": "P2",
+      "name": "Swiped to the bottom: only main scrolled; the bar is still at the top",
+      "ok": true,
+      "detail": "bar top 0px, main from 56px scrolled 1834/1834px, frame scrolled 0px, page scrolled 0px"
+    },
+    {
+      "id": "U1",
+      "name": "Unsaved item, Add new product from the top of the page: same page, scrolled to the note above Save and add another",
+      "ok": true,
+      "detail": "/inventory/capture/a6eff174-a8ba-4133-aeb9-1a219921be46#finish-this-item; note shown true, in view true; Save and add another in view true; Discard in view true"
+    },
+    {
+      "id": "U2",
+      "name": "The note has focus (read out by a screen reader); the bar stays on screen, above it",
+      "ok": true,
+      "detail": "focused true, bar on screen true, note below the bar true"
+    },
+    {
+      "id": "U3",
+      "name": "Nothing lost or started: typed name, 3 photos and the open item as they were; no new item",
+      "ok": true,
+      "detail": "name \"Synthetic cacao powder (test)\", photos 3, items 1 (was 1)"
+    },
+    {
+      "id": "U4",
+      "name": "The note says to finish it with Save and add another, or discard it",
+      "ok": true,
+      "detail": "Finish this item before adding a new product. Save and add another saves it and opens the next one. To start over instead, discard this item below."
+    },
+    {
+      "id": "P3",
+      "name": "After the jump the bar is still at the top: only main moved",
+      "ok": true,
+      "detail": "bar top 0px, main from 56px scrolled 1964/1964px, frame scrolled 0px, page scrolled 0px"
+    },
+    {
+      "id": "U5",
+      "name": "Tapped twice more: still the same item and form, still no new item",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "id": "F1",
+      "name": "Notes (near the end) focused from the top: scrolled into view in main, below the bar",
+      "ok": true,
+      "detail": "{\"top\":339,\"bottom\":405,\"barBottom\":56,\"mainBottom\":664,\"active\":\"notes\"}"
+    },
+    {
+      "id": "N1",
+      "name": "Save and add another still saves, and opens the next item saying what was saved",
+      "ok": true,
+      "detail": "item 1 confirmed; next item open"
+    },
+    {
+      "id": "N2",
+      "name": "The next item arrives with the note hidden",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "id": "U6",
+      "name": "On the next item (still empty) Add new product shows the note too, and starts nothing",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "id": "U7",
+      "name": "Discard this item discards it and returns to the list",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "id": "H7",
+      "name": "390 px, list with an item: Add new product immediately right of Inventory, one line, nothing cut off or off the screen",
+      "ok": true,
+      "detail": "title 92–161, Add new product 169–296.5 (8px after the title), Preview iD 344–378, icon only, mark shown, overflow 0/0"
+    },
+    {
+      "id": "H8",
+      "name": "A saved item's page: Add new product goes to the start page",
+      "ok": true,
+      "detail": "href /inventory/capture"
+    },
+    {
+      "id": "H9",
+      "name": "390 px, container page: Add new product immediately right of Inventory, one line, nothing cut off or off the screen",
+      "ok": true,
+      "detail": "title 92–161, Add new product 169–296.5 (8px after the title), Preview iD 344–378, icon only, mark shown, overflow 0/0"
+    },
+    {
+      "id": "P4",
+      "name": "390 px, container page at the top: bar at the top",
+      "ok": true,
+      "detail": "bar top 0px, main from 56px scrolled 0/1271px, frame scrolled 0px, page scrolled 0px"
+    },
+    {
+      "id": "P5",
+      "name": "Swiped to the bottom of the container page: the bar is still at the top",
+      "ok": true,
+      "detail": "bar top 0px, main from 56px scrolled 1271/1271px, frame scrolled 0px, page scrolled 0px"
+    },
+    {
+      "id": "M1",
+      "name": "From the bottom of the page the menu opens, with Inventory and iD",
+      "ok": true,
+      "detail": "10XiD, Home, Orders, Quotes, Jobs, Inventory, Products, Customers, Growth, Discounts, Content, Markets, Finance, Analytics, Channels, iD, Add channel, Team, Settings"
+    },
+    {
+      "id": "S3",
+      "name": "From the bottom of a container page, Add new product opens the start page; no item made",
+      "ok": true,
+      "detail": "items 2 → 2"
+    },
+    {
+      "id": "W375a",
+      "name": "375 px, inventory list: Add new product immediately right of Inventory, one line, nothing cut off or off the screen",
+      "ok": true,
+      "detail": "title 92–161, Add new product 169–296.5 (8px after the title), Preview iD 329–363, icon only, mark shown, overflow 0/0"
+    },
+    {
+      "id": "W375b",
+      "name": "375 px: Preview iD as its icon",
+      "ok": true,
+      "detail": "title 92–161, Add new product 169–296.5 (8px after the title), Preview iD 329–363, icon only, mark shown, overflow 0/0"
+    },
+    {
+      "id": "W375c",
+      "name": "375 px, container page: Add new product immediately right of Inventory, one line, nothing cut off or off the screen",
+      "ok": true,
+      "detail": "title 92–161, Add new product 169–296.5 (8px after the title), Preview iD 329–363, icon only, mark shown, overflow 0/0"
+    },
+    {
+      "id": "W360a",
+      "name": "360 px, inventory list: Add new product immediately right of Inventory, one line, nothing cut off or off the screen",
+      "ok": true,
+      "detail": "title 92–161, Add new product 169–296.5 (8px after the title), Preview iD 314–348, icon only, mark shown, overflow 0/0"
+    },
+    {
+      "id": "W360b",
+      "name": "360 px: Preview iD as its icon",
+      "ok": true,
+      "detail": "title 92–161, Add new product 169–296.5 (8px after the title), Preview iD 314–348, icon only, mark shown, overflow 0/0"
+    },
+    {
+      "id": "W360c",
+      "name": "360 px, container page: Add new product immediately right of Inventory, one line, nothing cut off or off the screen",
+      "ok": true,
+      "detail": "title 92–161, Add new product 169–296.5 (8px after the title), Preview iD 314–348, icon only, mark shown, overflow 0/0"
+    },
+    {
+      "id": "W320a",
+      "name": "320 px, inventory list: Add new product immediately right of Inventory, one line, nothing cut off or off the screen",
+      "ok": true,
+      "detail": "title 92–161, Add new product 169–296.5 (8px after the title), Preview iD not in the bar, mark shown, overflow 0/0"
+    },
+    {
+      "id": "W320b",
+      "name": "320 px: Preview iD leaves the bar, and iD is in the menu",
+      "ok": true,
+      "detail": "title 92–161, Add new product 169–296.5 (8px after the title), Preview iD not in the bar, mark shown, overflow 0/0"
+    },
+    {
+      "id": "W320c",
+      "name": "320 px, container page: Add new product immediately right of Inventory, one line, nothing cut off or off the screen",
+      "ok": true,
+      "detail": "title 92–161, Add new product 169–296.5 (8px after the title), Preview iD not in the bar, mark shown, overflow 0/0"
+    },
+    {
+      "id": "W320d",
+      "name": "320 px, container page swiped to the bottom: the bar is still at the top",
+      "ok": true,
+      "detail": "bar top 0px, main from 56px scrolled 1524/1524px, frame scrolled 0px, page scrolled 0px"
+    },
+    {
+      "id": "W320e",
+      "name": "320 px, item being catalogued: Add new product immediately right of Inventory, one line, nothing cut off or off the screen",
+      "ok": true,
+      "detail": "title 92–161, Add new product 169–296.5 (8px after the title), Preview iD not in the bar, mark shown, overflow 0/0"
+    },
+    {
+      "id": "W320f",
+      "name": "320 px, unsaved item: Add new product stays, the note is in view with Save and add another, the name is kept",
+      "ok": true,
+      "detail": "note in view true, Save and add another in view true, bar on screen true, name \"Synthetic matcha (test)\""
+    },
+    {
+      "id": "R1",
+      "name": "The start page lists the item left unsaved at 320 px, to carry on with",
+      "ok": true,
+      "detail": "1 listed"
+    },
+    {
+      "id": "X1",
+      "name": "Items in the database: only the 3 started with Start or Save and add another (none from Add new product)",
+      "ok": true,
+      "detail": "3 items"
+    },
+    {
+      "id": "X2",
+      "name": "No errors in the browser console",
+      "ok": true,
+      "detail": ""
+    }
+  ],
+  "shots": [
+    {
+      "file": "screens/390-list-empty.png",
+      "caption": "390 px · Inventory, nothing catalogued yet: Add new product right of Inventory; Preview iD as its icon",
+      "width": 390
+    },
+    {
+      "file": "screens/390-start-page.png",
+      "caption": "390 px · Add new product from the list: the existing start page (Start, and items started and not saved)",
+      "width": 390
+    },
+    {
+      "file": "screens/390-capture-top.png",
+      "caption": "390 px · An item being catalogued, top: three synthetic photos sent, name typed",
+      "width": 390
+    },
+    {
+      "file": "screens/390-capture-bottom.png",
+      "caption": "390 px · Same item, bottom: Save and add another, Save, Discard; the bar is still at the top",
+      "width": 390
+    },
+    {
+      "file": "screens/390-capture-note.png",
+      "caption": "390 px · Add new product on an unsaved item: the page stays, the note says to finish it or discard it",
+      "width": 390
+    },
+    {
+      "file": "screens/390-next-item.png",
+      "caption": "390 px · After Save and add another: the next item, “Saved: … Now the next one.”",
+      "width": 390
+    },
+    {
+      "file": "screens/390-list.png",
+      "caption": "390 px · Inventory with the saved item",
+      "width": 390
+    },
+    {
+      "file": "screens/390-container-top.png",
+      "caption": "390 px · A container's page, top",
+      "width": 390
+    },
+    {
+      "file": "screens/390-container-bottom.png",
+      "caption": "390 px · Same page, bottom (History); the bar is still at the top",
+      "width": 390
+    },
+    {
+      "file": "screens/390-menu.png",
+      "caption": "390 px · The menu, opened from the bottom of the container page",
+      "width": 390
+    },
+    {
+      "file": "screens/375-list.png",
+      "caption": "375 px · Inventory",
+      "width": 375
+    },
+    {
+      "file": "screens/375-container-top.png",
+      "caption": "375 px · A container's page, top",
+      "width": 375
+    },
+    {
+      "file": "screens/360-list.png",
+      "caption": "360 px · Inventory",
+      "width": 360
+    },
+    {
+      "file": "screens/360-container-top.png",
+      "caption": "360 px · A container's page, top",
+      "width": 360
+    },
+    {
+      "file": "screens/320-list.png",
+      "caption": "320 px · Inventory",
+      "width": 320
+    },
+    {
+      "file": "screens/320-container-top.png",
+      "caption": "320 px · A container's page, top",
+      "width": 320
+    },
+    {
+      "file": "screens/320-container-bottom.png",
+      "caption": "320 px · Same page, bottom",
+      "width": 320
+    },
+    {
+      "file": "screens/320-capture-note.png",
+      "caption": "320 px · Add new product on an unsaved item",
+      "width": 320
+    },
+    {
+      "file": "screens/390-start-page-resume.png",
+      "caption": "390 px · The start page lists the item left unsaved, to carry on with",
+      "width": 390
+    }
+  ],
+  "consoleErrors": []
+}
