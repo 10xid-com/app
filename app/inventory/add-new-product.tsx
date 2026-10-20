@@ -36,7 +36,8 @@ export function AddNewProduct({ finishFirst = false }: { finishFirst?: boolean }
   );
 }
 
+// A little tighter on a phone, so Inventory beside it is never cut short.
 const button =
-  "inline-flex min-h-9 flex-none items-center gap-1.5 whitespace-nowrap rounded-lg bg-brand-surface px-3 text-[14px] font-[600] " +
+  "inline-flex min-h-9 flex-none items-center gap-1.5 whitespace-nowrap rounded-lg bg-brand-surface px-2.5 text-[13px] font-[600] sm:px-3 sm:text-[14px] " +
   "text-brand-on-surface shadow-card transition-colors hover:bg-brand-surface-hover " +
   "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand";

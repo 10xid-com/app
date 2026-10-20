@@ -152,7 +152,12 @@ export function PortalFrame({
   );
 
   return (
-    <div className="flex h-dvh overflow-hidden bg-ground">
+    // Clipped, never scrolled: only main scrolls. With overflow hidden the
+    // frame was still a scroll container, and screen-reader-only controls in
+    // a page (positioned against the centre column) gave it hidden overflow,
+    // so a jump to a fragment at the end of a page scrolled the frame too and
+    // took the top bar off the screen. Hidden stays for browsers without clip.
+    <div className="flex h-dvh overflow-hidden bg-ground supports-[overflow:clip]:overflow-clip">
       {/* LEFT — the navigation. A column when wide and open, a drawer below 1024px. */}
       <aside
         aria-label="Navigation"
