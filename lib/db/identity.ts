@@ -4,12 +4,10 @@ import { db } from "./connection";
 import {
   identities,
   memberships,
-  organizationDomains,
   organizations,
   recoveryCodes,
   sessions,
   signInCodes,
-  ssoTickets,
   staffGrants,
   userEmails,
   users,
@@ -740,143 +738,4 @@ export async function liveGrantForSession(sessionId: string) {
     .orderBy(desc(staffGrants.grantedAt))
     .limit(1);
   return rows[0] ?? null;
-}
-
-/* ------------------------------------------------------------------ */
-/* Domains and the cross-domain handoff                                */
-/* ------------------------------------------------------------------ */
-
-/**
- * The allowlist the handoff redeems against. A return destination is the id of
- * a row in this table — never a URL supplied by the caller — so there is no
- * address for an attacker's parser trick to exploit.
- */
-export async function domainById(id: string) {
-  const rows = await db
-    .select()
-    .from(organizationDomains)
-    .where(eq(organizationDomains.id, id))
-    .limit(1);
-  return rows[0] ?? null;
-}
-
-export async function domainByHostname(hostname: string) {
-  const rows = await db
-    .select({
-      id: organizationDomains.id,
-      hostname: organizationDomains.hostname,
-      organizationId: organizationDomains.organizationId,
-      organizationName: organizations.name,
-      brandPrimaryHex: organizations.brandPrimaryHex,
-      brandLogoUrl: organizations.brandLogoUrl,
-    })
-    .from(organizationDomains)
-    .innerJoin(
-      organizations,
-      eq(organizations.id, organizationDomains.organizationId),
-    )
-    .where(eq(organizationDomains.hostname, hostname.toLowerCase()))
-    .limit(1);
-  return rows[0] ?? null;
-}
-
-export async function mintTicket(input: {
-  ticketHash: Buffer;
-  userId: string;
-  audienceHost: string;
-  returnPath: string;
-  /** The legacy login-host session; unused since 0022. */
-  sourceSessionId?: string | null;
-  /** The Better Auth session the person signed in with. */
-  sourceAuthSessionId?: string | null;
-  expiresAt: Date;
-}) {
-  const rows = await db.insert(ssoTickets).values(input).returning();
-  return rows[0];
-}
-
-/**
- * Redeem exactly once, atomically, and only by the host it was minted for.
- *
- * Every condition is in the UPDATE itself rather than being checked in a
- * preceding SELECT: two simultaneous attempts produce one winner and one
- * rejection, with no window in between. A ticket presented to the wrong host,
- * after its few seconds are up, or for a second time, returns nothing —
- * indistinguishable outcomes, so a failure reveals nothing about which
- * condition failed.
- */
-export async function redeemTicket(
-  ticketHash: Buffer,
-  audienceHost: string,
-): Promise<{
-  userId: string;
-  returnPath: string;
-  sourceSessionId: string | null;
-  sourceAuthSessionId: string | null;
-} | null> {
-  const rows = await db
-    .update(ssoTickets)
-    .set({ consumedAt: new Date() })
-    .where(
-      and(
-        eq(ssoTickets.ticketHash, ticketHash),
-        eq(ssoTickets.audienceHost, audienceHost.toLowerCase()),
-        isNull(ssoTickets.consumedAt),
-        gt(ssoTickets.expiresAt, new Date()),
-      ),
-    )
-    .returning({
-      userId: ssoTickets.userId,
-      returnPath: ssoTickets.returnPath,
-      sourceSessionId: ssoTickets.sourceSessionId,
-      sourceAuthSessionId: ssoTickets.sourceAuthSessionId,
-    });
-  return rows[0] ?? null;
-}
-
-/** Signing out of the login host kills tickets still in flight from that sign-in. */
-export async function consumeTicketsForAuthSession(authSessionId: string) {
-  await db
-    .update(ssoTickets)
-    .set({ consumedAt: new Date() })
-    .where(
-      and(eq(ssoTickets.sourceAuthSessionId, authSessionId), isNull(ssoTickets.consumedAt)),
-    );
-}
-
-/**
- * Did the session that minted a ticket already clear its second factor?
- *
- * The handoff vouches for who someone is. It should vouch for HOW they proved
- * it too: the same person, in the same browser, satisfied the second factor at
- * the login host seconds ago, and asking for the same authenticator code again
- * on arrival is friction without a corresponding gain. This is the same thing
- * OpenID Connect carries as an `amr` claim — the issuer telling the relying
- * party which factors were actually used.
- *
- * Read from the source session rather than from anything in the request, so it
- * cannot be asserted by the caller.
- */
-export async function sourceSessionClearedSecondFactor(
-  sessionId: string,
-): Promise<boolean> {
-  const rows = await db
-    .select({ secondFactorAt: sessions.secondFactorAt })
-    .from(sessions)
-    .where(and(eq(sessions.id, sessionId), isNull(sessions.revokedAt)))
-    .limit(1);
-  return rows[0]?.secondFactorAt !== null && rows[0]?.secondFactorAt !== undefined;
-}
-
-/** Sign-out kills tickets still in flight, not just established sessions. */
-export async function consumeTicketsForSession(sessionId: string) {
-  await db
-    .update(ssoTickets)
-    .set({ consumedAt: new Date() })
-    .where(
-      and(
-        eq(ssoTickets.sourceSessionId, sessionId),
-        isNull(ssoTickets.consumedAt),
-      ),
-    );
 }

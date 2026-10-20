@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
-import { randomUUID } from "node:crypto";
 import { Client } from "pg";
+import { signedInSession } from "./support/session";
 
 /**
  * Agency access, end to end on the server: real sign-in and portal sessions,
@@ -41,7 +41,7 @@ vi.mock("next/headers", () => ({
   headers: async () => new Headers(browser.origin ? { origin: browser.origin } : {}),
 }));
 
-const { resolveIdentity, startSession } = await import("@/lib/auth/session");
+const { resolveIdentity } = await import("@/lib/auth/session");
 const { requirePage } = await import("@/lib/auth/authorize");
 const { appOrigin } = await import("@/lib/auth/origin");
 const { closePool } = await import("@/lib/db/connection");
@@ -54,7 +54,6 @@ const TAG = `aa${Date.now().toString(36)}`;
 const addr = (l: string) => `${l}-${TAG}@test.invalid`;
 const org: Record<string, string> = {};
 const who: Record<string, { userId: string; token: string }> = {};
-const authUsers: string[] = [];
 let grant = "";
 
 async function organization(key: string) {
@@ -64,21 +63,12 @@ async function organization(key: string) {
 }
 
 async function person(key: string, memberOf: [string, string][]) {
-  const authUserId = `auth-${key}-${TAG}`;
-  authUsers.push(authUserId);
-  await owner.query("insert into auth_users (id, name, email) values ($1, 'T', $2)", [authUserId, addr(key)]);
-  const authSessionId = randomUUID();
-  await owner.query(
-    "insert into auth_sessions (id, token, user_id, expires_at) values ($1, $2, $3, now() + interval '7 days')",
-    [authSessionId, `token-${authSessionId}`, authUserId],
-  );
-  await owner.query("update auth_sessions set mfa_verified_at = now() where id = $1", [authSessionId]);
-  const userId = (await owner.query("insert into users (email, auth_user_id) values ($1, $2) returning id", [addr(key), authUserId])).rows[0]
+  const userId = (await owner.query("insert into users (email) values ($1) returning id", [addr(key)])).rows[0]
     .id as string;
   for (const [o, role] of memberOf) {
     await owner.query("insert into memberships (user_id, organization_id, role) values ($1, $2, $3)", [userId, org[o], role]);
   }
-  const { token } = await startSession({ userId, host: "app.test", authSessionId, hardEnd: new Date(Date.now() + 7 * 86_400_000) });
+  const { token } = await signedInSession(owner, userId);
   who[key] = { userId, token };
 }
 
@@ -180,7 +170,6 @@ afterAll(async () => {
   await owner.query("delete from memberships where organization_id = any($1::uuid[])", [ids]);
   await owner.query("delete from user_emails where email like $1", [emails]);
   await owner.query("delete from users where email like $1", [emails]);
-  await owner.query("delete from auth_users where id = any($1::text[])", [authUsers]);
   await owner.query("delete from organizations where id = any($1::uuid[])", [ids]);
   await owner.end();
   await closePool();

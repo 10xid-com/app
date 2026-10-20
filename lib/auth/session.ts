@@ -1,38 +1,44 @@
 import "server-only";
 import { createHash } from "node:crypto";
 import { cache } from "react";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import {
   insertSession,
+  markSecondFactorPassed,
   membershipsForUser,
   revokeSession,
   sessionByTokenHash,
   touchSession,
   userById,
 } from "@/lib/db/identity";
-import { touchAuthSession } from "@/lib/db/auth-session";
 import type { Scope } from "@/lib/db";
 import { secretToken } from "@/lib/ids";
 import { csrfTokenFor } from "./csrf";
-import { activeBusiness, openableBusinesses, SESSION_IDLE_SECONDS, type SessionRole } from "./policy";
+import {
+  activeBusiness,
+  openableBusinesses,
+  PENDING_SESSION_SECONDS,
+  SESSION_ABSOLUTE_SECONDS,
+  SESSION_IDLE_SECONDS,
+  type SessionRole,
+} from "./policy";
 import { liveAgencyAccessFor, type AgencyAccess } from "@/lib/db/agency";
 
 /**
  * Who is making this request.
  *
- * Signing in happens on the login host (login.10xid.com, Better Auth), never
- * here. The portal receives a session of its own through the single-use
- * ticket handoff (app/auth/sso/*): a random value in a host-only cookie, only
- * its hash stored, pointing at a row in `sessions` that names the sign-in it
- * came from. On every request that row is checked AND the sign-in behind it:
+ * The portal signs people in itself (lib/auth/codes.ts, app/auth/*): an
+ * emailed code, then the authenticator app, every time. A session is a random
+ * value in a host-only cookie, only its hash stored, pointing at a row in
+ * `sessions`. On every request that row is checked:
  *
- *   * the row is not revoked, inside its absolute end (the sign-in's hard
- *     end, seven days from signing in) and active within 48 hours;
- *   * it came from a sign-in on the login host (source_auth_session_id) —
- *     sessions from before 0022 are refused, so everybody signs in again;
- *   * that sign-in is still live and has passed the authenticator
- *     (auth_session_touch), so signing out there, a password reset or an
- *     operator's revocation ends this session on its next request.
+ *   * not revoked, inside its absolute end (seven days from signing in) and
+ *     active within 48 hours;
+ *   * not a session handed over from login.10xid.com (source_auth_session_id
+ *     set) — those are refused, so everybody signs in here once;
+ *   * past the authenticator (second_factor_at). Until then the session is
+ *     "pending": it opens the authenticator screens and nothing else, and
+ *     lapses after fifteen minutes.
  *
  * Nothing in this file grants anything. What the person may do is decided by
  * the central authorization function, ./authorize.ts.
@@ -52,8 +58,18 @@ export function hashToken(token: string): Buffer {
   return createHash("sha256").update(token, "utf8").digest();
 }
 
+/** Somebody past the emailed code and not yet past the authenticator. */
+export type PendingSignIn = {
+  sessionId: string;
+  userId: string;
+  email: string;
+  /** Whether they have an authenticator to type from, or are setting one up. */
+  enrolled: boolean;
+};
+
 export type Identity =
   | { state: "signed_out" }
+  | { state: "pending"; sessionId: string; csrfToken: string; pending: PendingSignIn }
   | { state: "active"; sessionId: string; csrfToken: string; ctx: SessionContext };
 
 /**
@@ -65,10 +81,6 @@ export type Identity =
 export type SessionContext = {
   /** The portal session (`sessions.id`). */
   sessionId: string;
-  /** The sign-in session on the login host it came from. */
-  authSessionId: string;
-  /** The sign-in identity (Better Auth user) the account is bound to. */
-  authUserId: string;
   userId: string;
   email: string;
   fullName: string | null;
@@ -78,39 +90,63 @@ export type SessionContext = {
   /** Client businesses open to this person through live agency grants (lib/db/agency.ts). */
   agencyAccess: AgencyAccess[];
   absoluteExpiresAt: Date;
-  /** Always false: the login host requires the authenticator before any handoff. */
+  /** When this session last passed the authenticator (sign-in, or /auth/confirm). */
+  secondFactorAt: Date;
+  /** Always false: an active session has passed the authenticator. */
   needsSecondFactor: false;
 };
 
+export async function currentHost(): Promise<string> {
+  return ((await headers()).get("host") ?? "").toLowerCase();
+}
+
 /**
- * Create the portal session at the end of a handoff. Its absolute end is the
- * sign-in's own (`hardEnd`), so it can never outlive it.
+ * The session the emailed code produces: pending, good for fifteen minutes,
+ * for the authenticator screens only.
  */
-export async function startSession(input: {
-  userId: string;
-  host: string;
-  authSessionId: string;
-  hardEnd: Date;
-}): Promise<{ token: string; sessionId: string }> {
-  const [memberships, agencyAccess] = await Promise.all([
-    membershipsForUser(input.userId),
-    liveAgencyAccessFor(input.userId),
-  ]);
+export async function startPendingSession(userId: string): Promise<{ token: string; expiresAt: Date }> {
+  const token = secretToken(32);
+  const expiresAt = new Date(Date.now() + PENDING_SESSION_SECONDS * 1000);
+  await insertSession({
+    userId,
+    tokenHash: hashToken(token),
+    issuedForHost: await currentHost(),
+    idleSeconds: PENDING_SESSION_SECONDS,
+    absoluteExpiresAt: expiresAt,
+    roleAtCreation: "client",
+    activeOrganizationId: null,
+    secondFactorAt: null,
+  });
+  return { token, expiresAt };
+}
+
+/**
+ * Past the authenticator: the pending session is ended and a new one issued
+ * under a new token, so the value that existed before the second factor never
+ * carries authority.
+ */
+export async function completeSignIn(pendingSessionId: string, userId: string): Promise<{ token: string; expiresAt: Date }> {
+  const [memberships, agencyAccess] = await Promise.all([membershipsForUser(userId), liveAgencyAccessFor(userId)]);
   const openable = openableBusinesses(memberships, agencyAccess);
   const token = secretToken(32);
-  const session = await insertSession({
-    userId: input.userId,
+  const expiresAt = new Date(Date.now() + SESSION_ABSOLUTE_SECONDS * 1000);
+  await revokeSession(pendingSessionId);
+  await insertSession({
+    userId,
     tokenHash: hashToken(token),
-    issuedForHost: input.host.toLowerCase(),
+    issuedForHost: await currentHost(),
     idleSeconds: SESSION_IDLE_SECONDS,
-    absoluteExpiresAt: input.hardEnd,
+    absoluteExpiresAt: expiresAt,
     roleAtCreation: "client",
     activeOrganizationId: openable.length === 1 ? openable[0].organizationId : null,
-    // The login host required the authenticator before minting the ticket.
     secondFactorAt: new Date(),
-    sourceAuthSessionId: input.authSessionId,
   });
-  return { token, sessionId: session.id };
+  return { token, expiresAt };
+}
+
+/** "Confirm it is you": the authenticator typed again, on the same session. */
+export async function refreshSecondFactor(sessionId: string): Promise<void> {
+  await markSecondFactorPassed(sessionId);
 }
 
 export async function writeSessionCookie(token: string, expiresAt: Date) {
@@ -146,19 +182,28 @@ export const resolveIdentity = cache(async function resolveIdentity(): Promise<I
   };
 
   const now = Date.now();
-  if (!session.sourceAuthSessionId) return end();
+  // Handed over from login.10xid.com, before the portal signed people in.
+  if (session.sourceAuthSessionId || session.sourceSessionId) return end();
   if (session.absoluteExpiresAt.getTime() <= now) return end();
   const idle = session.idleSeconds ?? SESSION_IDLE_SECONDS;
   if (session.lastSeenAt.getTime() + idle * 1000 <= now) return end();
 
   const user = await userById(session.userId);
-  if (!user || user.deletedAt || user.isService || !user.authUserId) return end();
+  if (!user || user.deletedAt || user.isService) return end();
 
-  // The sign-in it came from: live, past the authenticator, and recorded as
-  // active by this request (so using the portal keeps both alive, within the
-  // seven days).
-  const hardEnd = await touchAuthSession(session.sourceAuthSessionId);
-  if (!hardEnd) return end();
+  if (!session.secondFactorAt) {
+    return {
+      state: "pending",
+      sessionId: session.id,
+      csrfToken: csrfTokenFor(token),
+      pending: {
+        sessionId: session.id,
+        userId: user.id,
+        email: user.email,
+        enrolled: Boolean(user.totpSecret && user.totpConfirmedAt),
+      },
+    };
+  }
 
   await touchSession(session.id);
   const [memberships, agencyAccess] = await Promise.all([
@@ -176,8 +221,6 @@ export const resolveIdentity = cache(async function resolveIdentity(): Promise<I
 
   const ctx: SessionContext = {
     sessionId: session.id,
-    authSessionId: session.sourceAuthSessionId,
-    authUserId: user.authUserId,
     userId: user.id,
     email: user.email,
     fullName: user.fullName,
@@ -185,7 +228,8 @@ export const resolveIdentity = cache(async function resolveIdentity(): Promise<I
     scope: { userId: user.id, email: user.email, isStaff: false, organizationId },
     memberships,
     agencyAccess,
-    absoluteExpiresAt: new Date(Math.min(session.absoluteExpiresAt.getTime(), hardEnd.getTime())),
+    absoluteExpiresAt: session.absoluteExpiresAt,
+    secondFactorAt: session.secondFactorAt,
     needsSecondFactor: false,
   };
   return { state: "active", sessionId: session.id, csrfToken: csrfTokenFor(token), ctx };

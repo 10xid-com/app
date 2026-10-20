@@ -60,10 +60,9 @@ export async function sendSignInCode(input: {
  * Tell somebody they have been invited.
  *
  * Carries no credential. The invitation lives in the database against this
- * address, and the first sign-in on the login host with this address VERIFIED,
- * past the authenticator, is what
- * accepts it — so this message being forwarded, quoted or leaked hands nobody
- * an account. Somebody signing in with a different address, even at the same
+ * address, and the first sign-in on the portal with a code emailed to it is
+ * what accepts it (lib/auth/codes.ts) — so this message being forwarded,
+ * quoted or leaked hands nobody an account. Somebody signing in with a different address, even at the same
  * company, matches nothing.
  */
 export async function sendInvitation(input: {
@@ -77,12 +76,11 @@ export async function sendInvitation(input: {
   const body = [
     `${input.invitedByEmail} has invited you to the 10XiD portal for ${input.organizationName}.`,
     ``,
-    `To accept, create your sign-in with this exact address at:`,
+    `To accept, sign in with this exact address at:`,
     `  ${input.signUpUrl}`,
     ``,
-    `We will email it a code (or continue with Google or Microsoft if it is your`,
-    `work account). You will then set up an authenticator app, which 10XiD asks`,
-    `for every time you sign in, and can add a password afterwards.`,
+    `We will email it a code, and you will then set up an authenticator app,`,
+    `which 10XiD asks for every time you sign in.`,
     `The invitation works once and lapses after 7 days.`,
     ``,
     `If you were not expecting this, you can ignore it. The invitation grants`,

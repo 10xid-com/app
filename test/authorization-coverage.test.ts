@@ -27,6 +27,9 @@ const GUARDS = [
   "requireSameOriginRequest(",
   "requireSignedIn(",
   "requireSignedInAction(",
+  // The authenticator step of signing in: a pending session, nothing more.
+  "requirePendingSignIn(",
+  "requirePendingSignInAction(",
   "requireChatBossPage(",
   "requireChatBossAction(",
   "authorizeChatBossRequest(",
@@ -34,10 +37,9 @@ const GUARDS = [
 
 const EXEMPT: Record<string, string> = {
   "app/page.tsx": "Redirects to /dashboard; reads and grants nothing.",
-  "app/auth/sso/start/route.ts": "Starts the handoff to the login host. No session yet; the return path stays in this host's cookie.",
-  "app/auth/sso/callback/route.ts":
-    "Ends the handoff: state cookie, single-use ticket for this host, live sign-in past the authenticator. Creates the session.",
-  "app/auth/sso/failed/page.tsx": "One static message for every handoff failure. Reads nothing.",
+  "app/auth/sign-in/page.tsx":
+    "The way in: an address form, the same for every address. Reads only whether this browser is already signed in, to send it on.",
+  "app/auth/verify/page.tsx": "The emailed-code form. Reads nothing; its action checks the code.",
   "app/healthz/route.ts": "Railway's healthcheck: answers 200 once startup has passed, and says nothing else.",
   "app/access/page.tsx": "Describes the person's own sign-in state after a refusal; shows no business data.",
   "app/api/v1/cron/agency-reminders/route.ts":

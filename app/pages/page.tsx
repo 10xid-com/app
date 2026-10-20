@@ -53,10 +53,9 @@ function Badge({ children, className }: { children: React.ReactNode; className: 
 /**
  * The path, as a link when following it would actually work.
  *
- * Machinery is never a link. `/auth/sso/start` in a browser bounces you through
- * a handoff, and `/api/v1/jobs` answers a GET with a 405 on purpose — offering
- * either as something to click would be offering a broken link that looks
- * deliberate.
+ * Machinery is never a link. `/api/v1/jobs` answers a GET with a 405 on
+ * purpose — offering it as something to click would be offering a broken link
+ * that looks deliberate.
  *
  * `/jobs/[id]` is not a link either, for the plain reason that there is no id
  * to put in it. The segment is left in its source spelling rather than filled

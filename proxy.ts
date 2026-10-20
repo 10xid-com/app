@@ -15,9 +15,8 @@ import { appHost, appOrigin, isStateChanging, isTrustedOrigin } from "@/lib/auth
  *   4. A state-changing request whose Origin is not exactly the app's is
  *      refused before it reaches anything — the cheap half of the check the
  *      central authorization function makes again, with the CSRF token.
- *   5. No session cookie at all: a page goes into the handoff to the login
- *      host and comes back; anything else is refused rather than answered
- *      with a page.
+ *   5. No session cookie at all: a page goes to sign-in (/auth/sign-in) and
+ *      comes back; anything else is refused rather than answered with a page.
  *
  * A cookie being PRESENT is all that is checked here. Whether it is valid —
  * and whether the sign-in behind it still is — is decided per request by
@@ -51,15 +50,15 @@ export default async function proxy(request: NextRequest) {
     return new NextResponse("Forbidden.", { status: 403 });
   }
 
-  // The handoff itself is how a session is made.
-  if (pathname.startsWith("/auth/sso/")) return NextResponse.next();
+  // Signing in is how a session is made.
+  if (pathname.startsWith("/auth/")) return NextResponse.next();
 
   // 5.
   if (SESSION_COOKIES.some((name) => request.cookies.has(name))) return NextResponse.next();
   if (request.method === "GET" && !pathname.startsWith("/api/")) {
-    const start = new URL("/auth/sso/start", appOrigin()!);
-    start.searchParams.set("path", `${pathname}${search}`);
-    return NextResponse.redirect(start);
+    const signIn = new URL("/auth/sign-in", appOrigin()!);
+    signIn.searchParams.set("next", `${pathname}${search}`);
+    return NextResponse.redirect(signIn);
   }
   return new NextResponse("Sign in first.", { status: 401 });
 }

@@ -10,9 +10,7 @@ export const metadata: Metadata = { title: "Access" };
 
 /**
  * Where a signed-in person lands when the portal has nothing to show them,
- * told plainly why. (Somebody signed in on the login host but not yet tied to
- * an account never gets this far: the login host's own /auth/access page
- * explains that, and no handoff happens.)
+ * told plainly why.
  *
  * Read-only. It is the one signed-in page that does not go through the
  * central authorization function, because its whole job is to describe the
@@ -42,7 +40,7 @@ const DENIED: Record<string, { title: string; intro: string }> = {
   stale_authenticator: {
     title: "Confirm it is you",
     intro:
-      "This needs a recent code from your authenticator app: within the last day for agency access, within five minutes to approve it. Sign in again to continue.",
+      "This needs a recent code from your authenticator app: within the last day for agency access, within five minutes to approve it.",
   },
   staff_access_off: {
     title: "Staff access is turned off",

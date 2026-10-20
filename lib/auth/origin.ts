@@ -1,8 +1,7 @@
 /**
- * THE ONE ORIGIN THE PORTAL ANSWERS ON, AND THE LOGIN HOST'S.
+ * THE ONE ORIGIN THE PORTAL ANSWERS ON.
  *
- *   PORTAL_HOST    app.10xid.com — this app.
- *   PRIMARY_HOST   login.10xid.com — where signing in happens.
+ *   PORTAL_HOST    app.10xid.com — this app, which signs people in itself.
  *
  * Read per call, not at module load, so a build without them does not bake
  * "unconfigured" into anything. https unless SESSION_COOKIE_SECURE=false
@@ -25,16 +24,6 @@ export function appOrigin(): string | null {
   return host ? `${scheme()}://${host}` : null;
 }
 
-export function loginHost(): string | null {
-  const host = (process.env.PRIMARY_HOST ?? "").trim().toLowerCase();
-  return host || null;
-}
-
-export function loginOrigin(): string | null {
-  const host = loginHost();
-  return host ? `${scheme()}://${host}` : null;
-}
-
 /** Anything a browser may send that is not a plain read. */
 export function isStateChanging(method: string): boolean {
   return !["GET", "HEAD", "OPTIONS"].includes(method.toUpperCase());
@@ -43,8 +32,8 @@ export function isStateChanging(method: string): boolean {
 /**
  * An exact match, and nothing looser.
  *
- * SameSite=Lax does not stop a sibling 10XiD subdomain — login.10xid.com
- * included: to the browser it is the same site, so its forms and fetches carry
+ * SameSite=Lax does not stop a sibling 10XiD subdomain: to the browser it
+ * is the same site, so its forms and fetches carry
  * the portal's cookie. The Origin header is what tells them apart, so it has
  * to equal the app's origin exactly — no suffix match, no wildcard, and a
  * missing or "null" Origin is a refusal rather than a pass.
@@ -61,21 +50,24 @@ export function isTrustedOrigin(origin: string | null, expected: string | null):
 export function sessionConfigProblems(env: NodeJS.ProcessEnv): string[] {
   const problems: string[] = [];
   const portal = (env.PORTAL_HOST ?? "").trim().toLowerCase();
-  const login = (env.PRIMARY_HOST ?? "").trim().toLowerCase();
   const hostname = /^[a-z0-9.-]+(:\d+)?$/;
   if (!portal) problems.push("PORTAL_HOST is not set");
   else if (!hostname.test(portal)) problems.push("PORTAL_HOST must be a bare host name");
-  if (!login) problems.push("PRIMARY_HOST is not set");
-  else if (!hostname.test(login)) problems.push("PRIMARY_HOST must be a bare host name");
-  if (portal && portal === login) problems.push("PORTAL_HOST and PRIMARY_HOST must differ");
+  // Every sign-in needs the authenticator, and its secrets are stored
+  // encrypted under this key (lib/auth/totp.ts). Without it nobody could sign in.
+  const key = (env.TOTP_ENC_KEY ?? "").trim();
+  if (!key) problems.push("TOTP_ENC_KEY is not set");
+  else if (Buffer.from(key, "base64").length !== 32) problems.push("TOTP_ENC_KEY must be a base64-encoded 32-byte key");
   return problems;
 }
 
 /**
- * Variables left over from the WorkOS integration, which never went live.
- * Harmless — nothing reads them — so they are reported, not refused, and
- * removed after the cutover (README, "Cutover").
+ * Variables nothing reads any more: the WorkOS integration, which never went
+ * live, and PRIMARY_HOST, from when signing in happened on login.10xid.com.
+ * Harmless, so they are reported, not refused, and removed from the service.
  */
 export function obsoleteVariables(env: NodeJS.ProcessEnv): string[] {
-  return Object.keys(env).filter((n) => n.startsWith("WORKOS_") || n.startsWith("NEXT_PUBLIC_WORKOS_"));
+  return Object.keys(env).filter(
+    (n) => n.startsWith("WORKOS_") || n.startsWith("NEXT_PUBLIC_WORKOS_") || n === "PRIMARY_HOST",
+  );
 }

@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
-import { randomUUID } from "node:crypto";
 import { Client } from "pg";
 import { activeBusiness } from "@/lib/auth/policy";
+import { signedInSession } from "./support/session";
 
 /**
  * The business switcher, end to end on the server: a real sign-in session on
@@ -39,7 +39,7 @@ vi.mock("next/headers", () => ({
   headers: async () => new Headers(browser.origin ? { origin: browser.origin } : {}),
 }));
 
-const { resolveIdentity, startSession } = await import("@/lib/auth/session");
+const { resolveIdentity } = await import("@/lib/auth/session");
 const { requirePage } = await import("@/lib/auth/authorize");
 const { appOrigin } = await import("@/lib/auth/origin");
 const { closePool } = await import("@/lib/db/connection");
@@ -50,7 +50,6 @@ const owner = new Client({ connectionString: process.env.DATABASE_URL });
 const TAG = `bs${Date.now().toString(36)}`;
 const addr = (l: string) => `${l}-${TAG}@test.invalid`;
 const orgs: Record<string, string> = {};
-const authUsers: string[] = [];
 
 async function business(name: string, type: "client" | "internal" = "client") {
   orgs[name] = (
@@ -65,17 +64,8 @@ async function business(name: string, type: "client" | "internal" = "client") {
 
 /** A person bound to a sign-in identity, signed in past the authenticator, with a portal session. */
 async function signedIn(label: string, memberOf: [string, string][]) {
-  const authUserId = `auth-${label}-${TAG}`;
-  authUsers.push(authUserId);
-  await owner.query("insert into auth_users (id, name, email) values ($1, 'T', $2)", [authUserId, addr(label)]);
-  const authSessionId = randomUUID();
-  await owner.query(
-    `insert into auth_sessions (id, token, user_id, expires_at) values ($1, $2, $3, now() + interval '7 days')`,
-    [authSessionId, `token-${authSessionId}`, authUserId],
-  );
-  await owner.query("update auth_sessions set mfa_verified_at = now() where id = $1", [authSessionId]);
   const userId = (
-    await owner.query("insert into users (email, auth_user_id) values ($1, $2) returning id", [addr(label), authUserId])
+    await owner.query("insert into users (email) values ($1) returning id", [addr(label)])
   ).rows[0].id as string;
   for (const [name, role] of memberOf) {
     await owner.query("insert into memberships (user_id, organization_id, role) values ($1, $2, $3)", [
@@ -84,12 +74,7 @@ async function signedIn(label: string, memberOf: [string, string][]) {
       role,
     ]);
   }
-  const { token } = await startSession({
-    userId,
-    host: "app.test",
-    authSessionId,
-    hardEnd: new Date(Date.now() + 7 * 86_400_000),
-  });
+  const { token } = await signedInSession(owner, userId);
   return { userId, token };
 }
 
@@ -151,7 +136,6 @@ afterAll(async () => {
   await owner.query("delete from memberships where organization_id = any($1::uuid[])", [ids]);
   await owner.query("delete from user_emails where email like $1", [emails]);
   await owner.query("delete from users where email like $1", [emails]);
-  await owner.query("delete from auth_users where id = any($1::text[])", [authUsers]);
   await owner.query("delete from organizations where id = any($1::uuid[])", [ids]);
   await owner.end();
   await closePool();
@@ -267,7 +251,7 @@ describe("somebody with one business, or none", () => {
       await BusinessPage({ searchParams: Promise.resolve({}) });
       throw new Error("rendered");
     } catch (e) {
-      expect((e as Redirect).to).toMatch(/^\/auth\/sso\/start\?path=%2Fbusiness/);
+      expect((e as Redirect).to).toMatch(/^\/auth\/sign-in\?next=%2Fbusiness/);
     }
   });
 });

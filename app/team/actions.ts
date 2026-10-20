@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireAction } from "@/lib/auth/authorize";
 import { sendInvitation } from "@/lib/auth/mailer";
-import { loginOrigin } from "@/lib/auth/origin";
+import { appOrigin } from "@/lib/auth/origin";
 import { canAssignRole, canManageMember, ROLE_TEMPLATES } from "@/lib/auth/permissions";
 import {
   inviteToOrganization,
@@ -82,8 +82,8 @@ export async function inviteAction(formData: FormData) {
       to: parsed.data.email,
       organizationName: org?.name ?? "your company",
       invitedByEmail: ctx.email,
-      // Accounts are created on the login host, for exactly this address.
-      signUpUrl: `${loginOrigin() ?? ""}/auth/sign-up`,
+      // The account is created at its first sign-in, for exactly this address.
+      signUpUrl: `${appOrigin() ?? ""}/auth/sign-in`,
     });
   } catch (cause) {
     // The shape of the failure, never the payload or any credential.
