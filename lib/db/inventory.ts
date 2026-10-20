@@ -1085,10 +1085,16 @@ export async function nextCaptureAfter(owner: InventoryOwner, savedCaptureId: st
   return run(owner, async (tx) => {
     const saved = await one<{ status: string }>(tx, sql`select status from inventory_captures where id = ${savedCaptureId}`);
     if (saved?.status !== "confirmed") throw new InventoryError("That item is not saved.", "not_found");
+    // No conflict target: the id is in two unique indexes, the key and
+    // (organization_id, id). Naming only (id) left the other one to raise
+    // 23505 when two presses started the same item at once. A new item, with
+    // no outcome, is outside the third (one_creator), so a conflict here can
+    // only be this id already existing — and the select below hands it over
+    // only when it is this person's, in this business.
     await tx.execute(
       sql`insert into inventory_captures (id, organization_id, created_by)
           values (${nextId}, ${owner.organizationId}, ${owner.userId})
-          on conflict (id) do nothing`,
+          on conflict do nothing`,
     );
     const next = await one<{ created_by: string }>(tx, sql`select created_by from inventory_captures where id = ${nextId}`);
     // Only ever this person's own item in this business.
