@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { integrationConfig } from "@/lib/wrapauthority/integration-config";
 import Link from "next/link";
 import { jobStats, recentJobs, recentRequests } from "@/lib/db";
 import { requirePage } from "@/lib/auth/authorize";
@@ -157,6 +158,8 @@ export default async function DashboardPage({
           ? "Work in flight across every client."
           : "Work in flight, both directions."}
       </p>
+
+      {integrationConfig() && <p className="mt-4"><Link className="underline" href="/wrapauthority">Your Wrap Authority outlines</Link></p>}
 
       {notice ? (
         <p
