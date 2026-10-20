@@ -58,6 +58,7 @@ export function PortalFrame({
   groups,
   menu,
   banners,
+  action = null,
   chat,
   navOpenInitially,
   chatOpenInitially,
@@ -72,6 +73,13 @@ export function PortalFrame({
   menu: ReactNode;
   /** Acting-as and agency notices: above the page, on every page. */
   banners: ReactNode;
+  /**
+   * The page's own action, right beside its name in the top bar (Inventory's
+   * Add new product). On a phone it comes first: Preview iD keeps only its
+   * icon, and on the narrowest screens leaves the bar for the navigation,
+   * which has iD under Channels.
+   */
+  action?: ReactNode;
   /** The Chat Boss panel, or null where the page itself is Chat Boss. */
   chat: ReactNode | null;
   navOpenInitially: boolean;
@@ -185,17 +193,19 @@ export function PortalFrame({
             alt=""
             className="h-7 w-7 flex-none rounded-[3px] object-contain lg:hidden"
           />
-          <p className="flex min-w-0 flex-1 items-center gap-2 text-[15px] font-[600] text-ink">
+          <p className={`flex min-w-0 ${action ? "" : "flex-1"} items-center gap-2 text-[15px] font-[600] text-ink`}>
             {current ? <Icon name={current.icon} className="hidden h-[18px] w-[18px] text-ink-soft sm:block" /> : null}
             <span className="truncate">{current?.label ?? organizationName}</span>
           </p>
+          {action}
           <Link
             href="/channels/id"
-            className="flex flex-none items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5
-                       text-[13px] font-[560] text-ink shadow-card transition-colors hover:bg-sunk"
+            className={`${action ? "ml-auto px-2 max-[359px]:hidden sm:px-3" : "px-3"} flex flex-none items-center gap-1.5
+                        rounded-lg border border-line bg-surface py-1.5 text-[13px] font-[560] text-ink shadow-card
+                        transition-colors hover:bg-sunk`}
           >
             <Icon name="eye" className="h-4 w-4" />
-            Preview iD
+            <span className={action ? "sr-only sm:not-sr-only" : undefined}>Preview iD</span>
           </Link>
         </div>
 

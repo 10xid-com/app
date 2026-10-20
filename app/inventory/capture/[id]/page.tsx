@@ -12,6 +12,7 @@ import { suggestionsFrom, unusableReadings, type ReviewField } from "@/lib/inven
 import { PortalShell } from "../../../portal-shell";
 import { CsrfField } from "../../../_components/csrf-field";
 import { discardCaptureAction, removePhotoAction } from "../../actions";
+import { AddNewProduct } from "../../add-new-product";
 import { LeftoverPhotos } from "./leftover-photos";
 import { ReviewForm, type ProductOption } from "./review-form";
 import { CaptureWorkbench } from "./workbench";
@@ -47,8 +48,16 @@ export default async function CapturePage({
   if (!capture) notFound();
   const mayWrite = allows(role, "inventory.write", via);
 
-  const shell = (children: ReactNode) => (
-    <PortalShell email={ctx.email} isStaff={ctx.scope.isStaff} actingOn={null}>
+  // Add new product: while this item is open it goes to the note by Save and
+  // add another rather than leaving it; once saved or discarded, the way
+  // every inventory page starts one.
+  const shell = (children: ReactNode, open = false) => (
+    <PortalShell
+      email={ctx.email}
+      isStaff={ctx.scope.isStaff}
+      actingOn={null}
+      action={mayWrite ? <AddNewProduct finishFirst={open} /> : null}
+    >
       <a href="/inventory" className="text-sm text-ink-soft hover:text-ink">
         ← Inventory
       </a>
@@ -237,5 +246,6 @@ export default async function CapturePage({
         </section>
       ) : null}
     </>,
+    true,
   );
 }

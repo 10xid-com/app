@@ -9,6 +9,7 @@ import { CsrfField } from "../../_components/csrf-field";
 import { Icon } from "../../_components/icons";
 import { SubmitButton } from "../../_components/submit-button";
 import { startCaptureAction } from "../actions";
+import { AddNewProduct } from "../add-new-product";
 
 export const metadata: Metadata = { title: "Catalogue an item" };
 
@@ -27,7 +28,7 @@ export default async function CaptureStartPage() {
   const mayWrite = allows(role, "inventory.write", via);
 
   return (
-    <PortalShell email={ctx.email} isStaff={ctx.scope.isStaff} actingOn={null}>
+    <PortalShell email={ctx.email} isStaff={ctx.scope.isStaff} actingOn={null} action={mayWrite ? <AddNewProduct /> : null}>
       <a href="/inventory" className="text-sm text-ink-soft hover:text-ink">
         ← Inventory
       </a>

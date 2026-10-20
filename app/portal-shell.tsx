@@ -49,8 +49,11 @@ export async function PortalShell({
   organization,
   wide = false,
   chatPanel = true,
+  action = null,
 }: {
   children: ReactNode;
+  /** The page's own action, beside its name in the top bar (PortalFrame). */
+  action?: ReactNode;
   /**
    * Full width, for the workspace's three panels. Every other screen keeps the
    * reading-width column.
@@ -162,6 +165,7 @@ export async function PortalShell({
       navOpenInitially={layout.get("portal_nav")?.value !== "closed"}
       chatOpenInitially={layout.get("portal_chat")?.value !== "closed"}
       wide={wide}
+      action={action}
       chat={chatPanel ? <ChatDock data={await chatDockData(ctx)} /> : null}
       menu={
         <>
