@@ -20,7 +20,10 @@ its migration, then copied here unchanged.
 
 - **Sign in here** (`app/auth/*`, `lib/auth/codes.ts`):
   1. `/auth/sign-in` — the address. A six-digit code is emailed to it if it has an account or a
-     live invitation; the screen says the same thing either way.
+     live invitation; the screen says the same thing either way. Or, for somebody who has set
+     one, the address and a password (`lib/auth/password.ts`, scrypt, login's 0053): it stands
+     in for the emailed code and leads to the same pending session. Only an account with a
+     confirmed authenticator can use it; ten wrong passwords per address per quarter hour.
   2. `/auth/verify` — the emailed code (ten minutes, one use, five tries). It makes a *pending*
      session, which opens the authenticator screens and nothing else, for fifteen minutes.
   3. `/auth/authenticator` — the authenticator app's code, or one of ten recovery codes. The
@@ -32,8 +35,8 @@ its migration, then copied here unchanged.
   address; the account is created then, into the business the invitation names.
 - **Sessions** last seven days from signing in at most and lapse after 48 hours idle. Agency
   access needs the authenticator within the last day, approving it within five minutes:
-  `/auth/confirm` asks for a fresh code. `/auth/security` makes a new set of recovery codes and
-  signs out everywhere. Sessions handed over from login.10xid.com are refused, so everybody
+  `/auth/confirm` asks for a fresh code. `/auth/security` sets or removes the password (with the
+  authenticator within five minutes), makes a new set of recovery codes and signs out everywhere. Sessions handed over from login.10xid.com are refused, so everybody
   signs in here once.
 - **Six role templates** — owner, manager, editor, publisher, asset manager, viewer — and the
   permission matrix that says what each may do (`lib/auth/permissions.ts`, Paolo's decisions of

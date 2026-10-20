@@ -100,7 +100,7 @@ export const PAGES: PageRecord[] = [
     path: "/auth/sign-in",
     name: "Sign in",
     purpose:
-      "The way in, and how an invitation is accepted: your address, and a six-digit code is emailed to it. The same answer for every address.",
+      "The way in, and how an invitation is accepted: your address, and a six-digit code is emailed to it — or your password, once you have set one. The same answer for every address.",
     audience: "public",
     kind: "page",
     file: "app/auth/sign-in/page.tsx",
@@ -156,7 +156,7 @@ export const PAGES: PageRecord[] = [
     id: "portal.security",
     path: "/auth/security",
     name: "Sign-in & security",
-    purpose: "How many recovery codes you have left, a new set, and signing out on every device.",
+    purpose: "Your password, how many recovery codes you have left, a new set, and signing out on every device.",
     audience: "member",
     kind: "page",
     file: "app/auth/security/page.tsx",
