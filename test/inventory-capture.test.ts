@@ -1045,6 +1045,40 @@ describe("the quick screen", () => {
     expect(await n(`select count(*) as n from inventory_captures where id = $1`, [x])).toBe(1);
   });
 
+  test("pressed on several phones at once, round after round: every press gets the one next item, never an error", async () => {
+    const { nextCaptureAfter, nextCaptureId } = await import("@/lib/db/inventory");
+    // Two presses inserting the same new item in the same instant is a narrow
+    // race, so it runs many times. With the id alone as the conflict target,
+    // the (organization_id, id) index refused about one press in a hundred
+    // (23505) — after the save had stood.
+    for (let round = 0; round < 40; round++) {
+      const c = await newCapture();
+      savedContainer((await save(c, { productName: `Test quick next, at once ${round}`, status: "sealed", amount: "auto" })).redirect);
+      const nexts = await Promise.all(Array.from({ length: 6 }, () => nextCaptureAfter(owner(A), c)));
+      expect(new Set(nexts)).toEqual(new Set([nextCaptureId(A.organizationId, A.userId, c)]));
+      expect(await n(`select count(*) as n from inventory_captures where id = $1`, [nexts[0]])).toBe(1);
+    }
+    // And through the button itself: Save and add another pressed three times at once saves once, and every press
+    // lands on the same next item.
+    for (let round = 0; round < 10; round++) {
+      const c = await newCapture();
+      const values = { productName: `Test quick next, pressed at once ${round}`, status: "sealed", amount: "auto", then: "next" };
+      const redirects = (await Promise.all([save(c, values), save(c, values), save(c, values)])).map((r) => r.redirect);
+      expect(new Set(redirects).size).toBe(1);
+      expect(nextOf(redirects[0])).toBe(nextCaptureId(A.organizationId, A.userId, c));
+      expect(await n(`select count(*) as n from inventory_captures where id = $1 and status = 'confirmed'`, [c])).toBe(1);
+      expect(
+        await n(
+          `select count(*) as n from inventory_containers c
+             join inventory_lots l on l.organization_id = c.organization_id and l.id = c.lot_id
+             join inventory_products p on p.organization_id = l.organization_id and p.id = l.product_id
+            where p.name = $1`,
+          [values.productName],
+        ),
+      ).toBe(1);
+    }
+  });
+
   test("a next item already saved or discarded is still the one a retry returns; its page says which", async () => {
     const { abandonCapture } = await import("@/lib/db/inventory");
     const values = { status: "sealed", amount: "auto", then: "next" };
@@ -1078,6 +1112,19 @@ describe("the quick screen", () => {
       container_id: container,
     });
     expect((await db.query(`select created_by from inventory_captures where id = $1`, [taken])).rows[0].created_by).toBe(B.userId);
+
+    // Nor when another business's item has that id (the key spans every business): the conflict is let pass, the
+    // business-scoped look that follows finds nothing of this person's, and that item stays as it was.
+    const second = await newCapture();
+    const elsewhere = nextCaptureId(A.organizationId, A.userId, second);
+    await db.query(`insert into inventory_captures (id, organization_id, created_by) values ($1, $2, $3)`, [elsewhere, B.organizationId, B.userId]);
+    savedContainer((await save(second, { productName: "Test quick next, id taken elsewhere", status: "sealed", amount: "auto", then: "next" })).redirect);
+    await expect(nextCaptureAfter(owner(A), second)).rejects.toThrow(/could not be started/);
+    expect((await db.query(`select organization_id, created_by, status from inventory_captures where id = $1`, [elsewhere])).rows[0]).toEqual({
+      organization_id: B.organizationId,
+      created_by: B.userId,
+      status: "open",
+    });
 
     // Another business cannot continue from this one's saved item, and nothing is started for it.
     as(B);

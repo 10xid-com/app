@@ -13,6 +13,7 @@ import { unitsFor } from "@/lib/inventory/container";
 import { CURRENCIES } from "@/lib/inventory/purchase";
 import { BASIS_LABELS, UNITS, describeBalance } from "@/lib/inventory/review";
 import { PortalShell } from "../../../portal-shell";
+import { AddNewProduct } from "../../add-new-product";
 import { AmountForm, DetailsForm, DoneNote, LocalTime, OpenForm } from "./container-forms";
 import { PreferredForm, PurchaseForm } from "./purchase-forms";
 
@@ -57,7 +58,7 @@ export default async function ContainerPage({
   const labelBased = c.balanceBasis === "labelled_unopened";
 
   return (
-    <PortalShell email={ctx.email} isStaff={ctx.scope.isStaff} actingOn={null}>
+    <PortalShell email={ctx.email} isStaff={ctx.scope.isStaff} actingOn={null} action={mayWrite ? <AddNewProduct /> : null}>
       <a href="/inventory" className="text-sm text-ink-soft hover:text-ink">
         ← Inventory
       </a>

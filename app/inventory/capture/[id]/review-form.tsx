@@ -4,6 +4,7 @@ import { useActionState, useState, useSyncExternalStore, type ReactNode } from "
 import { CsrfInput, CsrfProvider } from "../../../chat/csrf";
 import { saveCaptureAction, type ReviewState } from "../../actions";
 import type { ReviewField } from "@/lib/inventory/review";
+import { FINISH_FIRST } from "../../add-new-product";
 import { outstandingFor, subscribeOutstanding } from "./photo-queue";
 
 /**
@@ -396,6 +397,21 @@ function FormBody({
           </Field>
         </div>
       </details>
+
+      {/*
+        Where "Add new product" in the top bar goes while this item is open
+        (../../add-new-product.tsx). Shown only then (:target); the form stays
+        as it is.
+      */}
+      <div
+        id={FINISH_FIRST}
+        tabIndex={-1}
+        role="note"
+        className="hidden scroll-mt-4 rounded-xl border border-brand/30 bg-brand/5 px-4 py-3 text-sm text-ink outline-none target:block"
+      >
+        <p className="font-semibold">Finish this item before adding a new product.</p>
+        <p className="mt-1">Save and add another saves it and opens the next one. To start over instead, discard this item below.</p>
+      </div>
 
       {unsent === null ? (
         <p role="status" className="text-sm text-ink-soft">

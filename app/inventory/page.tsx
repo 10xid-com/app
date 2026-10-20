@@ -10,6 +10,7 @@ import { CsrfField } from "../_components/csrf-field";
 import { Icon } from "../_components/icons";
 import { SubmitButton } from "../_components/submit-button";
 import { startCaptureAction } from "./actions";
+import { AddNewProduct } from "./add-new-product";
 
 export const metadata: Metadata = { title: "Inventory" };
 
@@ -35,7 +36,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
   const savedRow = saved ? rows.find((r) => r.containerId === saved) : undefined;
 
   return (
-    <PortalShell email={ctx.email} isStaff={ctx.scope.isStaff} actingOn={null}>
+    <PortalShell email={ctx.email} isStaff={ctx.scope.isStaff} actingOn={null} action={mayWrite ? <AddNewProduct /> : null}>
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-ink">Inventory</h1>
