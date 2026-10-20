@@ -65,6 +65,17 @@ export const SIGN_IN_CODE = {
   requestWindowSeconds: 15 * 60,
 };
 
+/**
+ * The portal's own password (lib/auth/password.ts): its length, and wrong
+ * guesses per address per window.
+ */
+export const PASSWORD = {
+  minLength: 12,
+  maxLength: 128,
+  maxAttempts: 10,
+  windowSeconds: 15 * 60,
+};
+
 /** Wrong authenticator or recovery codes, per account, per window. */
 export const AUTHENTICATOR_ATTEMPTS = {
   max: 10,

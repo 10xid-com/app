@@ -248,6 +248,14 @@ export async function confirmTotp(userId: string) {
     .where(eq(users.id, userId));
 }
 
+/** The portal's own password (lib/auth/password.ts), or null to remove it. */
+export async function setPasswordHash(userId: string, passwordHash: string | null) {
+  await db
+    .update(users)
+    .set({ passwordHash, updatedAt: new Date() })
+    .where(eq(users.id, userId));
+}
+
 /** Records that this session cleared its second factor. */
 export async function markSecondFactorPassed(sessionId: string) {
   await db

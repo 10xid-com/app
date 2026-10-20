@@ -222,6 +222,93 @@ describe("every later sign-in", () => {
   });
 });
 
+describe("a password, set on the security page, in place of the emailed code", () => {
+  const email = addr("pw");
+  const PASSWORD = "correct horse battery";
+
+  /** Signed in fully with the emailed code and the authenticator. */
+  async function signIn() {
+    await emailStep(email);
+    await post(actions.authenticatorAction, { next: "/", code: currentCode(await secretOf(email)) });
+    expect((await resolveIdentity()).state).toBe("active");
+  }
+
+  beforeAll(async () => {
+    await invite(email);
+    browser.jar.clear();
+    browser.origin = appOrigin();
+    await emailStep(email);
+    await post(actions.beginEnrolmentAction, { next: "/" });
+    await post(actions.confirmEnrolmentAction, { next: "/", code: currentCode(await secretOf(email)) });
+  });
+
+  test("setting one needs the authenticator within five minutes, and a sound password", async () => {
+    await signIn();
+    const identity = await resolveIdentity();
+    if (identity.state !== "active") throw new Error("not signed in");
+    await owner.query("update sessions set second_factor_at = now() - interval '10 minutes' where id = $1", [identity.sessionId]);
+    expect(await post(actions.setPasswordAction, { password: PASSWORD, confirm: PASSWORD })).toBe(
+      "/auth/confirm?next=%2Fauth%2Fsecurity",
+    );
+    await owner.query("update sessions set second_factor_at = now() where id = $1", [identity.sessionId]);
+    expect(await post(actions.setPasswordAction, { password: "short", confirm: "short" })).toContain("error=password_short");
+    expect(await post(actions.setPasswordAction, { password: PASSWORD, confirm: `${PASSWORD}!` })).toContain(
+      "error=password_mismatch",
+    );
+    expect(await post(actions.setPasswordAction, { password: PASSWORD, confirm: PASSWORD })).toBe("/auth/security?done=password");
+    const { rows } = await owner.query("select password_hash from users where email = $1", [email]);
+    expect(rows[0].password_hash).toMatch(/^scrypt\$/);
+    expect(rows[0].password_hash).not.toContain(PASSWORD);
+  });
+
+  test("the password is a first step only: the authenticator is still asked for", async () => {
+    browser.jar.clear();
+    expect(await post(actions.passwordSignInAction, { email, password: PASSWORD, next: "/jobs" })).toBe(
+      "/auth/authenticator?next=%2Fjobs",
+    );
+    expect((await resolveIdentity()).state).toBe("pending");
+    expect(await post(actions.authenticatorAction, { next: "/jobs", code: currentCode(await secretOf(email)) })).toBe("/jobs");
+    expect((await resolveIdentity()).state).toBe("active");
+  });
+
+  test("a wrong password, an unknown address and an account with no password all answer the same", async () => {
+    browser.jar.clear();
+    const wrong = await post(actions.passwordSignInAction, { email, password: "not the password", next: "/" });
+    const unknown = await post(actions.passwordSignInAction, { email: addr("nobody-pw"), password: PASSWORD, next: "/" });
+    expect(wrong).toContain("error=password");
+    expect(unknown).toContain("error=password");
+    expect(wrong.replace(/email=[^&]*/, "")).toBe(unknown.replace(/email=[^&]*/, ""));
+    expect((await resolveIdentity()).state).toBe("signed_out");
+  });
+
+  test("an account with no authenticator cannot use a password, even a right one", async () => {
+    const other = addr("pw-noauth");
+    const { rows } = await owner.query("insert into users (email) values ($1) returning id", [other]);
+    const { hashPassword } = await import("@/lib/auth/password");
+    await owner.query("update users set password_hash = $2 where id = $1", [rows[0].id, await hashPassword(PASSWORD)]);
+    browser.jar.clear();
+    expect(await post(actions.passwordSignInAction, { email: other, password: PASSWORD, next: "/" })).toContain("error=password");
+    expect((await resolveIdentity()).state).toBe("signed_out");
+  });
+
+  test("too many wrong passwords, and the address stops accepting any for a while", async () => {
+    const target = addr("pw-guessed");
+    browser.jar.clear();
+    for (let i = 0; i < 10; i++) await post(actions.passwordSignInAction, { email: target, password: `guess ${i} guess`, next: "/" });
+    expect(await post(actions.passwordSignInAction, { email: target, password: PASSWORD, next: "/" })).toContain(
+      "error=password_rate",
+    );
+  });
+
+  test("removed, and the password no longer works", async () => {
+    browser.jar.clear();
+    await signIn();
+    expect(await post(actions.removePasswordAction)).toBe("/auth/security?done=password_removed");
+    browser.jar.clear();
+    expect(await post(actions.passwordSignInAction, { email, password: PASSWORD, next: "/" })).toContain("error=password");
+  });
+});
+
 describe("what never gets a session", () => {
   test("an address with no account and no invitation: the same answer, and no email", async () => {
     const email = addr("nobody");

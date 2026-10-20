@@ -15,6 +15,7 @@ import {
   verifyEmailCode,
   verifyEnrolmentCode,
 } from "@/lib/auth/codes";
+import { clearPassword, passwordProblem, setPassword, verifyPasswordSignIn } from "@/lib/auth/password";
 import { safePath } from "@/lib/auth/paths";
 import { FRESHNESS_SECONDS } from "@/lib/auth/policy";
 import { RECOVERY_FLASH_COOKIE, issueRecoveryCodes } from "@/lib/auth/recovery";
@@ -64,6 +65,31 @@ export async function requestCodeAction(formData: FormData) {
     redirect(`/auth/sign-in?${q({ error: "rate", next, email: parsed.data })}`);
   }
   redirect(`/auth/verify?${q({ email: parsed.data, next })}`);
+}
+
+/**
+ * Step one and two together, for somebody who has set a password: the
+ * address and the password instead of the emailed code. The same pending
+ * session follows, and the same authenticator step.
+ */
+export async function passwordSignInAction(formData: FormData) {
+  await requireSameOriginRequest(formData);
+  const next = safePath(formData.get("next"));
+  const email = emailSchema.safeParse(formData.get("email"));
+  const password = String(formData.get("password") ?? "");
+  const back = (error: string) =>
+    `/auth/sign-in?${q({ method: "password", email: String(formData.get("email") ?? ""), next, error })}`;
+  if (!email.success || !password) redirect(back("password"));
+
+  const result = await verifyPasswordSignIn(email.data, password);
+  if (!result.ok) redirect(back(result.reason === "too_many_attempts" ? "password_rate" : "password"));
+
+  const before = await resolveIdentity();
+  if (before.state !== "signed_out") await revokeSession(before.sessionId);
+
+  const { token, expiresAt } = await startPendingSession(result.userId);
+  await writeSessionCookie(token, expiresAt);
+  redirect(`/auth/authenticator?${q({ next })}`);
 }
 
 /** Step two: the emailed code. Success is a pending session, for the authenticator screens only. */
@@ -189,6 +215,29 @@ export async function regenerateRecoveryCodesAction(formData: FormData) {
   if (!user?.totpConfirmedAt) redirect("/auth/security");
   await stashCodesForOneViewing(await issueRecoveryCodes(ctx.userId));
   redirect(`/auth/recovery-codes?${q({ next: "/auth/security" })}`);
+}
+
+/**
+ * Set or change the portal password. It opens the first step of a sign-in
+ * on its own, so it needs the authenticator within the last five minutes.
+ */
+export async function setPasswordAction(formData: FormData) {
+  const ctx = await requireSignedInAction(formData, "/auth/security");
+  if (Date.now() - ctx.secondFactorAt.getTime() > FRESHNESS_SECONDS.decision * 1000) {
+    redirect(stepUpPath("/auth/security"));
+  }
+  const password = String(formData.get("password") ?? "");
+  const problem = passwordProblem(password, String(formData.get("confirm") ?? ""));
+  if (problem) redirect(`/auth/security?${q({ error: `password_${problem}` })}`);
+  await setPassword(ctx.userId, password);
+  redirect("/auth/security?done=password");
+}
+
+/** Remove the password: signing in goes back to the emailed code only. */
+export async function removePasswordAction(formData: FormData) {
+  const ctx = await requireSignedInAction(formData, "/auth/security");
+  await clearPassword(ctx.userId);
+  redirect("/auth/security?done=password_removed");
 }
 
 /** "Confirm it is you": the authenticator again, for actions that need it recent. */
