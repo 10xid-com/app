@@ -80,6 +80,12 @@ export const GROUPS = [
 export type Group = (typeof GROUPS)[number];
 
 export const PAGES: PageRecord[] = [
+  { id: "wrapauthority.purchases", path: "/wrapauthority", name: "Wrap Authority purchases",
+    purpose: "Own linked outline purchases, read live from Wrap Authority; artwork remains there.",
+    audience: "member", kind: "page", file: "app/wrapauthority/page.tsx", group: "The work" },
+  { id: "wrapauthority.introspect", path: "/api/v1/wrapauthority/introspect", name: "Wrap Authority identity check",
+    purpose: "Server assertion and current own-session liveness; no artwork or business records.",
+    audience: "public", kind: "machinery", file: "app/api/v1/wrapauthority/introspect/route.ts", methods: ["POST"], group: "Machinery" },
   /* -------------------------------------------------------------- */
   /* Getting in                                                      */
   /* -------------------------------------------------------------- */

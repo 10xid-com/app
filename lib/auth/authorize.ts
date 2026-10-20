@@ -1,4 +1,14 @@
 import "server-only";
+import { verifyPurchaseAssertion } from '@/lib/wrapauthority/assertion';
+import { portalSessionLiveForWrapAuthority } from '@/lib/db/identity';
+
+/** Server-only purchase identity introspection; grants no business permission. */
+export async function authorizeWrapAuthorityAssertion(request: Request): Promise<boolean> {
+  const bearer = request.headers.get('authorization') || '';
+  if (!bearer.startsWith('Bearer ')) return false;
+  const claims = verifyPurchaseAssertion(bearer.slice(7));
+  return !!claims && await portalSessionLiveForWrapAuthority(claims.userId, claims.sessionId);
+}
 import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { getJob } from "@/lib/db";
