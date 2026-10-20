@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { requirePage } from "@/lib/auth/authorize";
-import { loginOrigin } from "@/lib/auth/origin";
 import { PortalShell } from "../portal-shell";
 import { ComingSoonPage } from "../_components/coming-soon";
 import { SOON } from "../_components/sections";
@@ -17,7 +16,7 @@ export default async function SettingsPage() {
   const elsewhere = [
     { href: "/team", label: "Team", purpose: "Who is in the business, and their roles." },
     { href: "/business", label: "Your businesses", purpose: "Switch which business is open." },
-    { href: `${loginOrigin() ?? ""}/auth/account`, label: "Sign-in & security", purpose: "Sessions, authenticator and recovery codes." },
+    { href: "/auth/security", label: "Sign-in & security", purpose: "Recovery codes, and signing out everywhere." },
     { href: "/pages", label: "Pages", purpose: "Every page in the portal." },
   ];
   return (

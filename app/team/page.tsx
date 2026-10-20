@@ -39,7 +39,7 @@ const ERRORS: Record<string, string> = {
   no_member: "That person is no longer on this team.",
   moved: "Their role changed while you were looking, so nothing was done. Here is the team as it is now.",
   unknown: "That invitation no longer exists.",
-  mail: "The invitation was created, but the email did not send. Tell them to go to the sign-up screen with this address.",
+  mail: "The invitation was created, but the email did not send. Tell them to sign in at the portal with this address.",
 };
 
 const DONE: Record<string, string> = {

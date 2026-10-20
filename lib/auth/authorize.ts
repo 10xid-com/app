@@ -4,12 +4,11 @@ import { notFound, redirect } from "next/navigation";
 import { getJob } from "@/lib/db";
 import { organizationById } from "@/lib/db/identity";
 import { CSRF_FIELD, CSRF_HEADER, isValidCsrfToken } from "./csrf";
-import { appOrigin, isTrustedOrigin, loginOrigin } from "./origin";
+import { appOrigin, isTrustedOrigin } from "./origin";
 import { type BusinessAction, allows } from "./permissions";
-import { resolveIdentity, type Identity, type SessionContext } from "./session";
+import { resolveIdentity, type Identity, type PendingSignIn, type SessionContext } from "./session";
 import { safePath } from "./paths";
 import { FRESHNESS_SECONDS, type Freshness } from "./policy";
-import { authSessionVerifiedAt } from "@/lib/db/auth-session";
 import { recordAudit } from "@/lib/db/audit";
 import { mayUseChatBoss } from "./chat-boss";
 
@@ -26,8 +25,8 @@ import { mayUseChatBoss } from "./chat-boss";
  * logged with the action and ids (never an address):
  *
  *   1. state-changing requests only: the Origin is exactly the app's origin
- *   2. there is a live portal session, from a live sign-in that
- *      passed the authenticator, of a bound account (session.ts) signed_out
+ *   2. there is a live portal session that passed the            signed_out
+ *      authenticator (session.ts); a pending one counts as none
  *   3. state-changing requests only: a valid CSRF token for it   bad_csrf
  *   4. (retired: impersonation and unbound sign-ins never reach the portal)
  *   5. (retired)
@@ -105,7 +104,7 @@ export type AuthorizationDeps = {
   business: (id: string) => Promise<{ type: string; deletedAt: Date | null } | null>;
   resourceInBusiness: (ctx: SessionContext, businessId: string, resource: Resource) => Promise<boolean>;
   expectedOrigin: () => string | null;
-  /** When the sign-in behind the session last passed the authenticator. */
+  /** When the session last passed the authenticator. */
   verifiedAt: (ctx: SessionContext) => Promise<Date | null>;
 };
 
@@ -124,7 +123,7 @@ const defaultDeps: AuthorizationDeps = {
     }
   },
   expectedOrigin: appOrigin,
-  verifiedAt: (ctx) => authSessionVerifiedAt(ctx.authSessionId),
+  verifiedAt: async (ctx) => ctx.secondFactorAt,
 };
 
 export async function authorize(
@@ -132,7 +131,7 @@ export async function authorize(
   deps: AuthorizationDeps = defaultDeps,
 ): Promise<Decision> {
   const deny = (reason: DenyReason, identity: Identity): Decision => {
-    const who = identity.state === "signed_out" ? "anonymous" : identity.ctx.userId;
+    const who = identity.state === "active" ? identity.ctx.userId : identity.state === "pending" ? identity.pending.userId : "anonymous";
     console.warn(`[authz] deny ${request.action} reason=${reason} who=${who}`);
     return { allowed: false, reason, identity };
   };
@@ -144,7 +143,7 @@ export async function authorize(
 
   // 2.
   const identity = await deps.identity();
-  if (identity.state === "signed_out") return deny("signed_out", identity);
+  if (identity.state !== "active") return deny("signed_out", identity);
 
   // 3. The token is bound to the portal session, which exists from here on.
   if (request.mutation) {
@@ -299,8 +298,10 @@ async function recordAgencyAct(granted: Granted, action: Action): Promise<void> 
 
 /**
  * For the few state-changing requests that act on the person rather than on a
- * business — signing out. Origin and CSRF, nothing else; any live portal
- * session may end itself.
+ * business — signing in, the authenticator step, signing out. The exact
+ * Origin always; the CSRF token whenever there is a session, pending or
+ * active, for it to be bound to. Signed out there is no session yet, and the
+ * Origin is what stops another site posting the sign-in forms.
  */
 export async function requireSameOriginRequest(formData: FormData): Promise<void> {
   const h = await headers();
@@ -327,8 +328,37 @@ export const BUSINESS_CHOOSER = "/business";
  */
 export async function requireSignedIn(returnPath: string): Promise<SessionContext> {
   const identity = await resolveIdentity();
-  if (identity.state === "signed_out") redirect(signInPath(returnPath));
+  if (identity.state !== "active") redirect(signInPath(returnPath));
   return identity.ctx;
+}
+
+/**
+ * For the authenticator step of signing in: a pending session (the emailed
+ * code accepted, the authenticator not yet) and nothing more. Somebody already
+ * past it goes on to returnPath; somebody with no session goes to sign-in.
+ * What a pending session can reach is these screens and nothing else — every
+ * other entry point here treats it as signed out.
+ */
+export async function requirePendingSignIn(returnPath: string): Promise<PendingSignIn> {
+  const identity = await resolveIdentity();
+  if (identity.state === "active") redirect(safePath(returnPath));
+  if (identity.state === "signed_out") redirect(signInPath(returnPath));
+  return identity.pending;
+}
+
+/** For a server action of the same kind: the Origin and CSRF checks, then a pending session. */
+export async function requirePendingSignInAction(formData: FormData, returnPath: string): Promise<PendingSignIn> {
+  const h = await headers();
+  if (!isTrustedOrigin(h.get("origin"), appOrigin())) {
+    throw new Error("This request did not come from the portal.");
+  }
+  const identity = await resolveIdentity();
+  if (identity.state === "active") redirect(safePath(returnPath));
+  if (identity.state === "signed_out") redirect(signInPath(returnPath));
+  if (!isValidCsrfToken(formData.get(CSRF_FIELD), identity.csrfToken)) {
+    throw new Error("This request did not come from the portal.");
+  }
+  return identity.pending;
 }
 
 /**
@@ -342,7 +372,7 @@ export async function requireSignedInAction(formData: FormData, returnPath: stri
     throw new Error("This request did not come from the portal.");
   }
   const identity = await resolveIdentity();
-  if (identity.state === "signed_out") redirect(signInPath(returnPath));
+  if (identity.state !== "active") redirect(signInPath(returnPath));
   if (!isValidCsrfToken(formData.get(CSRF_FIELD), identity.csrfToken)) {
     throw new Error("This request did not come from the portal.");
   }
@@ -393,18 +423,15 @@ export async function requireStaffAccess(returnPath = "/"): Promise<SessionConte
   redirect(`/access?reason=${decision.reason}`);
 }
 
-/**
- * To the login host's "confirm it is you" (/auth/mfa/again): a fresh
- * authenticator code, then back here through the handoff to returnPath. With
- * no login host configured, the access page says what is needed instead.
- */
+/** "Confirm it is you" (/auth/confirm): a fresh authenticator code, then back to returnPath. */
 export function stepUpPath(returnPath: string): string {
-  const login = loginOrigin();
-  if (!login) return "/access?reason=stale_authenticator";
-  return `${login}/auth/mfa/again?return=${encodeURIComponent(safePath(returnPath))}`;
+  return `/auth/confirm?next=${encodeURIComponent(safePath(returnPath))}`;
 }
 
-/** Into the handoff: the login host signs the person in, then sends them back to returnPath. */
+/**
+ * To sign-in, then back to returnPath. A pending session (emailed code
+ * accepted, authenticator not yet) is sent on from there to the authenticator.
+ */
 export function signInPath(returnPath: string): string {
-  return `/auth/sso/start?path=${encodeURIComponent(safePath(returnPath))}`;
+  return `/auth/sign-in?next=${encodeURIComponent(safePath(returnPath))}`;
 }

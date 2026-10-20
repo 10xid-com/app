@@ -37,7 +37,6 @@ const passed = (r: Response) => r.headers.get("x-middleware-next") === "1";
 
 beforeEach(() => {
   vi.stubEnv("PORTAL_HOST", APP);
-  vi.stubEnv("PRIMARY_HOST", "login.10xid.com");
   vi.stubEnv("SESSION_COOKIE_SECURE", "true");
 });
 
@@ -73,15 +72,22 @@ describe("state-changing requests", () => {
 });
 
 describe("no session cookie", () => {
-  test("a page goes into the handoff, keeping the path on this host", async () => {
+  test("a page goes to sign-in on this host, keeping the path", async () => {
     const response = await proxy(request(APP, "/jobs/123?tab=files"));
-    expect(response.headers.get("location")).toBe(`${ORIGIN}/auth/sso/start?path=%2Fjobs%2F123%3Ftab%3Dfiles`);
+    expect(response.headers.get("location")).toBe(`${ORIGIN}/auth/sign-in?next=%2Fjobs%2F123%3Ftab%3Dfiles`);
   });
 
-  test("the handoff's own routes are reachable", async () => {
-    for (const path of ["/auth/sso/start?path=%2F", "/auth/sso/callback?ticket=x&state=y", "/auth/sso/failed"]) {
+  test("never to the login host", async () => {
+    const response = await proxy(request(APP, "/dashboard"));
+    expect(response.headers.get("location")).not.toContain("login.10xid.com");
+  });
+
+  test("the sign-in screens are reachable, and their forms post with the app's Origin", async () => {
+    for (const path of ["/auth/sign-in?next=%2F", "/auth/verify", "/auth/authenticator"]) {
       expect(passed(await proxy(request(APP, path))), path).toBe(true);
     }
+    expect(passed(await proxy(request(APP, "/auth/sign-in", { method: "POST", origin: ORIGIN })))).toBe(true);
+    expect((await proxy(request(APP, "/auth/sign-in", { method: "POST", origin: "https://evil.10xid.com" }))).status).toBe(403);
   });
 
   test("a fetch or a form post is refused rather than answered with a page", async () => {
@@ -91,7 +97,7 @@ describe("no session cookie", () => {
 
   test("a legacy WorkOS cookie is not a session", async () => {
     const response = await proxy(request(APP, "/dashboard", { cookie: "wos-session=sealed" }));
-    expect(response.headers.get("location")).toContain("/auth/sso/start");
+    expect(response.headers.get("location")).toContain("/auth/sign-in");
   });
 });
 

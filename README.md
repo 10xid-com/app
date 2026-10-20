@@ -4,13 +4,13 @@ The portal at **`app.10xid.com`**: the dashboard, requests and jobs, and the tea
 It answers on that host and **no other** — client domains get nothing from it and carry no
 management cookie (Revision 2; Paolo's decision of 2026-10-07).
 
-**Sign-in happens on [`login.10xid.com`](https://github.com/10xid-com/login)** — self-hosted
-Better Auth, no provider, an authenticator app after every method — and reaches this host by
-the single-use ticket handoff (`/auth/sso/*`). The login host answers *who signed in*; this
-database answers *what they may do*, through one central authorization function
+**The portal signs people in itself**, at `/auth/sign-in`: a code emailed to the address on
+file, then the code from an authenticator app, every time. It is not tied to
+[`login.10xid.com`](https://github.com/10xid-com/login) (which keeps the UiD sign-in, the
+schema and the migrations): nothing here sends anyone there, and a session handed over from
+there is refused. Who may do what is answered by one central authorization function
 (`lib/auth/authorize.ts`) that every protected page, server action and route handler passes
-through. The schema and migrations live in login; the cutover runbook is login's
-`docs/better-auth-cutover.md`.
+through.
 
 Both apps use **one database**. `lib/db/schema.ts` here is a copy of login's, kept
 identical by CI (`.github/workflows/database.yml`): a schema change is made in login, with
@@ -18,19 +18,23 @@ its migration, then copied here unchanged.
 
 ## What it does
 
-- **Sign in on the login host**, then land here signed in: `/auth/sso/start` → login's
-  `/auth/sso/authorize` (signed in, past the authenticator, bound to an account) →
-  `/auth/sso/callback` (state cookie matches, ticket spent once). This host then issues its own
-  session: a random value in a host-only `__Host-portal_session` cookie (`Secure`, `HttpOnly`,
-  `SameSite=Lax`), only its hash stored.
-- **The session ends when the sign-in does.** Its absolute end is the sign-in's (seven days from
-  signing in, never extended), it lapses after 48 hours idle, and every request also checks the
-  sign-in behind it (`auth_session_touch`), so signing out on the login host, a password reset
-  or an operator's revocation ends it on the next request. Sessions from before this change are
-  refused: everybody signs in once more.
-- **An account is found by its sign-in identity** (`users.auth_user_id`), never by its address,
-  and only the login host ties the two (an invitation to exactly the verified address, or an
-  operator's confirmation).
+- **Sign in here** (`app/auth/*`, `lib/auth/codes.ts`):
+  1. `/auth/sign-in` — the address. A six-digit code is emailed to it if it has an account or a
+     live invitation; the screen says the same thing either way.
+  2. `/auth/verify` — the emailed code (ten minutes, one use, five tries). It makes a *pending*
+     session, which opens the authenticator screens and nothing else, for fifteen minutes.
+  3. `/auth/authenticator` — the authenticator app's code, or one of ten recovery codes. The
+     first time, setting the app up instead, then the recovery codes are shown once. Ten wrong
+     codes per account per quarter hour, and it stops accepting any.
+  Then a new session under a new token: a random value in a host-only `__Host-portal_session`
+  cookie (`Secure`, `HttpOnly`, `SameSite=Lax`), only its hash stored.
+- **An invitation is accepted at the first sign-in** with a code emailed to exactly that
+  address; the account is created then, into the business the invitation names.
+- **Sessions** last seven days from signing in at most and lapse after 48 hours idle. Agency
+  access needs the authenticator within the last day, approving it within five minutes:
+  `/auth/confirm` asks for a fresh code. `/auth/security` makes a new set of recovery codes and
+  signs out everywhere. Sessions handed over from login.10xid.com are refused, so everybody
+  signs in here once.
 - **Six role templates** — owner, manager, editor, publisher, asset manager, viewer — and the
   permission matrix that says what each may do (`lib/auth/permissions.ts`, Paolo's decisions of
   2026-10-07). Owners and managers invite, change and remove people, but only an owner can
@@ -75,13 +79,13 @@ has one, live with the migrations in `10xid-com/login`.
 
 ## Running it locally
 
-Needs Node 22+, PostgreSQL 16, and a checkout of `10xid-com/login` next to this one
-(`../login`) for the migrations and the sign-in, running on `login.portal-a.test:3000`.
+Needs Node 22+, PostgreSQL 18, and a checkout of `10xid-com/login` next to this one
+(`../login`) for the migrations.
 
 ```bash
 npm install
 cp .env.example .env.local        # connection strings, PORTAL_HOST=app.portal-a.test:3001,
-                                  # PRIMARY_HOST=login.portal-a.test:3000, SESSION_COOKIE_SECURE=false
+                                  # SESSION_COOKIE_SECURE=false, TOTP_ENC_KEY=$(openssl rand -base64 32)
 
 # Database, from login (once, and after any schema change there):
 (cd ../login && npm install && npm run db:migrate && npm run db:seed)
@@ -90,7 +94,8 @@ npm run dev -- -p 3001
 ```
 
 Then open `http://app.portal-a.test:3001/` (with `127.0.0.1 app.portal-a.test` in
-`/etc/hosts`). Any other host is answered with a 404, by design.
+`/etc/hosts`). Any other host is answered with a 404, by design. Without `RESEND_API_KEY`,
+sign-in codes are written to `DEV_CODE_SINK` (`/tmp/portal-signin-codes.log`).
 
 ## Optional integrations
 
@@ -169,26 +174,60 @@ npm test          # unit and database tests, as the restricted role, against rea
 What the suite pins for sign-in and access:
 
 - `test/proxy.test.ts` — one host; exact Origin on state-changing requests; a signed-out page
-  goes into the handoff and keeps its path on this host; `/healthz` answers on any host.
+  goes to sign-in on this host, never the login host, keeping its path; `/healthz` answers on
+  any host.
+- `test/portal-sign-in.test.ts` — the whole sign-in through its server actions: an invitation
+  accepted, the authenticator set up, the emailed code never enough on its own, recovery codes
+  once, the attempt limit, foreign Origins, service accounts, and handed-over sessions refused.
 - `test/authorize.test.ts` — the central function's checks, one at a time, in order.
 - `test/authorization-coverage.test.ts` — reads `app/` from disk and fails if a page, route or
   server action skips the central function, or a form lacks its CSRF field.
-- `test/auth-session.test.ts` — as the restricted role: a sign-in's liveness and hard end, its
-  revocation, and that none of the sign-in tables can be read.
+- `test/sign-in-boundary.test.ts` — as the restricted role: none of login.10xid.com's sign-in
+  tables can be read or written.
 
-The whole flow across both hosts in a real browser — invitation, password, emailed code,
-authenticator on every method, replayed codes and tickets, recovery codes, idle expiry,
-operator binding, tenant isolation, sign-out everywhere — is login's
-`test/e2e/better-auth.spec.ts`, which starts this app next to it.
+The older browser suite here (`npm run test:e2e`) and `npm run prove` still sign in the way
+they did before the login host existed, and need rewriting against this sign-in before they
+can run again.
 
-The older browser suite here (`npm run test:e2e`) and `npm run prove` still sign in with the
-legacy emailed codes and need rewriting against the new sign-in before they can run again.
+## Cutover
+
+Moving `app.10xid.com` off login.10xid.com, in this order:
+
+1. **`app` service:** set `TOTP_ENC_KEY` (`openssl rand -base64 32`; without it the service
+   refuses to start) and remove `PRIMARY_HOST`. `RESEND_API_KEY` is already there for invitations.
+2. **Clear the old authenticators**, as the database owner, so everybody sets one up fresh on
+   first sign-in (the ones on login.10xid.com live in its own tables, which this app cannot
+   read; any left in `users` are from before that and may be under a key that no longer exists):
+   `update users set totp_secret = null, totp_confirmed_at = null;` and
+   `update recovery_codes set used_at = now() where used_at is null;`
+3. **Deploy** this branch. Every session handed over from the login host stops working; people
+   sign in at `app.10xid.com/auth/sign-in`.
+4. **`portal` service (login.10xid.com):** unset `PORTAL_HOST` and add `app.10xid.com` to
+   `PORTAL_RETIRED_DOMAINS`, then redeploy, so it stops sending anyone here and its row in
+   `organization_domains` is removed (login's README, "The portal is untied").
+
+Until everybody has signed in once, a person's first sign-in is their emailed code followed by
+setting up an authenticator — so in that window the inbox alone is enough to claim an account.
+Ask people to sign in soon after the cutover.
+
+## Lost authenticator
+
+There is deliberately no button for it. An operator, as the database owner, clears it after
+confirming who is asking, and the person sets up a new one at their next sign-in:
+
+```sql
+update users set totp_secret = null, totp_confirmed_at = null where email = '<address>';
+update recovery_codes set used_at = now() where used_at is null
+  and user_id = (select id from users where email = '<address>');
+update sessions set revoked_at = now() where revoked_at is null
+  and user_id = (select id from users where email = '<address>');
+```
 
 ## Conventions worth knowing
 
 - **Next.js 16 renamed middleware to `proxy.ts`.** It refuses any host but the app's, refuses
-  a state-changing request from another origin, and sends a page with no session cookie into
-  the handoff. It authorizes nothing: that is `lib/auth/authorize.ts`, called from every route.
+  a state-changing request from another origin, and sends a page with no session cookie to
+  sign-in. It authorizes nothing: that is `lib/auth/authorize.ts`, called from every route.
 - **Versions are pinned exactly.** Drizzle's documentation site describes 1.0 while npm
   installs 0.45.2 with a different migration layout, so a caret produces a build that
   does not match its own documentation.
@@ -197,9 +236,9 @@ legacy emailed codes and need rewriting against the new sign-in before they can 
   appears in a URL, since it would otherwise leak how many jobs a client has.
 - **The hostname decides branding, never permission.** What a person may read comes from
   their session. The address bar carries no authority.
-- **Sessions:** seven days from signing in at most, 48 hours idle, both enforced on the server
-  (here and, for the sign-in, by Postgres). Revoking a membership takes effect on the next
-  request, because every request asks the database.
+- **Sessions:** seven days from signing in at most, 48 hours idle, both enforced on the server.
+  Revoking a membership takes effect on the next request, because every request asks the
+  database.
 
 ## The decision record
 

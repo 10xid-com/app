@@ -11,28 +11,23 @@ import type { MembershipRole } from "@/lib/db/schema";
 export const MAX_COOKIE_SECONDS = 400 * 24 * 60 * 60;
 
 /**
- * Session policy (self-hosted sign-in, 0022).
+ * Session policy. The portal signs people in itself (lib/auth/codes.ts):
  *
- * A portal session exists only as the far end of a sign-in on the login host,
- * and it lives no longer than that sign-in:
+ *   absolute   seven days from signing in, never extended by activity.
+ *   idle       48 hours without a request.
+ *   pending    the emailed code accepted, the authenticator not yet: such a
+ *              session opens only the authenticator screens, and lapses after
+ *              PENDING_SESSION_SECONDS.
  *
- *   absolute   the sign-in's hard end — seven days from when the person signed
- *              in on the login host, never extended by activity. The portal
- *              row is created with exactly that end (auth_session_touch()).
- *   idle       48 hours without a request. Enforced on the portal row and, on
- *              every request, on the sign-in session it came from, which the
- *              database hides once it has been idle that long.
- *
- * Both are checked on the server on every request; the cookie's own expiry is
- * only a convenience for the browser. Revoking the sign-in on the login host
- * (signing out, a password reset, an operator) ends the portal session on its
- * next request.
+ * All are checked on the server on every request; the cookie's own expiry is
+ * only a convenience for the browser.
  */
 
 export type SessionRole = "client" | "staff";
 
 export const SESSION_ABSOLUTE_SECONDS = 7 * 24 * 60 * 60;
 export const SESSION_IDLE_SECONDS = 48 * 60 * 60;
+export const PENDING_SESSION_SECONDS = 15 * 60;
 
 export const SESSION_POLICY: Record<
   SessionRole,
@@ -43,7 +38,7 @@ export const SESSION_POLICY: Record<
 };
 
 /**
- * How recent the authenticator must be (login's /auth/mfa/again refreshes it):
+ * How recent the authenticator must be (/auth/confirm refreshes it):
  *
  *   agency      to use agency access at all — another business's records,
  *               through a grant — the authenticator within the last day;
@@ -70,11 +65,11 @@ export const SIGN_IN_CODE = {
   requestWindowSeconds: 15 * 60,
 };
 
-/**
- * The cross-domain ticket is measured in seconds because it only has to survive
- * one redirect. Anything longer is a credential sitting in a browser's history.
- */
-export const SSO_TICKET_TTL_SECONDS = 30;
+/** Wrong authenticator or recovery codes, per account, per window. */
+export const AUTHENTICATOR_ATTEMPTS = {
+  max: 10,
+  windowSeconds: 15 * 60,
+};
 
 /**
  * A staff grant covers one client for one working stretch, then lapses.

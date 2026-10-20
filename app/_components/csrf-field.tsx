@@ -8,6 +8,6 @@ import { resolveIdentity } from "@/lib/auth/session";
  */
 export async function CsrfField() {
   const identity = await resolveIdentity();
-  if (identity.state !== "active") return null;
+  if (identity.state === "signed_out") return null;
   return <input type="hidden" name={CSRF_FIELD} value={identity.csrfToken} />;
 }

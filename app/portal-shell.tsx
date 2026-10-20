@@ -2,7 +2,6 @@ import type { ReactNode } from "react";
 import { cookies } from "next/headers";
 import { getSessionContext, resolveIdentity, type SessionContext } from "@/lib/auth/session";
 import { signOutAction, signOutEverywhereAction } from "./sign-out";
-import { loginOrigin } from "@/lib/auth/origin";
 import { CsrfField } from "./_components/csrf-field";
 import { exitClientAction } from "./staff/actions";
 import { PortalFrame, menuItemClass, type NavGroup } from "./portal-nav";
@@ -186,8 +185,8 @@ export async function PortalShell({
           <a href="/pages" className={menuItemClass}>
             Pages
           </a>
-          {/* Sessions, authenticator and recovery codes live on the login host. */}
-          <a href={`${loginOrigin() ?? ""}/auth/account`} className={menuItemClass}>
+          {/* Recovery codes, signing out everywhere. */}
+          <a href="/auth/security" className={menuItemClass}>
             Sign-in &amp; security
           </a>
           <form action={signOutAction}>

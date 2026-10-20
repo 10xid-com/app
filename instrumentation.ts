@@ -15,8 +15,9 @@ export async function register() {
   // Only the Node.js runtime can reach the database; the edge runtime cannot.
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
 
-  // The two hosts. A deployment missing one stops here rather than issuing a
-  // session cookie for the wrong host or sending people to the wrong sign-in.
+  // The host and the authenticator key. A deployment missing either stops here
+  // rather than issuing a session cookie for the wrong host, or offering a
+  // sign-in nobody can finish.
   if (process.env.NODE_ENV === "production") {
     const { obsoleteVariables, sessionConfigProblems } = await import("./lib/auth/origin");
     const problems = sessionConfigProblems(process.env);

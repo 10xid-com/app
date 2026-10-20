@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
-import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { Client } from "pg";
+import { signedInSession } from "./support/session";
 
 /**
  * Agency access through its screens' server actions, end to end: real
@@ -14,7 +14,6 @@ import { Client } from "pg";
  */
 
 process.env.PORTAL_HOST ||= "app.portal.test";
-process.env.PRIMARY_HOST ||= "login.portal.test";
 const SINK = process.env.DEV_CODE_SINK ?? "/tmp/portal-signin-codes.log";
 
 class Redirect extends Error {
@@ -41,8 +40,8 @@ vi.mock("next/headers", () => ({
   headers: async () => new Headers(browser.origin ? { origin: browser.origin } : {}),
 }));
 
-const { resolveIdentity, startSession } = await import("@/lib/auth/session");
-const { appOrigin, loginOrigin } = await import("@/lib/auth/origin");
+const { resolveIdentity } = await import("@/lib/auth/session");
+const { appOrigin } = await import("@/lib/auth/origin");
 const { closePool } = await import("@/lib/db/connection");
 const { setSessionActiveOrganization } = await import("@/lib/db/identity");
 const agencySide = await import("@/app/agency/actions");
@@ -70,8 +69,7 @@ const TAG = `as${Date.now().toString(36)}`;
 const addr = (l: string) => `${l}-${TAG}@test.invalid`;
 const org: Record<string, string> = {};
 const slug: Record<string, string> = {};
-const who: Record<string, { userId: string; token: string; sessionId: string; authSessionId: string }> = {};
-const authUsers: string[] = [];
+const who: Record<string, { userId: string; token: string; sessionId: string }> = {};
 
 async function organization(key: string) {
   slug[key] = `${TAG}-${key}`;
@@ -81,22 +79,13 @@ async function organization(key: string) {
 }
 
 async function person(key: string, memberOf: [string, string][]) {
-  const authUserId = `auth-${key}-${TAG}`;
-  authUsers.push(authUserId);
-  await owner.query("insert into auth_users (id, name, email) values ($1, 'T', $2)", [authUserId, addr(key)]);
-  const authSessionId = randomUUID();
-  await owner.query(
-    "insert into auth_sessions (id, token, user_id, expires_at) values ($1, $2, $3, now() + interval '7 days')",
-    [authSessionId, `token-${authSessionId}`, authUserId],
-  );
-  await owner.query("update auth_sessions set mfa_verified_at = now() where id = $1", [authSessionId]);
-  const userId = (await owner.query("insert into users (email, auth_user_id) values ($1, $2) returning id", [addr(key), authUserId])).rows[0]
+  const userId = (await owner.query("insert into users (email) values ($1) returning id", [addr(key)])).rows[0]
     .id as string;
   for (const [o, role] of memberOf) {
     await owner.query("insert into memberships (user_id, organization_id, role) values ($1, $2, $3)", [userId, org[o], role]);
   }
-  const { token, sessionId } = await startSession({ userId, host: "app.test", authSessionId, hardEnd: new Date(Date.now() + 7 * 86_400_000) });
-  who[key] = { userId, token, sessionId, authSessionId };
+  const { token, sessionId } = await signedInSession(owner, userId);
+  who[key] = { userId, token, sessionId };
 }
 
 /** Signed in as `key`, with `business` open. */
@@ -158,7 +147,6 @@ afterAll(async () => {
   await owner.query("delete from memberships where organization_id = any($1::uuid[])", [ids]);
   await owner.query("delete from user_emails where email like $1", [emails]);
   await owner.query("delete from users where email like $1", [emails]);
-  await owner.query("delete from auth_users where id = any($1::text[])", [authUsers]);
   await owner.query("delete from organizations where id = any($1::uuid[])", [ids]);
   await owner.end();
   await closePool();
@@ -265,8 +253,8 @@ describe("the business decides", () => {
 
 describe("how recent the authenticator is", () => {
   const verified = (key: string, ago: string) =>
-    owner.query(`update auth_sessions set mfa_verified_at = now() - interval '${ago}' where id = $1`, [who[key]!.authSessionId]);
-  const stepUp = (back: string) => `${loginOrigin() ?? ""}/auth/mfa/again?return=${encodeURIComponent(back)}`;
+    owner.query(`update sessions set second_factor_at = now() - interval '${ago}' where id = $1`, [who[key]!.sessionId]);
+  const stepUp = (back: string) => `/auth/confirm?next=${encodeURIComponent(back)}`;
 
   test("approving waits for a code from the last five minutes; blocking never does", async () => {
     const g = await grantFor("rotary");

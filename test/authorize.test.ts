@@ -47,8 +47,6 @@ const SESSION = "session_01ABC";
 function ctx(role = "owner", organizationId: string | null = BUSINESS): SessionContext {
   return {
     sessionId: SESSION,
-    authSessionId: "auth_session_01",
-    authUserId: "auth_user_01",
     userId: "33333333-3333-4333-8333-333333333333",
     email: "owner@example.com",
     fullName: null,
@@ -73,6 +71,7 @@ function ctx(role = "owner", organizationId: string | null = BUSINESS): SessionC
       : [],
     agencyAccess: [],
     absoluteExpiresAt: new Date(Date.now() + 86_400_000),
+    secondFactorAt: new Date(),
     needsSecondFactor: false,
   };
 }
@@ -124,6 +123,19 @@ describe("the order of checks", () => {
 
   test("2. no live portal session", async () => {
     const d = deps({ identity: async () => ({ state: "signed_out" }) });
+    expect(await reason({ action: "jobs.read" }, d)).toBe("signed_out");
+    expect(await reason({ action: "jobs.create", mutation: mutation() }, d)).toBe("signed_out");
+  });
+
+  test("2. a pending session — the emailed code, not yet the authenticator — counts as none", async () => {
+    const d = deps({
+      identity: async () => ({
+        state: "pending",
+        sessionId: SESSION,
+        csrfToken: csrfTokenFor(TOKEN),
+        pending: { sessionId: SESSION, userId: ctx().userId, email: ctx().email, enrolled: true },
+      }),
+    });
     expect(await reason({ action: "jobs.read" }, d)).toBe("signed_out");
     expect(await reason({ action: "jobs.create", mutation: mutation() }, d)).toBe("signed_out");
   });

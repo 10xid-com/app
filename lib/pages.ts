@@ -1,15 +1,14 @@
 /**
  * Every page this service has, and the iD each one answers to.
  *
- * The sign-in pages (`login.*`, and the legacy sign-in, sign-up, code,
- * authenticator, recovery and sso.authorize) are 10xid-com/login's and are
- * listed in its copy of this file. Their iDs are theirs: never reuse them here.
+ * The login host's pages (`login.*`, `uid.*`, `sso.authorize`, and the
+ * legacy sign-in, sign-up, code, authenticator and recovery) are
+ * 10xid-com/login's and are listed in its copy of this file. Their iDs are
+ * theirs: never reuse them here. The portal's own sign-in is `portal.*`.
  *
- * Retired here, never to be reused: `account` (the sessions screen). Sessions,
- * the authenticator and recovery codes are managed on the login host
- * (`login.account`). The handoff (`sso.start`, `sso.callback`, `sso.failed`)
- * was briefly removed for WorkOS, which never went live, and is back under its
- * own iDs.
+ * Retired here, never to be reused: `account` (the sessions screen), and the
+ * handoff from the login host (`sso.start`, `sso.callback`, `sso.failed`),
+ * retired when the portal began signing people in itself.
  *
  * The reason this file exists rather than a list typed into a screen: a path is
  * where something lives today, and an iD is what it IS. `/dashboard` may well
@@ -94,6 +93,74 @@ export const PAGES: PageRecord[] = [
     kind: "machinery",
     file: "app/page.tsx",
     group: "Getting in",
+  },
+
+  {
+    id: "portal.sign-in",
+    path: "/auth/sign-in",
+    name: "Sign in",
+    purpose:
+      "The way in, and how an invitation is accepted: your address, and a six-digit code is emailed to it. The same answer for every address.",
+    audience: "public",
+    kind: "page",
+    file: "app/auth/sign-in/page.tsx",
+    group: "Getting in",
+  },
+
+  {
+    id: "portal.sign-in-code",
+    path: "/auth/verify",
+    name: "Emailed code",
+    purpose: "Where the emailed code is typed. It proves the address, and is never the whole of signing in.",
+    audience: "public",
+    kind: "page",
+    file: "app/auth/verify/page.tsx",
+    group: "Getting in",
+  },
+
+  {
+    id: "portal.authenticator",
+    path: "/auth/authenticator",
+    name: "Authenticator",
+    purpose:
+      "The second step of every sign-in: the code from your authenticator app or a recovery code — or, the first time, setting the app up.",
+    audience: "public",
+    kind: "page",
+    file: "app/auth/authenticator/page.tsx",
+    group: "Getting in",
+  },
+
+  {
+    id: "portal.recovery-codes",
+    path: "/auth/recovery-codes",
+    name: "Recovery codes",
+    purpose: "Your ten recovery codes, shown once when they are made. Only their hashes are kept.",
+    audience: "member",
+    kind: "page",
+    file: "app/auth/recovery-codes/page.tsx",
+    group: "Your account",
+  },
+
+  {
+    id: "portal.confirm",
+    path: "/auth/confirm",
+    name: "Confirm it is you",
+    purpose: "A fresh authenticator code, for what needs one recent: agency access, and approving it.",
+    audience: "member",
+    kind: "page",
+    file: "app/auth/confirm/page.tsx",
+    group: "Your account",
+  },
+
+  {
+    id: "portal.security",
+    path: "/auth/security",
+    name: "Sign-in & security",
+    purpose: "How many recovery codes you have left, a new set, and signing out on every device.",
+    audience: "member",
+    kind: "page",
+    file: "app/auth/security/page.tsx",
+    group: "Your account",
   },
 
   {
@@ -859,40 +926,6 @@ export const PAGES: PageRecord[] = [
     kind: "machinery",
     file: "app/api/workspace/repositories/route.ts",
     methods: ["GET"],
-    group: "Machinery",
-  },
-  {
-    id: "sso.start",
-    path: "/auth/sso/start",
-    name: "Handoff — start",
-    purpose:
-      "The portal asks the login host to sign this visitor in. Step one of three; the return path stays here.",
-    audience: "public",
-    kind: "machinery",
-    file: "app/auth/sso/start/route.ts",
-    methods: ["GET"],
-    group: "Machinery",
-  },
-  {
-    id: "sso.callback",
-    path: "/auth/sso/callback",
-    name: "Handoff — callback",
-    purpose:
-      "The portal spends the ticket, once, and issues its own host-only session, ending when the sign-in does.",
-    audience: "public",
-    kind: "machinery",
-    file: "app/auth/sso/callback/route.ts",
-    methods: ["GET"],
-    group: "Machinery",
-  },
-  {
-    id: "sso.failed",
-    path: "/auth/sso/failed",
-    name: "Handoff failed",
-    purpose: "One message for every way the handoff can fail, so a failure reveals nothing.",
-    audience: "public",
-    kind: "page",
-    file: "app/auth/sso/failed/page.tsx",
     group: "Machinery",
   },
 ];
