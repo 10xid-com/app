@@ -2,7 +2,8 @@
 // the top bar, and the unsaved-item note — on a local production build of the
 // branch head (SMOKE_APP_COMMIT). Chromium with Playwright's devices["iPhone 13"]
 // (390x664 CSS px, DPR 3, touch, iOS Safari user agent), and the same descriptor
-// narrowed to 375x548, 360x640 and 320x480. DESKTOP EMULATION, not Safari on an
+// narrowed to 375x548, 360x640 and 320x480; one photo is taken offline so it
+// waits on the phone. DESKTOP EMULATION, not Safari on an
 // iPhone: no real iOS keyboard, toolbar or safe area. Scrolling is a synthesized
 // finger drag (CDP Input.dispatchTouchEvent) over main. The owner, the
 // business and every photo are synthetic; the database is disposable.
@@ -39,6 +40,22 @@ const captures = async () => (await db.query("select count(*)::int as n from inv
 const captureRow = async (id) => (await db.query("select status, container_id from inventory_captures where id = $1", [id])).rows[0] ?? null;
 
 const consoleErrors = [];
+/** While the phone is offline on purpose, failed requests are expected; they are listed, not counted. */
+let offline = false;
+const offlineConsole = [];
+const sessions = new WeakMap();
+const PHOTO_UPLOADS = "**/api/inventory/captures/*/photos";
+/** No connection: the browser says offline, and a photo upload fails as it would with no signal. */
+async function goOffline(context, page) {
+  offline = true;
+  await page.route(PHOTO_UPLOADS, (route) => route.abort("internetdisconnected"));
+  await context.setOffline(true);
+}
+async function goOnline(context, page) {
+  await page.unroute(PHOTO_UPLOADS);
+  await context.setOffline(false);
+  offline = false;
+}
 const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium-1194/chrome-linux/chrome", args: ["--no-proxy-server"] });
 const browserVersion = browser.version();
 async function phone(label, size) {
@@ -47,8 +64,13 @@ async function phone(label, size) {
   const context = await browser.newContext({ ...d, viewport, screen: { width: viewport.width, height: viewport.height + 180 }, baseURL: BASE });
   await context.addCookies([{ name: "portal_session", value: env.TOKEN, domain: "localhost", path: "/", httpOnly: true }]);
   const page = await context.newPage();
+  // One DevTools session per page for the finger drags, opened now and kept:
+  // opening and detaching one later resets the browser's offline emulation.
+  sessions.set(page, await context.newCDPSession(page));
   page.on("console", (m) => {
-    if (m.type() === "error") consoleErrors.push(`${label}: ${m.text()}`);
+    if (m.type() !== "error") return;
+    if (offline && /ERR_INTERNET_DISCONNECTED|Failed to fetch/.test(m.text())) offlineConsole.push(`${label}: ${m.text()}`);
+    else consoleErrors.push(`${label}: ${m.text()}`);
   });
   page.on("pageerror", (e) => consoleErrors.push(`${label}: ${String(e)}`));
   return { context, page };
@@ -118,7 +140,7 @@ const headerCheck = (id, where, m) => {
 
 /** A finger dragged up or down over main (CDP touch events), repeated until main stops moving. */
 async function swipe(page, direction) {
-  const cdp = await page.context().newCDPSession(page);
+  const cdp = sessions.get(page);
   const box = await page.locator("main").boundingBox();
   const x = Math.round(box.x + box.width / 2);
   const from = Math.round(box.y + box.height * (direction === "down" ? 0.7 : 0.3));
@@ -135,7 +157,6 @@ async function swipe(page, direction) {
     const after = await page.evaluate(() => document.querySelector("main").scrollTop);
     if (Math.abs(after - before) < 1) break;
   }
-  await cdp.detach();
   await page.waitForTimeout(250);
 }
 const scroll = (page) =>
@@ -184,6 +205,48 @@ const noteState = (page) =>
 
 const ITEM = "Synthetic cacao powder (test)";
 
+/** Photos this browser still keeps for a capture (IndexedDB 10xid-inventory / photo-uploads). */
+const queued = (page, captureId) =>
+  page.evaluate(
+    (id) =>
+      new Promise((resolve) => {
+        const req = indexedDB.open("10xid-inventory", 1);
+        req.onupgradeneeded = () => {
+          if (!req.result.objectStoreNames.contains("photo-uploads")) req.result.createObjectStore("photo-uploads", { keyPath: "key" });
+        };
+        req.onerror = () => resolve(-1);
+        req.onsuccess = () => {
+          const idb = req.result;
+          const all = idb.transaction("photo-uploads", "readonly").objectStore("photo-uploads").getAll();
+          all.onsuccess = () => {
+            resolve(all.result.filter((p) => p.captureId === id).length);
+            idb.close();
+          };
+        };
+      }),
+    captureId,
+  );
+const saveDisabled = (page) => page.evaluate(() => [...document.querySelectorAll("button")].find((b) => b.textContent.trim() === "Save")?.disabled === true);
+/** What the review form holds right now, and the photos on screen. */
+const formState = (page) =>
+  page.evaluate(() => ({
+    name: document.getElementById("productName")?.value ?? null,
+    brand: document.getElementById("brand")?.value ?? null,
+    status: document.querySelector('input[name="status"]:checked')?.value ?? null,
+    amount: document.querySelector('input[type="hidden"][name="amount"]')?.value ?? null,
+    estimate: document.getElementById("estimateQuantity")?.value ?? null,
+    labelQuantity: document.getElementById("labelQuantity")?.value ?? null,
+    labelUnit: document.getElementById("labelUnit")?.value ?? null,
+    lot: document.getElementById("lotCode")?.value ?? null,
+    sent: document.querySelectorAll('section[aria-labelledby="photos-heading"] img[src^="/api/inventory/documents/"]').length,
+    waiting: [...document.querySelectorAll('section[aria-labelledby="photos-heading"] li')].filter((li) => li.textContent.includes("Waiting to send")).length,
+    online: navigator.onLine,
+  }));
+const TYPED = { name: ITEM, brand: "Synthetic Co.", status: "open", amount: "estimate", estimate: "120", labelQuantity: "250", labelUnit: "g", lot: "SYN-0001", sent: 3, waiting: 1 };
+const sameForm = (f) => Object.entries(TYPED).every(([k, v]) => f[k] === v);
+const formText = (f) =>
+  `name "${f.name}", brand "${f.brand}", ${f.status} / ${f.amount} ${f.estimate}, label ${f.labelQuantity} ${f.labelUnit}, lot ${f.lot}, photos ${f.sent} sent + ${f.waiting} waiting, browser ${f.online ? "online" : "offline"}`;
+
 /* ------------------------------------------------------------------ */
 /* 390 px                                                              */
 /* ------------------------------------------------------------------ */
@@ -216,21 +279,42 @@ await page.waitForURL(/\/inventory\/capture\/[0-9a-f-]{36}$/);
 const c1 = new URL(page.url()).pathname.split("/").pop();
 check("S2", "Start (the existing button) makes one item and opens its camera", (await captures()) === before + 1 && (await captureRow(c1))?.status === "open");
 
-// A long item: three photos, a name, More details open.
+// A long item: three photos sent; name and brand; Opened, about 120 g; the
+// label's 250 g and the lot under More details.
 await page.locator("input[type=file][multiple]").setInputFiles(PHOTOS);
 await page.waitForFunction(() => document.querySelectorAll('section[aria-labelledby="photos-heading"] img[src^="/api/inventory/documents/"]').length === 3, null, { timeout: 60_000 });
 await page.waitForFunction(() => [...document.querySelectorAll("button")].find((b) => b.textContent.trim() === "Save")?.disabled === false, null, { timeout: 60_000 });
 await page.fill("#productName", ITEM);
 await page.fill("#brand", "Synthetic Co.");
+await page.getByText("Opened", { exact: true }).tap();
+await page.getByText("About…", { exact: true }).tap();
+await page.fill("#estimateQuantity", "120");
 await page.getByText("More details", { exact: true }).tap();
+await page.fill("#labelQuantity", "250");
+await page.selectOption("#labelUnit", "g");
 await page.fill("#lotCode", "SYN-0001");
+// A fourth photo taken with no connection: it waits on the phone.
+await goOffline(c390, page);
+await page.locator("input[type=file][multiple]").setInputFiles([`${DIR}/k-4.jpg`]);
+await page.waitForFunction(
+  () => [...document.querySelectorAll('section[aria-labelledby="photos-heading"] li')].some((li) => li.textContent.includes("Waiting to send")),
+  null,
+  { timeout: 30_000 },
+);
+let form = await formState(page);
+check(
+  "Q1",
+  "Offline, a fourth photo waits on the phone (IndexedDB) and Save waits for it; everything typed is in the form",
+  (await queued(page, c1)) === 1 && (await saveDisabled(page)) && sameForm(form) && form.online === false,
+  formText(form),
+);
 headerCheck("H5", "item being catalogued", (m = await header(page)));
 check("H6", "On an unsaved item, Add new product is the jump to the note on the same page", m.actionHref === "#finish-this-item", `href ${m.actionHref}`);
 
 await swipe(page, "up");
 let s = await scroll(page);
 check("P1", "390 px, long item page at the top: bar at the top, main below it", pinned(s, "top"), at(s));
-await shot(page, "390-capture-top", "390 px · An item being catalogued, top: three synthetic photos sent, name typed");
+await shot(page, "390-capture-top", "390 px · An item being catalogued, top: three photos sent, a fourth waiting on the phone (offline)");
 await swipe(page, "down");
 s = await scroll(page);
 check("P2", "Swiped to the bottom: only main scrolled; the bar is still at the top", pinned(s, "bottom") && s.max > 600, at(s));
@@ -249,20 +333,49 @@ check(
   `${note.path}${note.hash}; note shown ${note.shown}, in view ${note.inView}; Save and add another in view ${note.nextInView}; Discard in view ${note.discardInView}`,
 );
 check("U2", "The note has focus (read out by a screen reader); the bar stays on screen, above it", note.focused && note.barOnScreen && note.belowBar, `focused ${note.focused}, bar on screen ${note.barOnScreen}, note below the bar ${note.belowBar}`);
+form = await formState(page);
 check(
   "U3",
-  "Nothing lost or started: typed name, 3 photos and the open item as they were; no new item",
-  note.name === ITEM && note.photos === 3 && (await captures()) === itemsBefore && (await captureRow(c1))?.status === "open",
-  `name "${note.name}", photos ${note.photos}, items ${await captures()} (was ${itemsBefore})`,
+  "Nothing lost or started: name, brand, Opened, about 120 g, label 250 g, lot, 3 photos sent and 1 still waiting on the phone; the item still open; no new item",
+  sameForm(form) && form.online === false && (await queued(page, c1)) === 1 && (await captures()) === itemsBefore && (await captureRow(c1))?.status === "open",
+  `${formText(form)}; queued on the phone ${await queued(page, c1)}; items ${await captures()} (was ${itemsBefore})`,
 );
 check("U4", "The note says to finish it with Save and add another, or discard it", /Save and add another/.test(note.text) && /discard this item/i.test(note.text), note.text);
 s = await scroll(page);
 check("P3", "After the jump the bar is still at the top: only main moved", s.barTop === 0 && s.pageScroll === 0 && s.frameScroll === 0 && s.mainTop === 56, at(s));
 await shot(page, "390-capture-note", "390 px · Add new product on an unsaved item: the page stays, the note says to finish it or discard it");
-for (let i = 0; i < 2; i++) await page.getByRole("link", { name: "Add new product" }).tap();
-await page.waitForTimeout(500);
+
+// Scrolled away, focus elsewhere, then the same link again.
+await swipe(page, "up");
+const away = await page.evaluate(() => {
+  const n = document.getElementById("finish-this-item").getBoundingClientRect();
+  const r = document.querySelector("main").getBoundingClientRect();
+  return n.top >= r.bottom || n.bottom <= r.top;
+});
+await page.locator("#productName").focus();
+await page.getByRole("link", { name: "Add new product" }).tap();
+await page.waitForTimeout(600);
 note = await noteState(page);
-check("U5", "Tapped twice more: still the same item and form, still no new item", note.path === `/inventory/capture/${c1}` && note.name === ITEM && note.inView && (await captures()) === itemsBefore);
+form = await formState(page);
+check(
+  "U5",
+  "Scrolled away (the note off screen, focus in Name), the same link tapped again: back at the note, focused again; the form and the waiting photo unchanged; no new item",
+  away && note.path === `/inventory/capture/${c1}` && note.inView && note.focused && note.barOnScreen && sameForm(form) && form.online === false && (await queued(page, c1)) === 1 && (await captures()) === itemsBefore,
+  `note was off screen ${away}; now in view ${note.inView}, focused ${note.focused}, bar on screen ${note.barOnScreen}; ${formText(form)}`,
+);
+await shot(page, "390-capture-note-again", "390 px · Scrolled away and tapped again: back at the note");
+
+// Back online: the waiting photo goes on its own; nothing typed is lost.
+await goOnline(c390, page);
+await page.waitForFunction(() => document.querySelectorAll('section[aria-labelledby="photos-heading"] img[src^="/api/inventory/documents/"]').length === 4, null, { timeout: 60_000 });
+await page.waitForFunction(() => [...document.querySelectorAll("button")].find((b) => b.textContent.trim() === "Save")?.disabled === false, null, { timeout: 60_000 });
+form = await formState(page);
+check(
+  "Q2",
+  "Back online, the waiting photo is sent on its own (4 photos, none left on the phone); Save is ready; the form as typed",
+  (await queued(page, c1)) === 0 && sameForm({ ...form, sent: 3, waiting: 1 }) && form.sent === 4 && form.waiting === 0 && form.online === true,
+  formText(form),
+);
 
 // A field near the end gets focus: it comes into view inside main, below the bar.
 await swipe(page, "up");
@@ -278,16 +391,25 @@ check("F1", "Notes (near the end) focused from the top: scrolled into view in ma
 await page.locator("#notes").blur();
 
 // Save and add another, as before.
-await page.getByText("Sealed", { exact: true }).tap();
 await page.getByRole("button", { name: "Save and add another" }).tap();
 await page.waitForURL(/\/inventory\/capture\/[0-9a-f-]{36}\?saved=/);
 const c2 = new URL(page.url()).pathname.split("/").pop();
-const container = (await captureRow(c1))?.container_id;
+const saved = await db
+  .query(
+    `select c.status, c.nominal_quantity::float as label, c.nominal_unit as unit, l.lot_code as lot, p.name from inventory_captures k
+       join inventory_containers c on c.organization_id = k.organization_id and c.id = k.container_id
+       join inventory_lots l on l.organization_id = c.organization_id and l.id = c.lot_id
+       join inventory_products p on p.organization_id = l.organization_id and p.id = l.product_id
+      where k.id = $1`,
+    [c1],
+  )
+  .then((r) => r.rows[0])
+  .catch((e) => ({ error: e.message }));
 check(
   "N1",
-  "Save and add another still saves, and opens the next item saying what was saved",
-  (await captureRow(c1))?.status === "confirmed" && c2 !== c1 && (await page.getByText("Now the next one.").isVisible()) && (await captures()) === itemsBefore + 1,
-  `item 1 ${(await captureRow(c1))?.status}; next item ${(await captureRow(c2))?.status}`,
+  "Save and add another still saves what was typed (Opened), and opens the next item saying what was saved",
+  (await captureRow(c1))?.status === "confirmed" && saved?.status === "open" && saved?.name === ITEM && c2 !== c1 && (await page.getByText("Now the next one.").isVisible()) && (await captures()) === itemsBefore + 1,
+  `item 1 ${(await captureRow(c1))?.status}; container ${JSON.stringify(saved)}; next item ${(await captureRow(c2))?.status}`,
 );
 check("N2", "The next item arrives with the note hidden", !(await page.locator("#finish-this-item").isVisible()));
 await shot(page, "390-next-item", "390 px · After Save and add another: the next item, “Saved: … Now the next one.”");
@@ -302,10 +424,25 @@ check("U7", "Discard this item discards it and returns to the list", (await capt
 headerCheck("H7", "list with an item", await header(page));
 await shot(page, "390-list", "390 px · Inventory with the saved item");
 
-// A saved item's page starts the usual way.
-await page.goto(`/inventory/capture/${c1}`);
-m = await header(page);
-check("H8", "A saved item's page: Add new product goes to the start page", m.actionHref === "/inventory/capture", `href ${m.actionHref}`);
+// The saved item's page and the discarded one: Add new product starts the usual way from either.
+for (const [id, heading, file, check_id] of [
+  [c1, "Saved", "390-saved-item", "H8"],
+  [c2, "Discarded", "390-discarded-item", "H8b"],
+]) {
+  await page.goto(`/inventory/capture/${id}`);
+  const hm = await header(page);
+  const titled = await page.getByRole("heading", { name: heading, exact: true }).isVisible();
+  await shot(page, file, `390 px · A ${heading.toLowerCase()} item's page: Add new product starts the usual way`);
+  const k = await captures();
+  await page.getByRole("link", { name: "Add new product" }).tap();
+  await page.waitForURL("**/inventory/capture");
+  check(
+    check_id,
+    `A ${heading.toLowerCase()} item's page: Add new product opens the start page; no item made`,
+    titled && hm.actionHref === "/inventory/capture" && (await captures()) === k,
+    `"${heading}" shown ${titled}; href ${hm.actionHref}; items ${k} → ${await captures()}`,
+  );
+}
 
 // The container page: long, the bar pinned, the menu from the bottom, starting from it.
 await page.goto("/inventory");
@@ -361,6 +498,14 @@ for (const size of [
     const ss = await scroll(p);
     check(`W${w}d`, `${w} px, container page swiped to the bottom: the bar is still at the top`, pinned(ss, "bottom"), at(ss));
     await shot(p, `${w}-container-bottom`, `${w} px · Same page, bottom`);
+    await p.getByRole("button", { name: "Show navigation" }).tap();
+    const nav3 = p.getByRole("complementary", { name: "Navigation" });
+    await nav3.waitFor({ state: "visible" });
+    const links3 = (await nav3.getByRole("link").allTextContents()).map((t) => t.trim());
+    check(`W${w}g`, `${w} px: from the bottom of the page the menu opens, with Inventory and iD`, links3.includes("Inventory") && links3.includes("iD"), links3.join(", "));
+    await shot(p, `${w}-menu`, `${w} px · The menu, opened from the bottom of the container page`);
+    await p.getByRole("button", { name: "Hide navigation" }).tap();
+    await nav3.waitFor({ state: "hidden" });
     // An unsaved item at 320: start one, type, then Add new product.
     await p.goto("/inventory/capture");
     await p.getByRole("button", { name: "Start" }).tap();
@@ -414,7 +559,7 @@ const meta = {
   browser: `Chromium ${browserVersion}`,
   when: new Date().toISOString(),
 };
-writeFileSync(`${OUT}/results.json`, JSON.stringify({ meta, passed, total: results.length, results, shots, consoleErrors }, null, 2));
+writeFileSync(`${OUT}/results.json`, JSON.stringify({ meta, passed, total: results.length, results, shots, consoleErrors, offlineConsole }, null, 2));
 const esc = (t) => String(t).replace(/\|/g, "\\|").replace(/\n/g, " ");
 const md = [
   `# app#41 · Add new product in the top bar — emulated iPhone evidence`,
@@ -424,6 +569,7 @@ const md = [
   `- Browser: ${meta.browser} (Playwright \`devices["iPhone 13"]\`: 390×664 CSS px, DPR 3, touch, iOS Safari user agent), and the same descriptor at 375×548, 360×640 and 320×480. **Desktop emulation, not Safari on an iPhone**: no real iOS keyboard, toolbar or safe area.`,
   `- Scrolling: a finger dragged over \`main\` (CDP \`Input.dispatchTouchEvent\`), repeated until it stops moving.`,
   `- Database: ${meta.database}. Media store and label reader are local stand-ins. Owner, business and photos are synthetic.`,
+  `- Offline on purpose (Q1–U5): the browser logged ${offlineConsole.length} failed request(s) while offline, listed in results.json and not counted as errors.`,
   ``,
   `| | Check | Detail |`,
   `|---|---|---|`,

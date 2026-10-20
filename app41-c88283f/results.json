@@ -4,10 +4,10 @@
     "build": "gJ5vR35VH3A4_ldgheP2b",
     "database": "PostgreSQL 18.4 with 50 login migrations applied, built by rebuild-db.sh from login 631c28f + seed; app connects as portal_app (RLS)",
     "browser": "Chromium 141.0.7390.37",
-    "when": "2026-10-20T02:41:49.852Z"
+    "when": "2026-10-20T02:50:24.253Z"
   },
-  "passed": 43,
-  "total": 43,
+  "passed": 47,
+  "total": 47,
   "results": [
     {
       "id": "H1",
@@ -46,6 +46,12 @@
       "detail": ""
     },
     {
+      "id": "Q1",
+      "name": "Offline, a fourth photo waits on the phone (IndexedDB) and Save waits for it; everything typed is in the form",
+      "ok": true,
+      "detail": "name \"Synthetic cacao powder (test)\", brand \"Synthetic Co.\", open / estimate 120, label 250 g, lot SYN-0001, photos 3 sent + 1 waiting, browser offline"
+    },
+    {
       "id": "H5",
       "name": "390 px, item being catalogued: Add new product immediately right of Inventory, one line, nothing cut off or off the screen",
       "ok": true,
@@ -61,19 +67,19 @@
       "id": "P1",
       "name": "390 px, long item page at the top: bar at the top, main below it",
       "ok": true,
-      "detail": "bar top 0px, main from 56px scrolled 0/1834px, frame scrolled 0px, page scrolled 0px"
+      "detail": "bar top 0px, main from 56px scrolled 0/2418px, frame scrolled 0px, page scrolled 0px"
     },
     {
       "id": "P2",
       "name": "Swiped to the bottom: only main scrolled; the bar is still at the top",
       "ok": true,
-      "detail": "bar top 0px, main from 56px scrolled 1834/1834px, frame scrolled 0px, page scrolled 0px"
+      "detail": "bar top 0px, main from 56px scrolled 2418/2418px, frame scrolled 0px, page scrolled 0px"
     },
     {
       "id": "U1",
       "name": "Unsaved item, Add new product from the top of the page: same page, scrolled to the note above Save and add another",
       "ok": true,
-      "detail": "/inventory/capture/a6eff174-a8ba-4133-aeb9-1a219921be46#finish-this-item; note shown true, in view true; Save and add another in view true; Discard in view true"
+      "detail": "/inventory/capture/78eacd32-29b3-40db-8901-7f883f778e7f#finish-this-item; note shown true, in view true; Save and add another in view true; Discard in view true"
     },
     {
       "id": "U2",
@@ -83,9 +89,9 @@
     },
     {
       "id": "U3",
-      "name": "Nothing lost or started: typed name, 3 photos and the open item as they were; no new item",
+      "name": "Nothing lost or started: name, brand, Opened, about 120 g, label 250 g, lot, 3 photos sent and 1 still waiting on the phone; the item still open; no new item",
       "ok": true,
-      "detail": "name \"Synthetic cacao powder (test)\", photos 3, items 1 (was 1)"
+      "detail": "name \"Synthetic cacao powder (test)\", brand \"Synthetic Co.\", open / estimate 120, label 250 g, lot SYN-0001, photos 3 sent + 1 waiting, browser offline; queued on the phone 1; items 1 (was 1)"
     },
     {
       "id": "U4",
@@ -97,25 +103,31 @@
       "id": "P3",
       "name": "After the jump the bar is still at the top: only main moved",
       "ok": true,
-      "detail": "bar top 0px, main from 56px scrolled 1964/1964px, frame scrolled 0px, page scrolled 0px"
+      "detail": "bar top 0px, main from 56px scrolled 2548/2548px, frame scrolled 0px, page scrolled 0px"
     },
     {
       "id": "U5",
-      "name": "Tapped twice more: still the same item and form, still no new item",
+      "name": "Scrolled away (the note off screen, focus in Name), the same link tapped again: back at the note, focused again; the form and the waiting photo unchanged; no new item",
       "ok": true,
-      "detail": ""
+      "detail": "note was off screen true; now in view true, focused true, bar on screen true; name \"Synthetic cacao powder (test)\", brand \"Synthetic Co.\", open / estimate 120, label 250 g, lot SYN-0001, photos 3 sent + 1 waiting, browser offline"
+    },
+    {
+      "id": "Q2",
+      "name": "Back online, the waiting photo is sent on its own (4 photos, none left on the phone); Save is ready; the form as typed",
+      "ok": true,
+      "detail": "name \"Synthetic cacao powder (test)\", brand \"Synthetic Co.\", open / estimate 120, label 250 g, lot SYN-0001, photos 4 sent + 0 waiting, browser online"
     },
     {
       "id": "F1",
       "name": "Notes (near the end) focused from the top: scrolled into view in main, below the bar",
       "ok": true,
-      "detail": "{\"top\":339,\"bottom\":405,\"barBottom\":56,\"mainBottom\":664,\"active\":\"notes\"}"
+      "detail": "{\"top\":338,\"bottom\":404,\"barBottom\":56,\"mainBottom\":664,\"active\":\"notes\"}"
     },
     {
       "id": "N1",
-      "name": "Save and add another still saves, and opens the next item saying what was saved",
+      "name": "Save and add another still saves what was typed (Opened), and opens the next item saying what was saved",
       "ok": true,
-      "detail": "item 1 confirmed; next item open"
+      "detail": "item 1 confirmed; container {\"status\":\"open\",\"label\":250,\"unit\":\"g\",\"lot\":\"SYN-0001\",\"name\":\"Synthetic cacao powder (test)\"}; next item open"
     },
     {
       "id": "N2",
@@ -143,9 +155,15 @@
     },
     {
       "id": "H8",
-      "name": "A saved item's page: Add new product goes to the start page",
+      "name": "A saved item's page: Add new product opens the start page; no item made",
       "ok": true,
-      "detail": "href /inventory/capture"
+      "detail": "\"Saved\" shown true; href /inventory/capture; items 2 → 2"
+    },
+    {
+      "id": "H8b",
+      "name": "A discarded item's page: Add new product opens the start page; no item made",
+      "ok": true,
+      "detail": "\"Discarded\" shown true; href /inventory/capture; items 2 → 2"
     },
     {
       "id": "H9",
@@ -157,13 +175,13 @@
       "id": "P4",
       "name": "390 px, container page at the top: bar at the top",
       "ok": true,
-      "detail": "bar top 0px, main from 56px scrolled 0/1271px, frame scrolled 0px, page scrolled 0px"
+      "detail": "bar top 0px, main from 56px scrolled 0/1367px, frame scrolled 0px, page scrolled 0px"
     },
     {
       "id": "P5",
       "name": "Swiped to the bottom of the container page: the bar is still at the top",
       "ok": true,
-      "detail": "bar top 0px, main from 56px scrolled 1271/1271px, frame scrolled 0px, page scrolled 0px"
+      "detail": "bar top 0px, main from 56px scrolled 1367/1367px, frame scrolled 0px, page scrolled 0px"
     },
     {
       "id": "M1",
@@ -235,7 +253,13 @@
       "id": "W320d",
       "name": "320 px, container page swiped to the bottom: the bar is still at the top",
       "ok": true,
-      "detail": "bar top 0px, main from 56px scrolled 1524/1524px, frame scrolled 0px, page scrolled 0px"
+      "detail": "bar top 0px, main from 56px scrolled 1580/1580px, frame scrolled 0px, page scrolled 0px"
+    },
+    {
+      "id": "W320g",
+      "name": "320 px: from the bottom of the page the menu opens, with Inventory and iD",
+      "ok": true,
+      "detail": "10XiD, Home, Orders, Quotes, Jobs, Inventory, Products, Customers, Growth, Discounts, Content, Markets, Finance, Analytics, Channels, iD, Add channel, Team, Settings"
     },
     {
       "id": "W320e",
@@ -281,7 +305,7 @@
     },
     {
       "file": "screens/390-capture-top.png",
-      "caption": "390 px · An item being catalogued, top: three synthetic photos sent, name typed",
+      "caption": "390 px · An item being catalogued, top: three photos sent, a fourth waiting on the phone (offline)",
       "width": 390
     },
     {
@@ -295,6 +319,11 @@
       "width": 390
     },
     {
+      "file": "screens/390-capture-note-again.png",
+      "caption": "390 px · Scrolled away and tapped again: back at the note",
+      "width": 390
+    },
+    {
       "file": "screens/390-next-item.png",
       "caption": "390 px · After Save and add another: the next item, “Saved: … Now the next one.”",
       "width": 390
@@ -302,6 +331,16 @@
     {
       "file": "screens/390-list.png",
       "caption": "390 px · Inventory with the saved item",
+      "width": 390
+    },
+    {
+      "file": "screens/390-saved-item.png",
+      "caption": "390 px · A saved item's page: Add new product starts the usual way",
+      "width": 390
+    },
+    {
+      "file": "screens/390-discarded-item.png",
+      "caption": "390 px · A discarded item's page: Add new product starts the usual way",
       "width": 390
     },
     {
@@ -355,6 +394,11 @@
       "width": 320
     },
     {
+      "file": "screens/320-menu.png",
+      "caption": "320 px · The menu, opened from the bottom of the container page",
+      "width": 320
+    },
+    {
       "file": "screens/320-capture-note.png",
       "caption": "320 px · Add new product on an unsaved item",
       "width": 320
@@ -365,5 +409,12 @@
       "width": 390
     }
   ],
-  "consoleErrors": []
+  "consoleErrors": [],
+  "offlineConsole": [
+    "390: Failed to load resource: net::ERR_INTERNET_DISCONNECTED",
+    "390: Failed to load resource: net::ERR_INTERNET_DISCONNECTED",
+    "390: Failed to load resource: net::ERR_INTERNET_DISCONNECTED",
+    "390: Failed to load resource: net::ERR_INTERNET_DISCONNECTED",
+    "390: Failed to load resource: net::ERR_INTERNET_DISCONNECTED"
+  ]
 }
