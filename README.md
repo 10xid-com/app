@@ -195,11 +195,10 @@ Moving `app.10xid.com` off login.10xid.com, in this order:
 
 1. **`app` service:** set `TOTP_ENC_KEY` (`openssl rand -base64 32`; without it the service
    refuses to start) and remove `PRIMARY_HOST`. `RESEND_API_KEY` is already there for invitations.
-2. **Clear the old authenticators**, as the database owner, so everybody sets one up fresh on
-   first sign-in (the ones on login.10xid.com live in its own tables, which this app cannot
-   read; any left in `users` are from before that and may be under a key that no longer exists):
-   `update users set totp_secret = null, totp_confirmed_at = null;` and
-   `update recovery_codes set used_at = now() where used_at is null;`
+2. **Clear the old authenticators**, so everybody sets one up fresh on first sign-in (the ones
+   on login.10xid.com live in its own tables, which this app cannot read; any left in `users`
+   are from before that, under another key). Login's migration `0050_portal_own_sign_in` does
+   this when login deploys.
 3. **Deploy** this branch. Every session handed over from the login host stops working; people
    sign in at `app.10xid.com/auth/sign-in`.
 4. **`portal` service (login.10xid.com):** unset `PORTAL_HOST` and add `app.10xid.com` to
