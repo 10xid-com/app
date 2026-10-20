@@ -197,7 +197,7 @@ Moving `app.10xid.com` off login.10xid.com, in this order:
    refuses to start) and remove `PRIMARY_HOST`. `RESEND_API_KEY` is already there for invitations.
 2. **Clear the old authenticators**, so everybody sets one up fresh on first sign-in (the ones
    on login.10xid.com live in its own tables, which this app cannot read; any left in `users`
-   are from before that, under another key). Login's migration `0050_portal_own_sign_in` does
+   are from before that, under another key). Login's migration `0051_portal_own_sign_in` does
    this when login deploys.
 3. **Deploy** this branch. Every session handed over from the login host stops working; people
    sign in at `app.10xid.com/auth/sign-in`.
