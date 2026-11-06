@@ -1,7 +1,7 @@
 import "server-only";
 import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { DatabaseError } from "pg";
-import { inOwnerTransaction } from "./connection";
+import { inPrototypeOwnerTransaction } from "./connection";
 import { conversations, repositories } from "./schema";
 import { uuidv7 } from "../ids";
 import type { WorkspaceOwner } from "./workspace";
@@ -17,7 +17,7 @@ import type { WorkspaceOwner } from "./workspace";
 export type RepositoryRow = typeof repositories.$inferSelect;
 
 export async function listLinkedRepositories(owner: WorkspaceOwner): Promise<RepositoryRow[]> {
-  return inOwnerTransaction(owner.organizationId, owner.userId, (tx) =>
+  return inPrototypeOwnerTransaction(owner.organizationId, owner.userId, (tx) =>
     tx
       .select()
       .from(repositories)
@@ -28,7 +28,7 @@ export async function listLinkedRepositories(owner: WorkspaceOwner): Promise<Rep
 
 export async function getLinkedRepository(owner: WorkspaceOwner, id: string): Promise<RepositoryRow | null> {
   if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
-  const rows = await inOwnerTransaction(owner.organizationId, owner.userId, (tx) =>
+  const rows = await inPrototypeOwnerTransaction(owner.organizationId, owner.userId, (tx) =>
     tx
       .select()
       .from(repositories)
@@ -45,7 +45,7 @@ export async function getLinkedRepository(owner: WorkspaceOwner, id: string): Pr
 export async function repositoryNamesByIds(owner: WorkspaceOwner, ids: string[]): Promise<Map<string, string>> {
   const unique = [...new Set(ids)];
   if (unique.length === 0) return new Map();
-  const rows = await inOwnerTransaction(owner.organizationId, owner.userId, (tx) =>
+  const rows = await inPrototypeOwnerTransaction(owner.organizationId, owner.userId, (tx) =>
     tx
       .select({ id: repositories.id, owner: repositories.owner, name: repositories.name })
       .from(repositories)
@@ -70,7 +70,7 @@ export async function linkRepository(
   repo: { installationId: number; externalId: number; owner: string; name: string; defaultBranch: string },
 ): Promise<RepositoryRow> {
   try {
-    return await inOwnerTransaction(owner.organizationId, owner.userId, async (tx) => {
+    return await inPrototypeOwnerTransaction(owner.organizationId, owner.userId, async (tx) => {
       const [row] = await tx
         .insert(repositories)
         .values({
@@ -96,7 +96,7 @@ export async function linkRepository(
 
 export async function unlinkRepository(owner: WorkspaceOwner, id: string): Promise<boolean> {
   if (!/^[0-9a-f-]{36}$/i.test(id)) return false;
-  const rows = await inOwnerTransaction(owner.organizationId, owner.userId, (tx) =>
+  const rows = await inPrototypeOwnerTransaction(owner.organizationId, owner.userId, (tx) =>
     tx
       .update(repositories)
       .set({ unlinkedAt: new Date() })
@@ -116,7 +116,7 @@ export async function setConversationRepository(
   repositoryId: string | null,
   branch: string | null,
 ): Promise<boolean> {
-  const rows = await inOwnerTransaction(owner.organizationId, owner.userId, (tx) =>
+  const rows = await inPrototypeOwnerTransaction(owner.organizationId, owner.userId, (tx) =>
     tx
       .update(conversations)
       .set({ repositoryId, branch: repositoryId ? branch : null, updatedAt: new Date() })

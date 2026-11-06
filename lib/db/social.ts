@@ -2,7 +2,7 @@ import "server-only";
 import { randomBytes } from "node:crypto";
 import { and, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { DatabaseError } from "pg";
-import { db, inOwnerTransaction } from "./connection";
+import { inPrototypeOwnerTransaction, inPrototypeTenantTransaction } from "./connection";
 import { socialConnections, socialMedia } from "./schema";
 import { writeAudit } from "./audit";
 import { MetaError, openToken, sealToken } from "@/lib/integrations/meta";
@@ -26,7 +26,7 @@ export type SocialChannel = SocialConnection["channel"];
 const label = (channel: SocialChannel, name: string) => (channel === "instagram" ? `@${name}` : name);
 
 export async function socialConnectionFor(owner: SocialOwner, channel: SocialChannel): Promise<SocialConnection | null> {
-  const rows = await inOwnerTransaction(owner.organizationId, owner.userId, (tx) =>
+  const rows = await inPrototypeOwnerTransaction(owner.organizationId, owner.userId, (tx) =>
     tx
       .select()
       .from(socialConnections)
@@ -38,7 +38,7 @@ export async function socialConnectionFor(owner: SocialOwner, channel: SocialCha
 
 /** Which channels the business has live connections on. */
 export async function connectedSocialChannels(owner: SocialOwner): Promise<SocialChannel[]> {
-  const rows = await inOwnerTransaction(owner.organizationId, owner.userId, (tx) =>
+  const rows = await inPrototypeOwnerTransaction(owner.organizationId, owner.userId, (tx) =>
     tx
       .select({ channel: socialConnections.channel })
       .from(socialConnections)
@@ -75,7 +75,7 @@ export async function connectSocial(
 ): Promise<SocialConnection> {
   const tokenCiphertext = sealToken(input.token, { organizationId: owner.organizationId, channel, accountId: input.accountId });
   try {
-    return await inOwnerTransaction(owner.organizationId, owner.userId, async (tx) => {
+    return await inPrototypeOwnerTransaction(owner.organizationId, owner.userId, async (tx) => {
       await tx
         .update(socialConnections)
         .set({ disconnectedAt: new Date(), tokenCiphertext: null, tokenExpiresAt: null })
@@ -113,7 +113,7 @@ export async function connectSocial(
 }
 
 export async function disconnectSocial(owner: SocialOwner, id: string, agencyGrantId: string | null): Promise<void> {
-  await inOwnerTransaction(owner.organizationId, owner.userId, async (tx) => {
+  await inPrototypeOwnerTransaction(owner.organizationId, owner.userId, async (tx) => {
     const [row] = await tx
       .update(socialConnections)
       .set({ disconnectedAt: new Date(), tokenCiphertext: null, tokenExpiresAt: null })
@@ -148,7 +148,7 @@ export async function channelToken(owner: SocialOwner, connection: SocialConnect
   if (connection.channel !== "instagram" || Date.now() - connection.tokenRefreshedAt.getTime() < REFRESH_AFTER_MS) return token;
   try {
     const fresh = await refreshToken(token);
-    await inOwnerTransaction(owner.organizationId, owner.userId, (tx) =>
+    await inPrototypeOwnerTransaction(owner.organizationId, owner.userId, (tx) =>
       tx
         .update(socialConnections)
         .set({
@@ -197,7 +197,7 @@ export async function recordSocialMedia(
     ready: boolean;
   },
 ): Promise<SocialMediaRow> {
-  const [row] = await inOwnerTransaction(owner.organizationId, owner.userId, (tx) =>
+  const [row] = await inPrototypeOwnerTransaction(owner.organizationId, owner.userId, (tx) =>
     tx
       .insert(socialMedia)
       .values({ organizationId: owner.organizationId, uploadedBy: owner.userId, ...input })
@@ -208,7 +208,7 @@ export async function recordSocialMedia(
 
 /** One of this business's unexpired files, or null. */
 export async function socialMediaById(owner: SocialOwner, id: string): Promise<SocialMediaRow | null> {
-  const rows = await inOwnerTransaction(owner.organizationId, owner.userId, (tx) =>
+  const rows = await inPrototypeOwnerTransaction(owner.organizationId, owner.userId, (tx) =>
     tx.select().from(socialMedia).where(eq(socialMedia.id, id)).limit(1),
   );
   const row = rows[0];
@@ -216,14 +216,14 @@ export async function socialMediaById(owner: SocialOwner, id: string): Promise<S
 }
 
 export async function markSocialMediaReady(owner: SocialOwner, id: string): Promise<void> {
-  await inOwnerTransaction(owner.organizationId, owner.userId, (tx) =>
+  await inPrototypeOwnerTransaction(owner.organizationId, owner.userId, (tx) =>
     tx.update(socialMedia).set({ ready: true, uploadId: null }).where(eq(socialMedia.id, id)),
   );
 }
 
 /** This business's whole, unexpired files for these ids, in the order given; null if any is not. */
 export async function socialMediaFor(owner: SocialOwner, ids: string[]): Promise<SocialMediaRow[] | null> {
-  const rows = await inOwnerTransaction(owner.organizationId, owner.userId, (tx) =>
+  const rows = await inPrototypeOwnerTransaction(owner.organizationId, owner.userId, (tx) =>
     tx.select().from(socialMedia).where(inArray(socialMedia.id, ids)),
   );
   const now = new Date();
@@ -235,7 +235,7 @@ export async function socialMediaFor(owner: SocialOwner, ids: string[]): Promise
 /** Forget these files; answers with their keys and open uploads, for the store to delete. */
 export async function deleteSocialMedia(owner: SocialOwner, ids: string[]): Promise<Pick<SocialMediaRow, "storageKey" | "uploadId">[]> {
   if (ids.length === 0) return [];
-  return inOwnerTransaction(owner.organizationId, owner.userId, (tx) =>
+  return inPrototypeOwnerTransaction(owner.organizationId, owner.userId, (tx) =>
     tx
       .delete(socialMedia)
       .where(inArray(socialMedia.id, ids))
@@ -245,7 +245,7 @@ export async function deleteSocialMedia(owner: SocialOwner, ids: string[]): Prom
 
 /** This business's files past their 24 hours: forgotten here, returned for the store to delete. */
 export async function takeExpiredSocialMedia(owner: SocialOwner): Promise<Pick<SocialMediaRow, "storageKey" | "uploadId">[]> {
-  return inOwnerTransaction(owner.organizationId, owner.userId, async (tx) => {
+  return inPrototypeOwnerTransaction(owner.organizationId, owner.userId, async (tx) => {
     // 0034 photos stay usable during rollout; retire them only after their
     // original expiration. The legacy table has the same business RLS policy.
     await tx.execute(sql`delete from social_media where expires_at < now()`);
@@ -266,8 +266,8 @@ export async function revokeSocial(
   scopedId: string,
   reason: "deauthorize" | "deletion_request",
 ): Promise<number> {
-  const result = await db.execute<{ n: number }>(
+  const result = await inPrototypeTenantTransaction(null, false, (tx) => tx.execute<{ n: number }>(
     sql`select social_connection_revoke(${channel}, ${scopedId}, ${reason}) as n`,
-  );
+  ));
   return Number(result.rows[0]?.n ?? 0);
 }

@@ -1,7 +1,7 @@
 import "server-only";
 import { and, eq, isNull } from "drizzle-orm";
 import { DatabaseError } from "pg";
-import { inOwnerTransaction } from "./connection";
+import { inPrototypeOwnerTransaction } from "./connection";
 import { siteConnections } from "./schema";
 import { writeAudit } from "./audit";
 
@@ -20,7 +20,7 @@ export type SiteConnection = typeof siteConnections.$inferSelect;
 export type SiteOwner = { organizationId: string; userId: string };
 
 export async function websiteFor(owner: SiteOwner): Promise<SiteConnection | null> {
-  const rows = await inOwnerTransaction(owner.organizationId, owner.userId, (tx) =>
+  const rows = await inPrototypeOwnerTransaction(owner.organizationId, owner.userId, (tx) =>
     tx
       .select()
       .from(siteConnections)
@@ -47,7 +47,7 @@ export async function connectWebsite(
   input: { siteUrl: string; repositoryId: string | null; agencyGrantId: string | null },
 ): Promise<SiteConnection> {
   try {
-    return await inOwnerTransaction(owner.organizationId, owner.userId, async (tx) => {
+    return await inPrototypeOwnerTransaction(owner.organizationId, owner.userId, async (tx) => {
       const [row] = await tx
         .insert(siteConnections)
         .values({
@@ -77,7 +77,7 @@ export async function connectWebsite(
 }
 
 export async function disconnectWebsite(owner: SiteOwner, id: string, agencyGrantId: string | null): Promise<void> {
-  await inOwnerTransaction(owner.organizationId, owner.userId, async (tx) => {
+  await inPrototypeOwnerTransaction(owner.organizationId, owner.userId, async (tx) => {
     const [row] = await tx
       .update(siteConnections)
       .set({ disconnectedAt: new Date() })
@@ -109,7 +109,7 @@ export async function setWebsiteRepository(
   owner: SiteOwner,
   input: { connectionId: string; repositoryId: string | null; label: string; agencyGrantId: string | null },
 ): Promise<boolean> {
-  return inOwnerTransaction(owner.organizationId, owner.userId, async (tx) => {
+  return inPrototypeOwnerTransaction(owner.organizationId, owner.userId, async (tx) => {
     const [row] = await tx
       .update(siteConnections)
       .set({ repositoryId: input.repositoryId })

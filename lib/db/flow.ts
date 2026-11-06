@@ -1,6 +1,6 @@
 import "server-only";
 import { and, eq, isNull, lte, sql } from "drizzle-orm";
-import { inTenantTransaction, type Transaction } from "./connection";
+import { inPrototypeTenantTransaction, inTenantTransaction, type Transaction } from "./connection";
 import { isQualified } from "./access";
 import {
   departmentMembers,
@@ -85,7 +85,7 @@ export async function createTaskType(
   },
 ) {
   const organizationId = requireOrg(scope);
-  const rows = await inTenantTransaction(organizationId, false, (tx) =>
+  const rows = await inPrototypeTenantTransaction(organizationId, false, (tx) =>
     tx
       .insert(taskTypes)
       .values({
@@ -101,7 +101,7 @@ export async function createTaskType(
 }
 
 export async function listTaskTypes(scope: Scope) {
-  return inTenantTransaction(scope.organizationId, false, (tx) =>
+  return inPrototypeTenantTransaction(scope.organizationId, false, (tx) =>
     tx.select().from(taskTypes).where(isNull(taskTypes.deletedAt)),
   );
 }
@@ -144,7 +144,7 @@ export async function createTask(
   const organizationId = requireOrg(scope);
   const id = uuidv7();
 
-  return inTenantTransaction(organizationId, false, async (tx) => {
+  return inPrototypeTenantTransaction(organizationId, false, async (tx) => {
     const rows = await tx
       .insert(tasks)
       .values({
@@ -175,7 +175,7 @@ export async function createTask(
 }
 
 export async function getTask(scope: Scope, taskId: string) {
-  const rows = await inTenantTransaction(scope.organizationId, false, (tx) =>
+  const rows = await inPrototypeTenantTransaction(scope.organizationId, false, (tx) =>
     tx.select().from(tasks).where(eq(tasks.id, taskId)).limit(1),
   );
   return rows[0] ?? null;
@@ -198,7 +198,7 @@ export async function offerTask(
       },
 ) {
   const organizationId = requireOrg(scope);
-  return inTenantTransaction(organizationId, false, async (tx) => {
+  return inPrototypeTenantTransaction(organizationId, false, async (tx) => {
     const rows = await tx
       .insert(taskOffers)
       .values({
@@ -237,7 +237,7 @@ export async function isOfferedTo(
 ): Promise<boolean> {
   const organizationId = requireOrg(scope);
 
-  const offers = await inTenantTransaction(organizationId, false, (tx) =>
+  const offers = await inPrototypeTenantTransaction(organizationId, false, (tx) =>
     tx
       .select()
       .from(taskOffers)
@@ -310,7 +310,7 @@ export async function claimTask(
 ): Promise<TaskClaimRow | null> {
   const organizationId = requireOrg(scope);
 
-  return inTenantTransaction(organizationId, false, async (tx) => {
+  return inPrototypeTenantTransaction(organizationId, false, async (tx) => {
     const won = await tx
       .update(tasks)
       .set({ status: "claimed", updatedAt: new Date() })
@@ -357,7 +357,7 @@ export async function releaseClaim(
 ): Promise<TaskClaimRow | null> {
   const organizationId = requireOrg(scope);
 
-  return inTenantTransaction(organizationId, false, async (tx) => {
+  return inPrototypeTenantTransaction(organizationId, false, async (tx) => {
     const rows = await tx
       .update(taskClaims)
       .set({
@@ -396,7 +396,7 @@ export async function submitClaim(
 ): Promise<TaskClaimRow | null> {
   const organizationId = requireOrg(scope);
 
-  return inTenantTransaction(organizationId, false, async (tx) => {
+  return inPrototypeTenantTransaction(organizationId, false, async (tx) => {
     const rows = await tx
       .update(taskClaims)
       .set({ outcome: "submitted", outcomeAt: new Date() })
@@ -439,7 +439,7 @@ export async function submitClaim(
 export async function expireOverdueClaims(scope: Scope): Promise<number> {
   const organizationId = requireOrg(scope);
 
-  return inTenantTransaction(organizationId, false, async (tx) => {
+  return inPrototypeTenantTransaction(organizationId, false, async (tx) => {
     const rows = await tx
       .update(taskClaims)
       .set({ outcome: "expired", outcomeAt: new Date() })
@@ -475,7 +475,7 @@ export async function expireOverdueClaims(scope: Scope): Promise<number> {
 }
 
 export async function listClaims(scope: Scope, taskId: string) {
-  return inTenantTransaction(scope.organizationId, false, (tx) =>
+  return inPrototypeTenantTransaction(scope.organizationId, false, (tx) =>
     tx.select().from(taskClaims).where(eq(taskClaims.taskId, taskId)),
   );
 }
@@ -506,7 +506,7 @@ export async function gradeTask(
 ): Promise<TaskGradeRow> {
   const organizationId = requireOrg(scope);
 
-  return inTenantTransaction(organizationId, false, async (tx) => {
+  return inPrototypeTenantTransaction(organizationId, false, async (tx) => {
     const rows = await tx
       .insert(taskGrades)
       .values({

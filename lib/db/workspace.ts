@@ -1,6 +1,6 @@
 import "server-only";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { inOwnerTransaction } from "./connection";
+import { inPrototypeOwnerTransaction } from "./connection";
 import {
   agentRunReceipts,
   agentRuns,
@@ -39,8 +39,8 @@ export type ContextItemRow = typeof conversationContextItems.$inferSelect;
 export const COMMANDS = ["review", "explain", "plan", "test"] as const;
 export type Command = (typeof COMMANDS)[number];
 
-const run = <T>(owner: WorkspaceOwner, fn: Parameters<typeof inOwnerTransaction<T>>[2]) =>
-  inOwnerTransaction(owner.organizationId, owner.userId, fn);
+const run = <T>(owner: WorkspaceOwner, fn: Parameters<typeof inPrototypeOwnerTransaction<T>>[2]) =>
+  inPrototypeOwnerTransaction(owner.organizationId, owner.userId, fn);
 
 /**
  * The client's live workspace, created on first use.

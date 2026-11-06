@@ -1,6 +1,6 @@
 import "server-only";
 import { isNull } from "drizzle-orm";
-import { inOwnerTransaction } from "./connection";
+import { inPrototypeOwnerTransaction } from "./connection";
 import { siteConnections, socialConnections } from "./schema";
 
 /**
@@ -13,7 +13,7 @@ import { siteConnections, socialConnections } from "./schema";
 export type ConnectedChannel = "website" | "instagram" | "facebook";
 
 export async function connectedChannels(owner: { organizationId: string; userId: string }): Promise<Set<ConnectedChannel>> {
-  const [sites, social] = await inOwnerTransaction(owner.organizationId, owner.userId, (tx) =>
+  const [sites, social] = await inPrototypeOwnerTransaction(owner.organizationId, owner.userId, (tx) =>
     Promise.all([
       tx.select({ channel: siteConnections.channel }).from(siteConnections).where(isNull(siteConnections.disconnectedAt)),
       tx.select({ channel: socialConnections.channel }).from(socialConnections).where(isNull(socialConnections.disconnectedAt)),
