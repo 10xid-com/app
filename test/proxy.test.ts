@@ -110,6 +110,10 @@ describe("the healthcheck", () => {
 });
 
 describe("the machine endpoint", () => {
+  test("WA introspection uses the machine API boundary and still pins the portal host", async () => {
+    expect(passed(await proxy(request(APP, "/api/v1/wrapauthority/introspect", { method: "POST" })))).toBe(true);
+    expect((await proxy(request("evil.10xid.com", "/api/v1/wrapauthority/introspect", { method: "POST" }))).status).toBe(404);
+  });
   test("carries an API key, not a cookie, and is let through untouched", async () => {
     const response = await proxy(request(APP, "/api/v1/jobs", { method: "POST", origin: "https://client.example" }));
     expect(passed(response)).toBe(true);

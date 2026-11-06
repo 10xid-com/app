@@ -1,4 +1,5 @@
 import "server-only";
+import { SESSION_IDLE_SECONDS } from '@/lib/auth/policy';
 import { and, desc, eq, gt, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { db } from "./connection";
 import {
@@ -12,6 +13,20 @@ import {
   userEmails,
   users,
 } from "./schema";
+
+/** Same liveness rules as resolveIdentity, confined to one signed subject/session. */
+export async function portalSessionLiveForWrapAuthority(userId: string, sessionId: string): Promise<boolean> {
+  const rows = await db.select({ id: sessions.id }).from(sessions)
+    .innerJoin(users, eq(users.id, sessions.userId))
+    .where(and(eq(sessions.id, sessionId), eq(sessions.userId, userId),
+      isNull(sessions.revokedAt), isNotNull(sessions.secondFactorAt),
+      isNull(sessions.sourceSessionId), isNull(sessions.sourceAuthSessionId),
+      isNull(users.deletedAt), eq(users.isService, false),
+      sql`${sessions.absoluteExpiresAt} > now()`,
+      sql`${sessions.lastSeenAt} + make_interval(secs => coalesce(${sessions.idleSeconds}, ${SESSION_IDLE_SECONDS})) > now()`))
+    .limit(1);
+  return rows.length === 1;
+}
 
 /**
  * Identity queries — who someone is, and what scope their session carries.

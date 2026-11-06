@@ -20,6 +20,8 @@ const ROOT = join(import.meta.dirname, "..");
 const APP = join(ROOT, "app");
 
 const GUARDS = [
+  // Signed server assertion plus live own-session check, metadata only.
+  "authorizeWrapAuthorityAssertion(",
   "requirePage(",
   "requireAction(",
   "authorizeRequest(",
