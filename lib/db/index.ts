@@ -1,6 +1,6 @@
 import "server-only";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { inTenantTransaction, type Transaction } from "./connection";
+import { inPrototypeTenantTransaction, type Transaction } from "./connection";
 import { jobEvents, jobNotes, jobs, organizations } from "./schema";
 import { uuidv7 } from "../ids";
 
@@ -86,7 +86,7 @@ export async function listJobs(
   opts: { assignedTo?: string; kind?: JobRow["kind"] | readonly JobRow["kind"][] } = {},
 ): Promise<JobRow[]> {
   const kinds = opts.kind === undefined ? undefined : typeof opts.kind === "string" ? [opts.kind] : [...opts.kind];
-  return inTenantTransaction(scope.organizationId, isSurveying(scope), (tx) =>
+  return inPrototypeTenantTransaction(scope.organizationId, isSurveying(scope), (tx) =>
     tx
       .select()
       .from(jobs)
@@ -114,7 +114,7 @@ export async function getJob(
   scope: Scope,
   jobId: string,
 ): Promise<JobRow | null> {
-  const rows = await inTenantTransaction(
+  const rows = await inPrototypeTenantTransaction(
     scope.organizationId,
     isSurveying(scope),
     (tx) => tx.select().from(jobs).where(eq(jobs.id, jobId)).limit(1),
@@ -146,7 +146,7 @@ export async function createJob(
 ): Promise<JobRow> {
   const organizationId = requireWritableOrg(scope);
 
-  return inTenantTransaction(organizationId, false, async (tx) => {
+  return inPrototypeTenantTransaction(organizationId, false, async (tx) => {
     const ref = await nextJobRef(tx, organizationId);
     const id = uuidv7();
 
@@ -186,7 +186,7 @@ export async function setJobStatus(
 ): Promise<JobRow | null> {
   const organizationId = requireWritableOrg(scope);
 
-  return inTenantTransaction(organizationId, false, async (tx) => {
+  return inPrototypeTenantTransaction(organizationId, false, async (tx) => {
     // Locked, and compared with the status the person was looking at: which
     // moves are allowed depends on where the job is (approving, or undoing an
     // approval, is a manager's), so a change made against a status that has
@@ -223,7 +223,7 @@ export type JobNoteRow = typeof jobNotes.$inferSelect;
 
 /** What the people of the business have said about a job, oldest first. */
 export async function listJobNotes(scope: Scope, jobId: string): Promise<JobNoteRow[]> {
-  return inTenantTransaction(scope.organizationId, isSurveying(scope), (tx) =>
+  return inPrototypeTenantTransaction(scope.organizationId, isSurveying(scope), (tx) =>
     tx
       .select()
       .from(jobNotes)
@@ -267,7 +267,7 @@ export async function addJobNote(
 ): Promise<JobNoteRow | null> {
   const organizationId = requireWritableOrg(scope);
 
-  return inTenantTransaction(organizationId, false, async (tx) => {
+  return inPrototypeTenantTransaction(organizationId, false, async (tx) => {
     const job = (await tx.select().from(jobs).where(eq(jobs.id, jobId)).limit(1))[0];
     if (!job) return null;
     return insertNote(tx, scope, job, body, null);
@@ -293,7 +293,7 @@ export async function handOverJob(
 ): Promise<Handover | null> {
   const organizationId = requireWritableOrg(scope);
 
-  return inTenantTransaction(organizationId, false, async (tx) => {
+  return inPrototypeTenantTransaction(organizationId, false, async (tx) => {
     const before = (
       await tx.select().from(jobs).where(eq(jobs.id, jobId)).limit(1).for("update")
     )[0];
@@ -334,7 +334,7 @@ export async function setJobKind(
 ): Promise<JobRow | null> {
   const organizationId = requireWritableOrg(scope);
 
-  return inTenantTransaction(organizationId, false, async (tx) => {
+  return inPrototypeTenantTransaction(organizationId, false, async (tx) => {
     const before = (
       await tx.select().from(jobs).where(eq(jobs.id, jobId)).limit(1).for("update")
     )[0];
@@ -429,7 +429,7 @@ export async function jobStats(
   scope: Scope,
   opts: { kind?: readonly JobRow["kind"][] } = {},
 ): Promise<JobStats> {
-  return inTenantTransaction(
+  return inPrototypeTenantTransaction(
     scope.organizationId,
     isSurveying(scope),
     async (tx) => {
@@ -495,7 +495,7 @@ export async function recentJobs(
   limit = 6,
   opts: { kind?: readonly JobRow["kind"][] } = {},
 ) {
-  return inTenantTransaction(scope.organizationId, isSurveying(scope), (tx) =>
+  return inPrototypeTenantTransaction(scope.organizationId, isSurveying(scope), (tx) =>
     tx
       .select({
         id: jobs.id,
@@ -523,7 +523,7 @@ export async function recentJobs(
  * and never another company's.
  */
 export async function jobsPerPerson(scope: Scope) {
-  return inTenantTransaction(scope.organizationId, isSurveying(scope), (tx) =>
+  return inPrototypeTenantTransaction(scope.organizationId, isSurveying(scope), (tx) =>
     tx
       .select({
         userId: jobs.createdBy,
@@ -538,7 +538,7 @@ export async function jobsPerPerson(scope: Scope) {
 }
 
 export async function assignedPerPerson(scope: Scope) {
-  return inTenantTransaction(scope.organizationId, isSurveying(scope), (tx) =>
+  return inPrototypeTenantTransaction(scope.organizationId, isSurveying(scope), (tx) =>
     tx
       .select({
         userId: jobs.assignedTo,
@@ -580,7 +580,7 @@ export async function recentRequests(
   scope: Scope,
   limit = 12,
 ): Promise<RequestCard[]> {
-  const rows = await inTenantTransaction(
+  const rows = await inPrototypeTenantTransaction(
     scope.organizationId,
     isSurveying(scope),
     (tx) =>
@@ -647,7 +647,7 @@ export async function attachDriveFolder(
 ): Promise<JobRow | null> {
   const organizationId = requireWritableOrg(scope);
 
-  return inTenantTransaction(organizationId, false, async (tx) => {
+  return inPrototypeTenantTransaction(organizationId, false, async (tx) => {
     const [after] = await tx
       .update(jobs)
       .set({
@@ -684,7 +684,7 @@ export async function jobsFiledSince(
   creatorId: string,
   since: Date,
 ): Promise<number> {
-  const rows = await inTenantTransaction(
+  const rows = await inPrototypeTenantTransaction(
     scope.organizationId,
     isSurveying(scope),
     (tx) =>
@@ -699,7 +699,7 @@ export async function jobsFiledSince(
 }
 
 export async function listJobEvents(scope: Scope, jobId: string) {
-  return inTenantTransaction(scope.organizationId, isSurveying(scope), (tx) =>
+  return inPrototypeTenantTransaction(scope.organizationId, isSurveying(scope), (tx) =>
     tx
       .select()
       .from(jobEvents)
@@ -722,7 +722,7 @@ export async function searchJobs(
   const limit = Math.min(Math.max(opts.limit ?? 10, 1), 25);
   const text = opts.text?.trim();
   const pattern = text ? `%${text.replace(/[\\%_]/g, (c) => `\\${c}`)}%` : null;
-  return inTenantTransaction(scope.organizationId, isSurveying(scope), (tx) =>
+  return inPrototypeTenantTransaction(scope.organizationId, isSurveying(scope), (tx) =>
     tx
       .select({
         id: jobs.id,
@@ -751,7 +751,7 @@ export async function searchJobs(
 
 /** One job by its human reference (ROT-0042), scoped like getJob. */
 export async function getJobByRef(scope: Scope, ref: string): Promise<JobRow | null> {
-  const rows = await inTenantTransaction(scope.organizationId, isSurveying(scope), (tx) =>
+  const rows = await inPrototypeTenantTransaction(scope.organizationId, isSurveying(scope), (tx) =>
     tx.select().from(jobs).where(eq(jobs.ref, ref.toUpperCase())).limit(1),
   );
   return rows[0] ?? null;
