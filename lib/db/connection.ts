@@ -82,7 +82,7 @@ async function checkRole(connectionPool: Pool): Promise<void> {
       r.rolbypassrls as can_bypass,
       (select count(*)::int
          from pg_tables
-        where schemaname = 'public'
+        where schemaname in ('public', 'work', 'system')
           and tablename in ('jobs','job_events','api_keys','invitations')
           and tableowner = current_user) as owns_tenant_tables
     from pg_roles r
@@ -213,12 +213,12 @@ async function refreshPrototypeReferences(organizationId: string | null): Promis
     const { rows } = await db.execute<PrototypeReferences>(sql`
       select
         coalesce((select jsonb_agg(to_jsonb(c)) from
-          (select id, type, name, slug, brand_primary_hex, deleted_at, job_counter from public.organizations) c), '[]') as companies,
+          (select id, type, name, slug, brand_primary_hex, deleted_at, job_counter from organizations) c), '[]') as companies,
         coalesce((select jsonb_agg(to_jsonb(u)) from
-          (select id, full_name, is_service, deleted_at from public.users) u), '[]') as accounts,
+          (select id, full_name, is_service, deleted_at from users) u), '[]') as accounts,
         coalesce((select jsonb_agg(to_jsonb(r)) from
-          (select id, user_id, organization_id, role from public.memberships) r), '[]') as roles,
-        coalesce((select jsonb_agg(id) from public.act_as_grants), '[]') as act_as
+          (select id, user_id, organization_id, role from memberships) r), '[]') as roles,
+        coalesce((select jsonb_agg(id) from act_as_grants), '[]') as act_as
     `);
     const references = rows[0]!;
     await tx.execute(sql`
@@ -269,8 +269,8 @@ async function refreshPrototypeReferences(organizationId: string | null): Promis
       const { rows: companies } = await inTenantTransaction(organizationId, false, (core) =>
         core.execute<CompanyReferences>(sql`
           select
-            coalesce((select jsonb_agg(to_jsonb(d)) from public.departments d where organization_id = ${organizationId}), '[]') as departments,
-            coalesce((select jsonb_agg(id) from public.agency_grants where client_organization_id = ${organizationId}), '[]') as agencies
+            coalesce((select jsonb_agg(to_jsonb(d)) from departments d where organization_id = ${organizationId}), '[]') as departments,
+            coalesce((select jsonb_agg(id) from agency_grants where client_organization_id = ${organizationId}), '[]') as agencies
         `),
       );
       const company = companies[0]!;
